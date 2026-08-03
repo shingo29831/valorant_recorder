@@ -3,6 +3,7 @@ import os
 import threading
 import queue
 import warnings
+import signal
 import numpy as np
 import soundcard as sc
 from datetime import datetime
@@ -122,13 +123,20 @@ class FFmpegRecorder:
         preset = "p4" if "nvenc" in self.actual_encoder else "veryfast"
         tune = "hq" if "nvenc" in self.actual_encoder else "zerolatency"
 
+        input_source = "" if self.config.RECORD_VIDEO_FORMAT == "ddagrab" else self.config.RECORD_INPUT_SOURCE
+
         cmd = [
             self.ffmpeg_path,
             "-y",
             "-f", self.config.RECORD_VIDEO_FORMAT,
             "-framerate", self.config.RECORD_FPS,
-            "-video_size", self.config.RECORD_RESOLUTION,
-            "-i", self.config.RECORD_INPUT_SOURCE,
+        ]
+        
+        if self.config.RECORD_VIDEO_FORMAT != "ddagrab":
+            cmd.extend(["-video_size", self.config.RECORD_RESOLUTION])
+            
+        cmd.extend([
+            "-i", input_source,
             "-f", "f32le",
             "-ar", "48000",
             "-ac", "2",
@@ -139,19 +147,24 @@ class FFmpegRecorder:
             "-preset", preset,
             "-tune", tune,
             "-b:v", "10M",
+            "-pix_fmt", "yuv420p",
             "-c:a", "aac",
             "-b:a", "192k",
+            "-shortest",
             self.current_filepath
-        ]
+        ])
 
         error_log_path = os.path.join(self.config.SAVE_DIR, "ffmpeg_error.log")
         self.log_file = open(error_log_path, "w")
+        
+        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
         
         self.process = subprocess.Popen(
             cmd,
             stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL,
-            stderr=self.log_file
+            stderr=self.log_file,
+            creationflags=creationflags
         )
         
         self.stop_event.clear()
@@ -176,6 +189,12 @@ class FFmpegRecorder:
             try:
                 if self.process.stdin:
                     self.process.stdin.close()
+                
+                if os.name == 'nt':
+                    os.kill(self.process.pid, signal.CTRL_BREAK_EVENT)
+                else:
+                    self.process.terminate()
+                    
                 self.process.wait(timeout=15)
             except subprocess.TimeoutExpired:
                 self.process.terminate()
