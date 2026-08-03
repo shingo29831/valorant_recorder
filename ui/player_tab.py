@@ -2,7 +2,7 @@ import os
 import json
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QListWidget, QPushButton, QLabel, QSlider, QListWidgetItem
 from PyQt6.QtCore import Qt, QUrl
-from PyQt6.QtMultimedia import QMediaPlayer
+from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 from core.config import Config
 
@@ -11,23 +11,33 @@ class PlayerTab(QWidget):
         super().__init__()
         self.config = config
         self.layout = QHBoxLayout()
+        self.layout.setContentsMargins(20, 20, 20, 20)
+        self.layout.setSpacing(20)
+        
+        # Left Panel: Recording List
+        left_layout = QVBoxLayout()
+        title_label = QLabel("MATCH RECORDINGS")
+        title_label.setStyleSheet("font-size: 18px; font-weight: bold; color: #FF4655;")
+        left_layout.addWidget(title_label)
         
         self.record_list = QListWidget()
-        self.record_list.setFixedWidth(250)
+        self.record_list.setFixedWidth(280)
         self.record_list.itemClicked.connect(self.load_recording)
-        
-        left_layout = QVBoxLayout()
-        left_layout.addWidget(QLabel("Recordings (JSON)"))
-        
-        refresh_btn = QPushButton("Refresh List")
-        refresh_btn.clicked.connect(self.refresh_list)
-        left_layout.addWidget(refresh_btn)
         left_layout.addWidget(self.record_list)
         
+        refresh_btn = QPushButton("REFRESH LIST")
+        refresh_btn.clicked.connect(self.refresh_list)
+        left_layout.addWidget(refresh_btn)
+        
+        # Right Panel: Video Player and Events
         right_layout = QVBoxLayout()
         
         self.video_widget = QVideoWidget()
+        self.video_widget.setStyleSheet("background-color: #000000;")
+        
         self.media_player = QMediaPlayer()
+        self.audio_output = QAudioOutput()
+        self.media_player.setAudioOutput(self.audio_output)
         self.media_player.setVideoOutput(self.video_widget)
         
         self.slider = QSlider(Qt.Orientation.Horizontal)
@@ -36,18 +46,22 @@ class PlayerTab(QWidget):
         self.media_player.durationChanged.connect(self.duration_changed)
         
         controls_layout = QHBoxLayout()
-        self.play_btn = QPushButton("Play")
+        self.play_btn = QPushButton("PLAY")
+        self.play_btn.setFixedWidth(100)
         self.play_btn.clicked.connect(self.toggle_play)
         controls_layout.addWidget(self.play_btn)
         controls_layout.addWidget(self.slider)
         
+        events_label = QLabel("MATCH EVENTS (Click to seek)")
+        events_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        
         self.log_list = QListWidget()
-        self.log_list.setFixedHeight(150)
+        self.log_list.setFixedHeight(180)
         self.log_list.itemClicked.connect(self.seek_to_log)
         
         right_layout.addWidget(self.video_widget, stretch=1)
         right_layout.addLayout(controls_layout)
-        right_layout.addWidget(QLabel("Match Events (Click to seek)"))
+        right_layout.addWidget(events_label)
         right_layout.addWidget(self.log_list)
         
         self.layout.addLayout(left_layout)
@@ -73,8 +87,9 @@ class PlayerTab(QWidget):
                 
             video_path = data.get("local_video_path")
             if video_path and os.path.exists(video_path):
-                self.media_player.setSource(QUrl.fromLocalFile(os.path.abspath(video_path)))
-                self.play_btn.setText("Play")
+                abs_path = os.path.abspath(video_path)
+                self.media_player.setSource(QUrl.fromLocalFile(abs_path))
+                self.play_btn.setText("PLAY")
             else:
                 self.media_player.setSource(QUrl())
                 
@@ -86,7 +101,7 @@ class PlayerTab(QWidget):
                     killer = kill.get("killer_display_name", "Unknown")
                     victim = kill.get("victim_display_name", "Unknown")
                     
-                    event_text = f"[{time_ms // 60000:02d}:{(time_ms // 1000) % 60:02d}] {killer} killed {victim}"
+                    event_text = f"[{time_ms // 60000:02d}:{(time_ms // 1000) % 60:02d}] {killer} ⚔ {victim}"
                     list_item = QListWidgetItem(event_text)
                     list_item.setData(Qt.ItemDataRole.UserRole, time_ms)
                     self.log_list.addItem(list_item)
@@ -97,10 +112,10 @@ class PlayerTab(QWidget):
     def toggle_play(self):
         if self.media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
             self.media_player.pause()
-            self.play_btn.setText("Play")
+            self.play_btn.setText("PLAY")
         else:
             self.media_player.play()
-            self.play_btn.setText("Pause")
+            self.play_btn.setText("PAUSE")
 
     def position_changed(self, position):
         self.slider.setValue(position)

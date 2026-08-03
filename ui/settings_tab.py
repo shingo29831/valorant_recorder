@@ -1,11 +1,20 @@
-from PyQt6.QtWidgets import QWidget, QFormLayout, QLineEdit, QComboBox, QPushButton, QMessageBox
+from PyQt6.QtWidgets import QWidget, QFormLayout, QLineEdit, QComboBox, QPushButton, QMessageBox, QVBoxLayout, QLabel
 from core.config import Config
 
 class SettingsTab(QWidget):
     def __init__(self, config: Config):
         super().__init__()
         self.config = config
-        layout = QFormLayout()
+        
+        main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(40, 40, 40, 40)
+        
+        title = QLabel("APPLICATION SETTINGS")
+        title.setStyleSheet("font-size: 24px; font-weight: bold; color: #FF4655; margin-bottom: 20px;")
+        main_layout.addWidget(title)
+        
+        form_layout = QFormLayout()
+        form_layout.setSpacing(15)
         
         self.fps_input = QComboBox()
         self.fps_input.addItems(["30", "60", "120", "144"])
@@ -23,18 +32,23 @@ class SettingsTab(QWidget):
         self.tag_line_input = QLineEdit(self.config.TAG_LINE)
         self.api_key_input = QLineEdit(self.config.API_KEY)
         
-        layout.addRow("Riot ID:", self.riot_id_input)
-        layout.addRow("Tag Line:", self.tag_line_input)
-        layout.addRow("Henrik API Key:", self.api_key_input)
-        layout.addRow("Recording FPS:", self.fps_input)
-        layout.addRow("Encoder:", self.encoder_input)
-        layout.addRow("Resolution:", self.res_input)
+        form_layout.addRow("Riot ID:", self.riot_id_input)
+        form_layout.addRow("Tag Line:", self.tag_line_input)
+        form_layout.addRow("Henrik API Key:", self.api_key_input)
+        form_layout.addRow("Recording FPS:", self.fps_input)
+        form_layout.addRow("Encoder:", self.encoder_input)
+        form_layout.addRow("Resolution:", self.res_input)
         
-        save_btn = QPushButton("Save Settings")
+        main_layout.addLayout(form_layout)
+        
+        save_btn = QPushButton("SAVE SETTINGS")
+        save_btn.setFixedWidth(200)
+        save_btn.setStyleSheet("margin-top: 30px;")
         save_btn.clicked.connect(self.save_settings)
-        layout.addRow(save_btn)
+        main_layout.addWidget(save_btn)
         
-        self.setLayout(layout)
+        main_layout.addStretch()
+        self.setLayout(main_layout)
 
     def save_settings(self):
         self.config.RIOT_ID = self.riot_id_input.text()
@@ -45,4 +59,4 @@ class SettingsTab(QWidget):
         self.config.RECORD_RESOLUTION = self.res_input.currentText()
         
         self.config.save()
-        QMessageBox.information(self, "Success", "Settings saved successfully. Restart app to apply changes.")
+        QMessageBox.information(self, "Success", "Settings saved successfully.\nPlease restart the application to apply changes.")

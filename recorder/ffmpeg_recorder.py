@@ -5,7 +5,6 @@ import queue
 import warnings
 import signal
 import numpy as np
-import soundcard as sc
 from datetime import datetime
 from core.config import Config
 from recorder.ffmpeg_downloader import ensure_ffmpeg_downloaded
@@ -46,6 +45,9 @@ class FFmpegRecorder:
         return encoder
 
     def _audio_capture_loop(self):
+        # COM競合を防ぐため、別スレッド内でインポートを遅延させる
+        import soundcard as sc
+        
         samplerate = 48000
         frames_per_buffer = 1024
         
