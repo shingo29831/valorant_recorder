@@ -115,7 +115,7 @@ class FFmpegRecorder:
             return self.current_filepath
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"match_record_{timestamp}.mkv"
+        filename = f"match_record_{timestamp}.mp4"
         self.current_filepath = os.path.join(self.config.SAVE_DIR, filename)
         os.makedirs(self.config.SAVE_DIR, exist_ok=True)
 
