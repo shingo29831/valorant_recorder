@@ -302,11 +302,25 @@ class PlayerTab(QWidget):
             video_path = self._find_video_for_json(json_filename, data)
             match_info = data.get("match_info", data)
             
+            offset_ms = 0
             if video_path and os.path.exists(video_path):
                 abs_path = os.path.abspath(video_path)
                 self.media_player.setSource(QUrl.fromLocalFile(abs_path))
                 self.media_player.play()
                 self.play_btn.setText("PAUSE")
+                
+                basename = os.path.basename(video_path)
+                date_pattern = re.compile(r"(\d{8}_\d{6})")
+                vid_match = date_pattern.search(basename)
+                if vid_match:
+                    try:
+                        vid_time = datetime.strptime(vid_match.group(1), "%Y%m%d_%H%M%S")
+                        vid_timestamp = vid_time.timestamp()
+                        game_start = match_info.get("metadata", {}).get("game_start")
+                        if game_start:
+                            offset_ms = (vid_timestamp - game_start) * 1000
+                    except Exception as e:
+                        print(f"[PlayerTab] Error calculating offset: {e}")
             else:
                 self.media_player.setSource(QUrl())
                 print(f"[PlayerTab] Video file not found for {json_filename}. Expected: {match_info.get('local_video_path')}")
@@ -335,11 +349,13 @@ class PlayerTab(QWidget):
                 target_display_name = self._guess_player_name(kills_data)
                 
             for kill in kills_data:
-                time_ms = kill.get("kill_time_in_match", 0)
+                time_ms = int(kill.get("kill_time_in_match", 0) - offset_ms)
+                if time_ms < 0:
+                    continue
                 
                 if target_puuid:
-                    killer_puuid = kill.get("killer")
-                    victim_puuid = kill.get("victim")
+                    killer_puuid = kill.get("killer_puuid")
+                    victim_puuid = kill.get("victim_puuid")
                     
                     assistants = kill.get("assistants", [])
                     assistant_puuids = []
@@ -377,9 +393,10 @@ class PlayerTab(QWidget):
                         events.append({"time": time_ms, "type": "kill"})
                     
             for r in match_info.get("rounds", []):
-                start = r.get("start_time_in_match", 0)
-                end = r.get("end_time_in_match", 0)
-                rounds.append({"start": start, "end": end})
+                start = int(r.get("start_time_in_match", 0) - offset_ms)
+                end = int(r.get("end_time_in_match", 0) - offset_ms)
+                if end > 0:
+                    rounds.append({"start": max(0, start), "end": end})
                 
             self.timeline_overlay.set_data(rounds, events)
                     

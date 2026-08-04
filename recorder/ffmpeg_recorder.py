@@ -70,6 +70,8 @@ class FFmpegRecorder:
             if mic:
                 with spk_mic.recorder(samplerate=samplerate, channels=2) as spk_rec, \
                      mic.recorder(samplerate=samplerate, channels=2) as mic_rec:
+                    if hasattr(self, 'audio_ready_event'):
+                        self.audio_ready_event.set()
                     while not self.stop_event.is_set():
                         spk_data = spk_rec.record(numframes=frames_per_buffer)
                         mic_data = mic_rec.record(numframes=frames_per_buffer)
@@ -83,6 +85,8 @@ class FFmpegRecorder:
                             pass
             else:
                 with spk_mic.recorder(samplerate=samplerate, channels=2) as spk_rec:
+                    if hasattr(self, 'audio_ready_event'):
+                        self.audio_ready_event.set()
                     while not self.stop_event.is_set():
                         spk_data = spk_rec.record(numframes=frames_per_buffer)
                         
@@ -94,6 +98,8 @@ class FFmpegRecorder:
             if self.log_file and not self.log_file.closed:
                 self.log_file.write(f"Audio capture error: {e}\n")
                 self.log_file.flush()
+            if hasattr(self, 'audio_ready_event'):
+                self.audio_ready_event.set()
         finally:
             try:
                 self.audio_queue.put_nowait(None)
@@ -132,6 +138,7 @@ class FFmpegRecorder:
         cmd = [
             self.ffmpeg_path,
             "-y",
+            "-thread_queue_size", "1024",
             "-f", self.config.RECORD_VIDEO_FORMAT,
             "-framerate", self.config.RECORD_FPS,
         ]
@@ -141,6 +148,7 @@ class FFmpegRecorder:
             
         cmd.extend([
             "-i", input_source,
+            "-thread_queue_size", "1024",
             "-f", "f32le",
             "-ar", "48000",
             "-ac", "2",
@@ -154,12 +162,27 @@ class FFmpegRecorder:
             "-pix_fmt", "yuv420p",
             "-c:a", "aac",
             "-b:a", "192k",
+            "-af", "aresample=async=1",
             "-shortest",
             self.current_filepath
         ])
 
         error_log_path = os.path.join(self.config.SAVE_DIR, "ffmpeg_error.log")
         self.log_file = open(error_log_path, "w")
+        
+        self.stop_event.clear()
+        self.audio_ready_event = threading.Event()
+        
+        while not self.audio_queue.empty():
+            try:
+                self.audio_queue.get_nowait()
+            except queue.Empty:
+                break
+
+        self.audio_record_thread = threading.Thread(target=self._audio_capture_loop, daemon=True)
+        self.audio_record_thread.start()
+        
+        self.audio_ready_event.wait(timeout=5.0)
         
         creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
         
@@ -171,17 +194,7 @@ class FFmpegRecorder:
             creationflags=creationflags
         )
         
-        self.stop_event.clear()
-        
-        while not self.audio_queue.empty():
-            try:
-                self.audio_queue.get_nowait()
-            except queue.Empty:
-                break
-
-        self.audio_record_thread = threading.Thread(target=self._audio_capture_loop, daemon=True)
         self.audio_write_thread = threading.Thread(target=self._audio_write_loop, daemon=True)
-        self.audio_record_thread.start()
         self.audio_write_thread.start()
         
         return self.current_filepath
