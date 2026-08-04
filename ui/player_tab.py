@@ -1,7 +1,9 @@
 import os
 import json
+import subprocess
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QListWidget, QPushButton, QLabel, QSlider, QListWidgetItem
-from PyQt6.QtCore import Qt, QUrl
+from PyQt6.QtCore import Qt, QUrl, QSize
+from PyQt6.QtGui import QIcon
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 from core.config import Config
@@ -21,7 +23,13 @@ class PlayerTab(QWidget):
         left_layout.addWidget(title_label)
         
         self.record_list = QListWidget()
-        self.record_list.setFixedWidth(280)
+        self.record_list.setFixedWidth(400)
+        self.record_list.setViewMode(QListWidget.ViewMode.IconMode)
+        self.record_list.setIconSize(QSize(160, 90))
+        self.record_list.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self.record_list.setSpacing(10)
+        self.record_list.setGridSize(QSize(170, 120))
+        self.record_list.setWordWrap(True)
         self.record_list.itemClicked.connect(self.load_recording)
         left_layout.addWidget(self.record_list)
         
@@ -44,6 +52,7 @@ class PlayerTab(QWidget):
         self.slider.sliderMoved.connect(self.set_position)
         self.media_player.positionChanged.connect(self.position_changed)
         self.media_player.durationChanged.connect(self.duration_changed)
+        self.media_player.errorOccurred.connect(self.handle_media_error)
         
         controls_layout = QHBoxLayout()
         self.play_btn = QPushButton("PLAY")
@@ -52,7 +61,7 @@ class PlayerTab(QWidget):
         controls_layout.addWidget(self.play_btn)
         controls_layout.addWidget(self.slider)
         
-        events_label = QLabel("MATCH EVENTS (Click to seek)")
+        events_label = QLabel("MATCH EVENTS (Click to seek) / ERRORS")
         events_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
         
         self.log_list = QListWidget()
@@ -77,7 +86,30 @@ class PlayerTab(QWidget):
             
         for f in sorted(os.listdir(self.config.SAVE_DIR), reverse=True):
             if f.endswith(".json"):
-                self.record_list.addItem(f)
+                json_path = os.path.join(self.config.SAVE_DIR, f)
+                try:
+                    with open(json_path, 'r', encoding='utf-8') as jf:
+                        data = json.load(jf)
+                    
+                    video_path = data.get("local_video_path")
+                    item = QListWidgetItem(f)
+                    
+                    if video_path and os.path.exists(video_path):
+                        thumb_path = os.path.join(self.config.SAVE_DIR, f.replace('.json', '.jpg'))
+                        if not os.path.exists(thumb_path):
+                            cmd = [
+                                "ffmpeg", "-y", "-i", video_path,
+                                "-ss", "00:00:01", "-vframes", "1",
+                                "-vf", "scale=160:-1", thumb_path
+                            ]
+                            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                        
+                        if os.path.exists(thumb_path):
+                            item.setIcon(QIcon(thumb_path))
+                    
+                    self.record_list.addItem(item)
+                except Exception as e:
+                    print(f"Error loading {f}: {e}")
 
     def load_recording(self, item):
         json_path = os.path.join(self.config.SAVE_DIR, item.text())
@@ -108,6 +140,13 @@ class PlayerTab(QWidget):
                     
         except Exception as e:
             print(f"Error loading recording: {e}")
+
+    def handle_media_error(self, error, error_string):
+        error_msg = f"Playback Error: {error_string} (Code: {error})"
+        print(error_msg)
+        error_item = QListWidgetItem(error_msg)
+        error_item.setForeground(Qt.GlobalColor.red)
+        self.log_list.addItem(error_item)
 
     def toggle_play(self):
         if self.media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
