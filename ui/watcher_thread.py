@@ -25,6 +25,7 @@ class WatcherThread(QThread):
             on_match_end=self.handle_match_end
         )
         self.current_video_path = None
+        self.match_start_time = 0
         self._is_running = True
 
     def handle_match_start(self, is_range: bool):
@@ -32,6 +33,7 @@ class WatcherThread(QThread):
             self.log_signal.emit("[Recorder] 射撃訓練場(Range)を検知しました。録画とAPI取得をスキップします。")
             return
 
+        self.match_start_time = time.time()
         self.log_signal.emit("[Recorder] Match started. Starting FFmpeg recording...")
         try:
             self.current_video_path = self.recorder.start_recording()
@@ -50,13 +52,43 @@ class WatcherThread(QThread):
             self.log_signal.emit(f"[Error] Failed to stop recording: {e}")
 
         self.log_signal.emit("[API] Waiting for match data to be available on Riot servers...")
-        time.sleep(30)
+        
+        match_data = None
+        mmr_change = 0
+
+        for attempt in range(6):
+            time.sleep(30)
+            try:
+                api_match_data = self.api.fetch_latest_match()
+                game_start = api_match_data.get('metadata', {}).get('game_start', 0)
+                
+                if abs(game_start - self.match_start_time) < 3600:
+                    match_data = api_match_data
+                    match_id = match_data['metadata']['matchid']
+                    mmr_change = self.api.fetch_mmr_change(match_id)
+                    self.log_signal.emit("[API] Successfully fetched current match data.")
+                    break
+                else:
+                    self.log_signal.emit(f"[API] Fetched match is old (diff: {abs(game_start - self.match_start_time)}s). Retrying...")
+            except Exception as e:
+                self.log_signal.emit(f"[API] Attempt {attempt+1} failed: {e}")
+
+        if not match_data:
+            self.log_signal.emit("[Storage] Creating local fallback metadata for custom/untracked match.")
+            match_data = {
+                "metadata": {
+                    "matchid": f"custom_{int(time.time())}",
+                    "map": "Custom / Unknown",
+                    "game_start": int(self.match_start_time),
+                    "game_length": int(time.time() - self.match_start_time),
+                    "mode": "Custom"
+                },
+                "players": {"all_players": []},
+                "kills": [],
+                "rounds": []
+            }
 
         try:
-            match_data = self.api.fetch_latest_match()
-            match_id = match_data['metadata']['matchid']
-            mmr_change = self.api.fetch_mmr_change(match_id)
-            
             if self.current_video_path:
                 match_data['local_video_path'] = self.current_video_path
 

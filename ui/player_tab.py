@@ -239,10 +239,19 @@ class PlayerTab(QWidget):
             for key in ["killer_display_name", "victim_display_name"]:
                 name = k.get(key)
                 if name and name != "Unknown":
-                    counts[name] = counts.get(name, 0) + 1
-            for name in k.get("assistants", []):
+                    base_name = name.split("#")[0]
+                    counts[base_name] = counts.get(base_name, 0) + 1
+            
+            for ast in k.get("assistants", []):
+                name = ""
+                if isinstance(ast, dict):
+                    name = ast.get("assistant_display_name", "")
+                elif isinstance(ast, str):
+                    name = ast
                 if name and name != "Unknown":
-                    counts[name] = counts.get(name, 0) + 1
+                    base_name = name.split("#")[0]
+                    counts[base_name] = counts.get(base_name, 0) + 1
+                    
         if counts:
             return max(counts, key=counts.get)
         return ""
@@ -303,26 +312,67 @@ class PlayerTab(QWidget):
             events = []
             rounds = []
             
-            player_name = data.get("player_name", getattr(self.config, "PLAYER_NAME", ""))
+            target_puuid = None
+            target_display_name = None
+            
+            riot_id = getattr(self.config, "RIOT_ID", "").lower()
+            tag_line = getattr(self.config, "TAG_LINE", "").lower()
+            
+            players = data.get("players", {}).get("all_players", [])
+            for p in players:
+                p_name = p.get("name", "").lower()
+                p_tag = p.get("tag", "").lower()
+                if p_name == riot_id and p_tag == tag_line:
+                    target_puuid = p.get("puuid")
+                    target_display_name = p.get("name")
+                    break
+            
             kills_data = data.get("kills", [])
             
-            if not player_name and kills_data:
-                player_name = self._guess_player_name(kills_data)
+            if not target_puuid and kills_data:
+                target_display_name = self._guess_player_name(kills_data)
                 
             for kill in kills_data:
                 time_ms = kill.get("kill_time_in_match", 0)
-                killer = kill.get("killer_display_name", "Unknown")
-                victim = kill.get("victim_display_name", "Unknown")
-                assistants = kill.get("assistants", [])
                 
-                if killer == player_name:
-                    events.append({"time": time_ms, "type": "kill"})
-                elif victim == player_name:
-                    events.append({"time": time_ms, "type": "death"})
-                elif player_name in assistants:
-                    events.append({"time": time_ms, "type": "assist"})
-                elif not player_name:
-                    events.append({"time": time_ms, "type": "kill"})
+                if target_puuid:
+                    killer_puuid = kill.get("killer_puuid")
+                    victim_puuid = kill.get("victim_puuid")
+                    
+                    assistants = kill.get("assistants", [])
+                    assistant_puuids = []
+                    for ast in assistants:
+                        if isinstance(ast, dict):
+                            assistant_puuids.append(ast.get("assistant_puuid"))
+                        elif isinstance(ast, str):
+                            assistant_puuids.append(ast)
+                            
+                    if killer_puuid == target_puuid:
+                        events.append({"time": time_ms, "type": "kill"})
+                    elif victim_puuid == target_puuid:
+                        events.append({"time": time_ms, "type": "death"})
+                    elif target_puuid in assistant_puuids:
+                        events.append({"time": time_ms, "type": "assist"})
+                else:
+                    killer = kill.get("killer_display_name", "Unknown")
+                    victim = kill.get("victim_display_name", "Unknown")
+                    
+                    assistants = kill.get("assistants", [])
+                    assistant_names = []
+                    for ast in assistants:
+                        if isinstance(ast, dict):
+                            assistant_names.append(ast.get("assistant_display_name", ""))
+                        elif isinstance(ast, str):
+                            assistant_names.append(ast)
+                            
+                    if target_display_name and target_display_name in killer:
+                        events.append({"time": time_ms, "type": "kill"})
+                    elif target_display_name and target_display_name in victim:
+                        events.append({"time": time_ms, "type": "death"})
+                    elif target_display_name and any(target_display_name in ast for ast in assistant_names):
+                        events.append({"time": time_ms, "type": "assist"})
+                    elif not target_display_name:
+                        events.append({"time": time_ms, "type": "kill"})
                     
             for r in data.get("rounds", []):
                 start = r.get("start_time_in_match", 0)

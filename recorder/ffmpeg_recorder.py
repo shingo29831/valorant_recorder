@@ -47,6 +47,8 @@ class FFmpegRecorder:
     def _audio_capture_loop(self):
         # COM競合を防ぐため、別スレッド内でインポートを遅延させる
         import soundcard as sc
+        import warnings
+        warnings.filterwarnings("ignore", category=sc.SoundcardRuntimeWarning)
         
         samplerate = 48000
         frames_per_buffer = 1024
