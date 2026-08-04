@@ -29,6 +29,7 @@ ffmpeg_error.log
 filtered_match_logs.txt
 
 # Match data and recordings
+records/*
 match_*.json
 *.mkv
 *.mp4
