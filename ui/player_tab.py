@@ -188,7 +188,8 @@ class PlayerTab(QWidget):
         self.stacked_widget.setCurrentWidget(self.list_page)
 
     def _find_video_for_json(self, json_filename: str, json_data: dict) -> str:
-        video_path = json_data.get("local_video_path")
+        match_info = json_data.get("match_info", json_data)
+        video_path = match_info.get("local_video_path") or json_data.get("local_video_path")
         
         if video_path:
             video_path = video_path.replace("\\", "/")
@@ -299,6 +300,7 @@ class PlayerTab(QWidget):
                 data = json.load(f)
                 
             video_path = self._find_video_for_json(json_filename, data)
+            match_info = data.get("match_info", data)
             
             if video_path and os.path.exists(video_path):
                 abs_path = os.path.abspath(video_path)
@@ -307,7 +309,7 @@ class PlayerTab(QWidget):
                 self.play_btn.setText("PAUSE")
             else:
                 self.media_player.setSource(QUrl())
-                print(f"[PlayerTab] Video file not found for {json_filename}. Expected: {data.get('local_video_path')}")
+                print(f"[PlayerTab] Video file not found for {json_filename}. Expected: {match_info.get('local_video_path')}")
                 
             events = []
             rounds = []
@@ -318,7 +320,7 @@ class PlayerTab(QWidget):
             riot_id = getattr(self.config, "RIOT_ID", "").lower()
             tag_line = getattr(self.config, "TAG_LINE", "").lower()
             
-            players = data.get("players", {}).get("all_players", [])
+            players = match_info.get("players", {}).get("all_players", [])
             for p in players:
                 p_name = p.get("name", "").lower()
                 p_tag = p.get("tag", "").lower()
@@ -327,7 +329,7 @@ class PlayerTab(QWidget):
                     target_display_name = p.get("name")
                     break
             
-            kills_data = data.get("kills", [])
+            kills_data = match_info.get("kills", [])
             
             if not target_puuid and kills_data:
                 target_display_name = self._guess_player_name(kills_data)
@@ -374,7 +376,7 @@ class PlayerTab(QWidget):
                     elif not target_display_name:
                         events.append({"time": time_ms, "type": "kill"})
                     
-            for r in data.get("rounds", []):
+            for r in match_info.get("rounds", []):
                 start = r.get("start_time_in_match", 0)
                 end = r.get("end_time_in_match", 0)
                 rounds.append({"start": start, "end": end})
