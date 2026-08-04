@@ -1,6 +1,8 @@
 import os
 import json
 import subprocess
+import re
+from datetime import datetime
 from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QListWidget, 
                              QPushButton, QLabel, QSlider, QListWidgetItem, QStackedWidget)
 from PyQt6.QtCore import Qt, QUrl, QSize
@@ -16,7 +18,6 @@ class PlayerTab(QWidget):
         self.layout = QVBoxLayout()
         self.layout.setContentsMargins(0, 0, 0, 0)
         
-        # 画面切り替え用のスタックドウィジェット
         self.stacked_widget = QStackedWidget()
         self.layout.addWidget(self.stacked_widget)
         self.setLayout(self.layout)
@@ -90,7 +91,7 @@ class PlayerTab(QWidget):
         controls_layout.addWidget(self.play_btn)
         controls_layout.addWidget(self.slider)
         
-        events_label = QLabel("MATCH EVENTS (Click to seek) / ERRORS")
+        events_label = QLabel("MATCH EVENTS (Click to seek)")
         events_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
         
         self.log_list = QListWidget()
@@ -108,6 +109,52 @@ class PlayerTab(QWidget):
         self.media_player.stop()
         self.stacked_widget.setCurrentWidget(self.list_page)
 
+    def _find_video_for_json(self, json_filename: str, json_data: dict) -> str:
+        video_path = json_data.get("local_video_path")
+        
+        if video_path:
+            video_path = video_path.replace("\\", "/")
+            if video_path.startswith("./"):
+                abs_path = os.path.abspath(video_path)
+                if os.path.exists(abs_path):
+                    return abs_path
+            elif os.path.exists(video_path):
+                return os.path.abspath(video_path)
+                
+            basename = os.path.basename(video_path)
+            fallback_path = os.path.join(self.config.SAVE_DIR, basename)
+            if os.path.exists(fallback_path):
+                return fallback_path
+
+        date_pattern = re.compile(r"(\d{8}_\d{6})")
+        json_match = date_pattern.search(json_filename)
+        
+        if not json_match:
+            return ""
+            
+        try:
+            json_time = datetime.strptime(json_match.group(1), "%Y%m%d_%H%M%S")
+        except ValueError:
+            return ""
+
+        best_video = ""
+        min_diff = float('inf')
+
+        for f in os.listdir(self.config.SAVE_DIR):
+            if f.endswith(('.mp4', '.mkv', '.avi')):
+                vid_match = date_pattern.search(f)
+                if vid_match:
+                    try:
+                        vid_time = datetime.strptime(vid_match.group(1), "%Y%m%d_%H%M%S")
+                        diff = abs((json_time - vid_time).total_seconds())
+                        if diff < min_diff and diff < 7200:
+                            min_diff = diff
+                            best_video = os.path.join(self.config.SAVE_DIR, f)
+                    except ValueError:
+                        continue
+                        
+        return best_video
+
     def refresh_list(self):
         self.record_list.clear()
         if not os.path.exists(self.config.SAVE_DIR):
@@ -120,17 +167,7 @@ class PlayerTab(QWidget):
                     with open(json_path, 'r', encoding='utf-8') as jf:
                         data = json.load(jf)
                     
-                    video_path = data.get("local_video_path")
-                    
-                    # フォールバック: JSON内のパスが無効な場合、同階層の同名動画を探す
-                    if not video_path or not os.path.exists(video_path):
-                        base_name = os.path.splitext(f)[0]
-                        for ext in ['.mkv', '.mp4', '.avi']:
-                            fallback = os.path.join(self.config.SAVE_DIR, base_name + ext)
-                            if os.path.exists(fallback):
-                                video_path = fallback
-                                break
-
+                    video_path = self._find_video_for_json(f, data)
                     item = QListWidgetItem(f)
                     
                     if video_path and os.path.exists(video_path):
@@ -148,7 +185,7 @@ class PlayerTab(QWidget):
                     
                     self.record_list.addItem(item)
                 except Exception as e:
-                    print(f"Error loading {f}: {e}")
+                    print(f"[PlayerTab] Error loading {f}: {e}")
 
     def load_recording(self, item):
         json_filename = item.text()
@@ -161,16 +198,7 @@ class PlayerTab(QWidget):
             with open(json_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 
-            video_path = data.get("local_video_path")
-            
-            # フォールバック: JSON内のパスが無効な場合、同階層の同名動画を探す
-            if not video_path or not os.path.exists(video_path):
-                base_name = os.path.splitext(json_filename)[0]
-                for ext in ['.mkv', '.mp4', '.avi']:
-                    fallback = os.path.join(self.config.SAVE_DIR, base_name + ext)
-                    if os.path.exists(fallback):
-                        video_path = fallback
-                        break
+            video_path = self._find_video_for_json(json_filename, data)
             
             if video_path and os.path.exists(video_path):
                 abs_path = os.path.abspath(video_path)
@@ -179,7 +207,7 @@ class PlayerTab(QWidget):
                 self.play_btn.setText("PAUSE")
             else:
                 self.media_player.setSource(QUrl())
-                self.add_error_log(f"Video file not found for {json_filename}. Expected: {data.get('local_video_path')}")
+                print(f"[PlayerTab] Video file not found for {json_filename}. Expected: {data.get('local_video_path')}")
                 
             if "kills" in data:
                 for kill in data["kills"]:
@@ -193,15 +221,10 @@ class PlayerTab(QWidget):
                     self.log_list.addItem(list_item)
                     
         except Exception as e:
-            self.add_error_log(f"Error loading recording data: {e}")
-
-    def add_error_log(self, message: str):
-        error_item = QListWidgetItem(message)
-        error_item.setForeground(Qt.GlobalColor.red)
-        self.log_list.addItem(error_item)
+            print(f"[PlayerTab] Error loading recording data: {e}")
 
     def handle_media_error(self, error, error_string):
-        self.add_error_log(f"Playback Error: {error_string} (Code: {error})")
+        print(f"[PlayerTab] Playback Error: {error_string} (Code: {error})")
 
     def toggle_play(self):
         if self.media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
