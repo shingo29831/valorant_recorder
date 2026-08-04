@@ -1,7 +1,8 @@
 import os
 import json
 import subprocess
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QListWidget, QPushButton, QLabel, QSlider, QListWidgetItem
+from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QListWidget, 
+                             QPushButton, QLabel, QSlider, QListWidgetItem, QStackedWidget)
 from PyQt6.QtCore import Qt, QUrl, QSize
 from PyQt6.QtGui import QIcon
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
@@ -12,33 +13,61 @@ class PlayerTab(QWidget):
     def __init__(self, config: Config):
         super().__init__()
         self.config = config
-        self.layout = QHBoxLayout()
-        self.layout.setContentsMargins(20, 20, 20, 20)
-        self.layout.setSpacing(20)
+        self.layout = QVBoxLayout()
+        self.layout.setContentsMargins(0, 0, 0, 0)
         
-        # Left Panel: Recording List
-        left_layout = QVBoxLayout()
+        # 画面切り替え用のスタックドウィジェット
+        self.stacked_widget = QStackedWidget()
+        self.layout.addWidget(self.stacked_widget)
+        self.setLayout(self.layout)
+        
+        self.setup_list_page()
+        self.setup_player_page()
+        
+        self.stacked_widget.addWidget(self.list_page)
+        self.stacked_widget.addWidget(self.player_page)
+        
+        self.refresh_list()
+
+    def setup_list_page(self):
+        self.list_page = QWidget()
+        layout = QVBoxLayout()
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        header_layout = QHBoxLayout()
         title_label = QLabel("MATCH RECORDINGS")
         title_label.setStyleSheet("font-size: 18px; font-weight: bold; color: #FF4655;")
-        left_layout.addWidget(title_label)
-        
-        self.record_list = QListWidget()
-        self.record_list.setFixedWidth(400)
-        self.record_list.setViewMode(QListWidget.ViewMode.IconMode)
-        self.record_list.setIconSize(QSize(160, 90))
-        self.record_list.setResizeMode(QListWidget.ResizeMode.Adjust)
-        self.record_list.setSpacing(10)
-        self.record_list.setGridSize(QSize(170, 120))
-        self.record_list.setWordWrap(True)
-        self.record_list.itemClicked.connect(self.load_recording)
-        left_layout.addWidget(self.record_list)
         
         refresh_btn = QPushButton("REFRESH LIST")
+        refresh_btn.setFixedWidth(150)
         refresh_btn.clicked.connect(self.refresh_list)
-        left_layout.addWidget(refresh_btn)
         
-        # Right Panel: Video Player and Events
-        right_layout = QVBoxLayout()
+        header_layout.addWidget(title_label)
+        header_layout.addStretch()
+        header_layout.addWidget(refresh_btn)
+        
+        self.record_list = QListWidget()
+        self.record_list.setViewMode(QListWidget.ViewMode.IconMode)
+        self.record_list.setIconSize(QSize(240, 135))
+        self.record_list.setResizeMode(QListWidget.ResizeMode.Adjust)
+        self.record_list.setSpacing(15)
+        self.record_list.setGridSize(QSize(260, 180))
+        self.record_list.setWordWrap(True)
+        self.record_list.itemClicked.connect(self.load_recording)
+        
+        layout.addLayout(header_layout)
+        layout.addWidget(self.record_list)
+        self.list_page.setLayout(layout)
+
+    def setup_player_page(self):
+        self.player_page = QWidget()
+        layout = QVBoxLayout()
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        back_btn = QPushButton("← BACK TO LIST")
+        back_btn.setFixedWidth(150)
+        back_btn.clicked.connect(self.show_list_page)
+        layout.addWidget(back_btn)
         
         self.video_widget = QVideoWidget()
         self.video_widget.setStyleSheet("background-color: #000000;")
@@ -65,19 +94,19 @@ class PlayerTab(QWidget):
         events_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
         
         self.log_list = QListWidget()
-        self.log_list.setFixedHeight(180)
+        self.log_list.setFixedHeight(150)
         self.log_list.itemClicked.connect(self.seek_to_log)
         
-        right_layout.addWidget(self.video_widget, stretch=1)
-        right_layout.addLayout(controls_layout)
-        right_layout.addWidget(events_label)
-        right_layout.addWidget(self.log_list)
+        layout.addWidget(self.video_widget, stretch=1)
+        layout.addLayout(controls_layout)
+        layout.addWidget(events_label)
+        layout.addWidget(self.log_list)
         
-        self.layout.addLayout(left_layout)
-        self.layout.addLayout(right_layout)
-        self.setLayout(self.layout)
-        
-        self.refresh_list()
+        self.player_page.setLayout(layout)
+
+    def show_list_page(self):
+        self.media_player.stop()
+        self.stacked_widget.setCurrentWidget(self.list_page)
 
     def refresh_list(self):
         self.record_list.clear()
@@ -92,6 +121,16 @@ class PlayerTab(QWidget):
                         data = json.load(jf)
                     
                     video_path = data.get("local_video_path")
+                    
+                    # フォールバック: JSON内のパスが無効な場合、同階層の同名動画を探す
+                    if not video_path or not os.path.exists(video_path):
+                        base_name = os.path.splitext(f)[0]
+                        for ext in ['.mkv', '.mp4', '.avi']:
+                            fallback = os.path.join(self.config.SAVE_DIR, base_name + ext)
+                            if os.path.exists(fallback):
+                                video_path = fallback
+                                break
+
                     item = QListWidgetItem(f)
                     
                     if video_path and os.path.exists(video_path):
@@ -100,7 +139,7 @@ class PlayerTab(QWidget):
                             cmd = [
                                 "ffmpeg", "-y", "-i", video_path,
                                 "-ss", "00:00:01", "-vframes", "1",
-                                "-vf", "scale=160:-1", thumb_path
+                                "-vf", "scale=240:-1", thumb_path
                             ]
                             subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
                         
@@ -112,21 +151,36 @@ class PlayerTab(QWidget):
                     print(f"Error loading {f}: {e}")
 
     def load_recording(self, item):
-        json_path = os.path.join(self.config.SAVE_DIR, item.text())
+        json_filename = item.text()
+        json_path = os.path.join(self.config.SAVE_DIR, json_filename)
+        
+        self.log_list.clear()
+        self.stacked_widget.setCurrentWidget(self.player_page)
+        
         try:
             with open(json_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 
             video_path = data.get("local_video_path")
+            
+            # フォールバック: JSON内のパスが無効な場合、同階層の同名動画を探す
+            if not video_path or not os.path.exists(video_path):
+                base_name = os.path.splitext(json_filename)[0]
+                for ext in ['.mkv', '.mp4', '.avi']:
+                    fallback = os.path.join(self.config.SAVE_DIR, base_name + ext)
+                    if os.path.exists(fallback):
+                        video_path = fallback
+                        break
+            
             if video_path and os.path.exists(video_path):
                 abs_path = os.path.abspath(video_path)
                 self.media_player.setSource(QUrl.fromLocalFile(abs_path))
-                self.play_btn.setText("PLAY")
+                self.media_player.play()
+                self.play_btn.setText("PAUSE")
             else:
                 self.media_player.setSource(QUrl())
+                self.add_error_log(f"Video file not found for {json_filename}. Expected: {data.get('local_video_path')}")
                 
-            self.log_list.clear()
-            
             if "kills" in data:
                 for kill in data["kills"]:
                     time_ms = kill.get("kill_time_in_match", 0)
@@ -139,14 +193,15 @@ class PlayerTab(QWidget):
                     self.log_list.addItem(list_item)
                     
         except Exception as e:
-            print(f"Error loading recording: {e}")
+            self.add_error_log(f"Error loading recording data: {e}")
 
-    def handle_media_error(self, error, error_string):
-        error_msg = f"Playback Error: {error_string} (Code: {error})"
-        print(error_msg)
-        error_item = QListWidgetItem(error_msg)
+    def add_error_log(self, message: str):
+        error_item = QListWidgetItem(message)
         error_item.setForeground(Qt.GlobalColor.red)
         self.log_list.addItem(error_item)
+
+    def handle_media_error(self, error, error_string):
+        self.add_error_log(f"Playback Error: {error_string} (Code: {error})")
 
     def toggle_play(self):
         if self.media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
