@@ -336,8 +336,8 @@ class PlayerTab(QWidget):
                 time_ms = kill.get("kill_time_in_match", 0)
                 
                 if target_puuid:
-                    killer_puuid = kill.get("killer_puuid")
-                    victim_puuid = kill.get("victim_puuid")
+                    killer_puuid = kill.get("killer")
+                    victim_puuid = kill.get("victim")
                     
                     assistants = kill.get("assistants", [])
                     assistant_puuids = []
