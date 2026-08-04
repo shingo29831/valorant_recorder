@@ -5,11 +5,89 @@ import re
 from datetime import datetime
 from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QListWidget, 
                              QPushButton, QLabel, QSlider, QListWidgetItem, QStackedWidget)
-from PyQt6.QtCore import Qt, QUrl, QSize
-from PyQt6.QtGui import QIcon
+from PyQt6.QtCore import Qt, QUrl, QSize, pyqtSignal
+from PyQt6.QtGui import QIcon, QPainter, QColor
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 from core.config import Config
+
+class TimelineOverlay(QWidget):
+    seekRequested = pyqtSignal(int)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.rounds = []
+        self.events = []
+        self.duration = 0
+        self.setFixedHeight(30)
+
+    def set_duration(self, duration):
+        self.duration = duration
+        self.update()
+
+    def set_data(self, rounds, events):
+        self.rounds = rounds
+        self.events = events
+        self.update()
+
+    def paintEvent(self, event):
+        if self.duration <= 0:
+            return
+            
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        width = self.width()
+        height = self.height()
+        
+        # QSliderのデフォルトの左右マージンに合わせる
+        margin = 10
+        draw_width = width - margin * 2
+        if draw_width <= 0:
+            return
+            
+        # ラウンドの描画 (下部 8px)
+        round_y = height - 8
+        round_h = 8
+        
+        # 背景（準備フェーズ / ラウンド外）
+        painter.fillRect(margin, round_y, draw_width, round_h, QColor("#444444"))
+        
+        # ラウンド中（Action Phase）
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#FF4655"))
+        for r in self.rounds:
+            start_x = margin + (r['start'] / self.duration) * draw_width
+            end_x = margin + (r['end'] / self.duration) * draw_width
+            painter.drawRect(int(start_x), round_y, int(max(1, end_x - start_x)), round_h)
+            
+        # イベントアイコンの描画
+        for ev in self.events:
+            x = margin + (ev['time'] / self.duration) * draw_width
+            
+            if ev['type'] == 'kill':
+                color = QColor("#00FF00") # 緑
+            elif ev['type'] == 'death':
+                color = QColor("#FF0000") # 赤
+            elif ev['type'] == 'assist':
+                color = QColor("#00A2FF") # 青
+            else:
+                color = QColor("#FFFFFF")
+                
+            painter.setBrush(color)
+            painter.drawEllipse(int(x) - 4, round_y - 14, 8, 8)
+
+    def mousePressEvent(self, event):
+        if self.duration <= 0:
+            return
+        margin = 10
+        draw_width = self.width() - margin * 2
+        x = event.position().x() - margin
+        x = max(0, min(x, draw_width))
+        
+        pos_ms = int((x / draw_width) * self.duration)
+        self.seekRequested.emit(pos_ms)
+
 
 class PlayerTab(QWidget):
     def __init__(self, config: Config):
@@ -84,24 +162,24 @@ class PlayerTab(QWidget):
         self.media_player.durationChanged.connect(self.duration_changed)
         self.media_player.errorOccurred.connect(self.handle_media_error)
         
+        self.timeline_overlay = TimelineOverlay()
+        self.timeline_overlay.seekRequested.connect(self.set_position)
+        
+        slider_layout = QVBoxLayout()
+        slider_layout.setSpacing(0)
+        slider_layout.setContentsMargins(0, 0, 0, 0)
+        slider_layout.addWidget(self.timeline_overlay)
+        slider_layout.addWidget(self.slider)
+        
         controls_layout = QHBoxLayout()
         self.play_btn = QPushButton("PLAY")
         self.play_btn.setFixedWidth(100)
         self.play_btn.clicked.connect(self.toggle_play)
         controls_layout.addWidget(self.play_btn)
-        controls_layout.addWidget(self.slider)
-        
-        events_label = QLabel("MATCH EVENTS (Click to seek)")
-        events_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
-        
-        self.log_list = QListWidget()
-        self.log_list.setFixedHeight(150)
-        self.log_list.itemClicked.connect(self.seek_to_log)
+        controls_layout.addLayout(slider_layout)
         
         layout.addWidget(self.video_widget, stretch=1)
         layout.addLayout(controls_layout)
-        layout.addWidget(events_label)
-        layout.addWidget(self.log_list)
         
         self.player_page.setLayout(layout)
 
@@ -155,6 +233,20 @@ class PlayerTab(QWidget):
                         
         return best_video
 
+    def _guess_player_name(self, kills: list) -> str:
+        counts = {}
+        for k in kills:
+            for key in ["killer_display_name", "victim_display_name"]:
+                name = k.get(key)
+                if name and name != "Unknown":
+                    counts[name] = counts.get(name, 0) + 1
+            for name in k.get("assistants", []):
+                if name and name != "Unknown":
+                    counts[name] = counts.get(name, 0) + 1
+        if counts:
+            return max(counts, key=counts.get)
+        return ""
+
     def refresh_list(self):
         self.record_list.clear()
         if not os.path.exists(self.config.SAVE_DIR):
@@ -191,7 +283,6 @@ class PlayerTab(QWidget):
         json_filename = item.text()
         json_path = os.path.join(self.config.SAVE_DIR, json_filename)
         
-        self.log_list.clear()
         self.stacked_widget.setCurrentWidget(self.player_page)
         
         try:
@@ -209,16 +300,36 @@ class PlayerTab(QWidget):
                 self.media_player.setSource(QUrl())
                 print(f"[PlayerTab] Video file not found for {json_filename}. Expected: {data.get('local_video_path')}")
                 
-            if "kills" in data:
-                for kill in data["kills"]:
-                    time_ms = kill.get("kill_time_in_match", 0)
-                    killer = kill.get("killer_display_name", "Unknown")
-                    victim = kill.get("victim_display_name", "Unknown")
+            events = []
+            rounds = []
+            
+            player_name = data.get("player_name", getattr(self.config, "PLAYER_NAME", ""))
+            kills_data = data.get("kills", [])
+            
+            if not player_name and kills_data:
+                player_name = self._guess_player_name(kills_data)
+                
+            for kill in kills_data:
+                time_ms = kill.get("kill_time_in_match", 0)
+                killer = kill.get("killer_display_name", "Unknown")
+                victim = kill.get("victim_display_name", "Unknown")
+                assistants = kill.get("assistants", [])
+                
+                if killer == player_name:
+                    events.append({"time": time_ms, "type": "kill"})
+                elif victim == player_name:
+                    events.append({"time": time_ms, "type": "death"})
+                elif player_name in assistants:
+                    events.append({"time": time_ms, "type": "assist"})
+                elif not player_name:
+                    events.append({"time": time_ms, "type": "kill"})
                     
-                    event_text = f"[{time_ms // 60000:02d}:{(time_ms // 1000) % 60:02d}] {killer} ⚔ {victim}"
-                    list_item = QListWidgetItem(event_text)
-                    list_item.setData(Qt.ItemDataRole.UserRole, time_ms)
-                    self.log_list.addItem(list_item)
+            for r in data.get("rounds", []):
+                start = r.get("start_time_in_match", 0)
+                end = r.get("end_time_in_match", 0)
+                rounds.append({"start": start, "end": end})
+                
+            self.timeline_overlay.set_data(rounds, events)
                     
         except Exception as e:
             print(f"[PlayerTab] Error loading recording data: {e}")
@@ -239,11 +350,7 @@ class PlayerTab(QWidget):
 
     def duration_changed(self, duration):
         self.slider.setRange(0, duration)
+        self.timeline_overlay.set_duration(duration)
 
     def set_position(self, position):
         self.media_player.setPosition(position)
-        
-    def seek_to_log(self, item):
-        time_ms = item.data(Qt.ItemDataRole.UserRole)
-        if time_ms is not None:
-            self.media_player.setPosition(time_ms)

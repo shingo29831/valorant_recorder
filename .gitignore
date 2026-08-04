@@ -32,6 +32,7 @@ filtered_match_logs.txt
 match_*.json
 *.mkv
 *.mp4
+*.jpg
 
 # OS generated files
 .DS_Store
