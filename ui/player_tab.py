@@ -4,7 +4,8 @@ import subprocess
 import re
 from datetime import datetime
 from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QListWidget, 
-                             QPushButton, QLabel, QSlider, QListWidgetItem, QStackedWidget)
+                             QPushButton, QLabel, QSlider, QListWidgetItem, QStackedWidget,
+                             QStyleOptionSlider, QStyle)
 from PyQt6.QtCore import Qt, QUrl, QSize, pyqtSignal
 from PyQt6.QtGui import QIcon, QPainter, QColor
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
@@ -14,12 +15,33 @@ from core.config import Config
 class TimelineOverlay(QWidget):
     seekRequested = pyqtSignal(int)
 
-    def __init__(self, parent=None):
+    def __init__(self, slider: QSlider, parent=None):
         super().__init__(parent)
+        self.slider = slider
         self.rounds = []
         self.events = []
         self.duration = 0
         self.setFixedHeight(30)
+
+    def _get_slider_geometry(self):
+        opt = QStyleOptionSlider()
+        self.slider.initStyleOption(opt)
+        
+        opt.sliderPosition = opt.minimum
+        min_rect = self.slider.style().subControlRect(
+            QStyle.ComplexControl.CC_Slider, opt, QStyle.SubControl.SC_SliderHandle, self.slider)
+            
+        opt.sliderPosition = opt.maximum
+        max_rect = self.slider.style().subControlRect(
+            QStyle.ComplexControl.CC_Slider, opt, QStyle.SubControl.SC_SliderHandle, self.slider)
+            
+        start_x = min_rect.center().x()
+        end_x = max_rect.center().x()
+        
+        if end_x <= start_x:
+            return 10, self.width() - 20
+            
+        return start_x, end_x - start_x
 
     def set_duration(self, duration):
         self.duration = duration
@@ -37,40 +59,30 @@ class TimelineOverlay(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
-        width = self.width()
         height = self.height()
+        start_x, draw_width = self._get_slider_geometry()
         
-        # QSliderのデフォルトの左右マージンに合わせる
-        margin = 10
-        draw_width = width - margin * 2
-        if draw_width <= 0:
-            return
-            
-        # ラウンドの描画 (下部 8px)
         round_y = height - 8
         round_h = 8
         
-        # 背景（準備フェーズ / ラウンド外）
-        painter.fillRect(margin, round_y, draw_width, round_h, QColor("#444444"))
+        painter.fillRect(start_x, round_y, draw_width, round_h, QColor("#444444"))
         
-        # ラウンド中（Action Phase）
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor("#FF4655"))
         for r in self.rounds:
-            start_x = margin + (r['start'] / self.duration) * draw_width
-            end_x = margin + (r['end'] / self.duration) * draw_width
-            painter.drawRect(int(start_x), round_y, int(max(1, end_x - start_x)), round_h)
+            x1 = start_x + (r['start'] / self.duration) * draw_width
+            x2 = start_x + (r['end'] / self.duration) * draw_width
+            painter.drawRect(int(x1), round_y, int(max(1, x2 - x1)), round_h)
             
-        # イベントアイコンの描画
         for ev in self.events:
-            x = margin + (ev['time'] / self.duration) * draw_width
+            x = start_x + (ev['time'] / self.duration) * draw_width
             
             if ev['type'] == 'kill':
-                color = QColor("#00FF00") # 緑
+                color = QColor("#00FF00")
             elif ev['type'] == 'death':
-                color = QColor("#FF0000") # 赤
+                color = QColor("#FF0000")
             elif ev['type'] == 'assist':
-                color = QColor("#00A2FF") # 青
+                color = QColor("#00A2FF")
             else:
                 color = QColor("#FFFFFF")
                 
@@ -80,15 +92,13 @@ class TimelineOverlay(QWidget):
     def mousePressEvent(self, event):
         if self.duration <= 0:
             return
-        margin = 10
-        draw_width = self.width() - margin * 2
-        x = event.position().x() - margin
+            
+        start_x, draw_width = self._get_slider_geometry()
+        x = event.position().x() - start_x
         x = max(0, min(x, draw_width))
         
         pos_ms = int((x / draw_width) * self.duration)
         self.seekRequested.emit(pos_ms)
-
-
 class PlayerTab(QWidget):
     def __init__(self, config: Config):
         super().__init__()
@@ -162,7 +172,7 @@ class PlayerTab(QWidget):
         self.media_player.durationChanged.connect(self.duration_changed)
         self.media_player.errorOccurred.connect(self.handle_media_error)
         
-        self.timeline_overlay = TimelineOverlay()
+        self.timeline_overlay = TimelineOverlay(self.slider)
         self.timeline_overlay.seekRequested.connect(self.set_position)
         
         slider_layout = QVBoxLayout()
@@ -309,18 +319,21 @@ class PlayerTab(QWidget):
                 self.media_player.play()
                 self.play_btn.setText("PAUSE")
                 
-                basename = os.path.basename(video_path)
-                date_pattern = re.compile(r"(\d{8}_\d{6})")
-                vid_match = date_pattern.search(basename)
-                if vid_match:
-                    try:
-                        vid_time = datetime.strptime(vid_match.group(1), "%Y%m%d_%H%M%S")
-                        vid_timestamp = vid_time.timestamp()
-                        game_start = match_info.get("metadata", {}).get("game_start")
-                        if game_start:
-                            offset_ms = (vid_timestamp - game_start) * 1000
-                    except Exception as e:
-                        print(f"[PlayerTab] Error calculating offset: {e}")
+                if "video_offset_ms" in match_info:
+                    offset_ms = -match_info["video_offset_ms"]
+                else:
+                    basename = os.path.basename(video_path)
+                    date_pattern = re.compile(r"(\d{8}_\d{6})")
+                    vid_match = date_pattern.search(basename)
+                    if vid_match:
+                        try:
+                            vid_time = datetime.strptime(vid_match.group(1), "%Y%m%d_%H%M%S")
+                            vid_timestamp = vid_time.timestamp()
+                            game_start = match_info.get("metadata", {}).get("game_start")
+                            if game_start:
+                                offset_ms = (vid_timestamp - game_start) * 1000
+                        except Exception as e:
+                            print(f"[PlayerTab] Error calculating offset: {e}")
             else:
                 self.media_player.setSource(QUrl())
                 print(f"[PlayerTab] Video file not found for {json_filename}. Expected: {match_info.get('local_video_path')}")
