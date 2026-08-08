@@ -13,21 +13,23 @@ def find_match_triggers():
         print(f"エラー: ログファイルが見つかりません。\nパス: {log_path}")
         return
 
-    # 試合の開始・終了・状態遷移に関連する可能性が高いキーワード群
-    keywords = [
-        r"MatchState",
-        r"State Changed",
-        r"InProgress",
-        r"PreMatch",
-        r"PostMatch",
-        r"GameMode",
-        r"SeamlessTravel",
-        r"LoadMap",
-        r"Transition"
+    # 抽出したいキーワード群（ゲーム内イベントを広範囲に）
+    includes = [
+        r"Round", r"Phase", r"Warmup", r"Spawn", r"Timer",
+        r"Start", r"Match", r"State", r"Mode", r"HUD", r"Widget",
+        r"Score", r"Play", r"Begin", r"Transition"
     ]
-    pattern = re.compile("|".join(keywords), re.IGNORECASE)
+    include_pattern = re.compile("|".join(includes), re.IGNORECASE)
 
-    output_path = "filtered_match_logs.txt"
+    # 除外したいノイズ（大量に出力される不要なログ）
+    excludes = [
+        r"LogJson", r"LogMapLoadModel", r"LogPlatformSessionManager", 
+        r"LogGameFlowStateManager", r"LogAutoTransitionLandingScreenViewModel",
+        r"LogLandingScreen", r"LogParty"
+    ]
+    exclude_pattern = re.compile("|".join(excludes), re.IGNORECASE)
+
+    output_path = "filtered_match_logs_v2.txt"
     
     print(f"ログを解析中: {log_path}")
     match_count = 0
@@ -37,13 +39,15 @@ def find_match_triggers():
              open(output_path, 'w', encoding='utf-8') as fout:
             
             for line in fin:
-                if pattern.search(line):
+                if exclude_pattern.search(line):
+                    continue
+                if include_pattern.search(line):
                     fout.write(line)
                     match_count += 1
                     
         print(f"抽出完了: {match_count} 行の候補が見つかりました。")
         print(f"結果を '{output_path}' に保存しました。")
-        print("このファイルを確認し、試合開始時・終了時に毎回必ず出力される固有の文字列を特定してください。")
+        print("このファイルを確認し、ウォームアップ終了・本番開始時に出力される文字列を探してください。")
         
     except PermissionError:
         print("エラー: ファイルへのアクセス権限がありません。Valorantを終了してから実行してください。")

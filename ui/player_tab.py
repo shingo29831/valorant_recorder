@@ -390,28 +390,23 @@ class PlayerTab(QWidget):
         
         offset_ms = 0
         if "local_match_start_time" in match_info and "local_match_end_time" in match_info and duration_ms > 0:
-            start_time = match_info["local_match_start_time"]
-            end_time = match_info["local_match_end_time"]
-            video_zero_local = end_time - (duration_ms / 1000.0)
-            
-            game_start = match_info.get("metadata", {}).get("game_start")
             game_length = match_info.get("metadata", {}).get("game_length")
             
-            if game_start and game_length:
-                game_start_sec = game_start / 1000.0 if game_start > 1e11 else game_start
+            if game_length:
                 game_length_sec = game_length / 1000.0 if game_length > 100000 else game_length
                 
-                # PCの時計が大きくズレている場合は、録画終了と試合終了を基準にした後方合わせを行う
-                if abs(start_time - game_start_sec) > 300:
-                    end_delay_sec = 6.0
-                    offset_sec = -((duration_ms / 1000.0) - game_length_sec - end_delay_sec)
-                else:
-                    # 時計が合っている場合は絶対時間で計算
-                    offset_sec = video_zero_local - game_start_sec
+                # PCの時計とサーバーの時計のズレ（NTPのズレ）を完全に無視するため、
+                # 常に「試合終了(game_length)」と「録画終了」を基準に後方合わせを行う。
+                # 試合終了(Victory等)から録画終了(MainMenu遷移)までのラグを約6.5秒と定義
+                end_delay_sec = 6.5
+                offset_sec = game_length_sec + end_delay_sec - (duration_ms / 1000.0)
+                offset_ms = int(offset_sec * 1000)
             else:
+                start_time = match_info["local_match_start_time"]
+                end_time = match_info["local_match_end_time"]
+                video_zero_local = end_time - (duration_ms / 1000.0)
                 offset_sec = video_zero_local - start_time
-                
-            offset_ms = int(offset_sec * 1000)
+                offset_ms = int(offset_sec * 1000)
         else:
             if "video_offset_ms" in match_info:
                 offset_ms = match_info["video_offset_ms"]
