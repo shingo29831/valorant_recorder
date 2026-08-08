@@ -322,6 +322,9 @@ class PlayerTab(QWidget):
                 if "video_offset_ms" in match_info:
                     offset_ms = -match_info["video_offset_ms"]
                 else:
+                if "video_offset_ms" in match_info:
+                    offset_ms = match_info["video_offset_ms"]
+                else:
                     basename = os.path.basename(video_path)
                     date_pattern = re.compile(r"(\d{8}_\d{6})")
                     vid_match = date_pattern.search(basename)

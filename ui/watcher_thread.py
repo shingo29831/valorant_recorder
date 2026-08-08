@@ -41,7 +41,6 @@ class WatcherThread(QThread):
             return
 
         self.recording_start_time = time.time()
-        self.real_start_time = self.recording_start_time
         self.log_signal.emit("[Recorder] Match started. Starting FFmpeg recording...")
         try:
             self.current_video_path = self.recorder.start_recording()
@@ -49,15 +48,11 @@ class WatcherThread(QThread):
         except Exception as e:
             self.log_signal.emit(f"[Error] Failed to start recording: {e}")
 
-    def handle_real_start(self):
-        self.real_start_time = time.time()
-        offset = self.real_start_time - self.recording_start_time
-        self.log_signal.emit(f"[Recorder] Real match start detected. Offset: {offset:.2f}s")
-
     def handle_match_end(self, is_range: bool):
         if is_range:
             return
 
+        self.match_end_time = time.time()
         self.log_signal.emit("[Recorder] Match ended. Stopping recording...")
         try:
             self.recorder.stop_recording()
@@ -88,7 +83,14 @@ class WatcherThread(QThread):
             try:
                 if self.current_video_path:
                     match_data['local_video_path'] = self.current_video_path
-                    match_data['video_offset_ms'] = int((self.real_start_time - self.recording_start_time) * 1000)
+                    
+                    game_length_sec = match_data.get('metadata', {}).get('game_length', 0)
+                    recorded_duration_sec = self.match_end_time - self.recording_start_time
+                    if game_length_sec > 0 and recorded_duration_sec > 0:
+                        video_offset_ms = int((game_length_sec - recorded_duration_sec) * 1000)
+                        match_data['video_offset_ms'] = video_offset_ms
+                        self.log_signal.emit(f"[Sync] Calculated video offset: {video_offset_ms}ms (Game: {game_length_sec}s, Rec: {recorded_duration_sec:.1f}s)")
+                        
                 filepath = self.store.save_match_metadata(match_data, mmr_change)
                 self.log_signal.emit(f"[Storage] Metadata saved: {filepath}")
             except Exception as e:
