@@ -77,20 +77,22 @@ class TimelineOverlay(QWidget):
         round_y = height - 8
         round_h = 8
         
-        painter.fillRect(start_x, round_y, draw_width, round_h, QColor("#444444"))
+        # 全体を暗く（準備時間・ラウンド外）
+        painter.fillRect(start_x, round_y, draw_width, round_h, QColor("#222222"))
         
-        # 1分（60000ms）ごとの目盛りを描画
-        painter.setPen(QColor("#888888"))
-        for ms in range(0, self.duration, 60000):
-            x = start_x + (ms / self.duration) * draw_width
-            painter.drawLine(int(x), round_y, int(x), round_y + round_h)
-            
+        # ラウンド中（本番）を明るく
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor("#FF4655"))
+        painter.setBrush(QColor("#777777"))
         for r in self.rounds:
             x1 = start_x + (r['start'] / self.duration) * draw_width
             x2 = start_x + (r['end'] / self.duration) * draw_width
             painter.drawRect(int(x1), round_y, int(max(1, x2 - x1)), round_h)
+            
+        # 1分（60000ms）ごとの目盛りを描画
+        painter.setPen(QColor("#555555"))
+        for ms in range(0, self.duration, 60000):
+            x = start_x + (ms / self.duration) * draw_width
+            painter.drawLine(int(x), round_y, int(x), round_y + round_h)
             
         for ev in self.events:
             x = start_x + (ev['time'] / self.duration) * draw_width
@@ -373,6 +375,19 @@ class PlayerTab(QWidget):
             
         match_info = self.current_match_data.get("match_info", self.current_match_data)
         
+        print("\n=== TIMELINE DEBUG INFO ===")
+        print(f"Duration (ms): {duration_ms}")
+        print(f"local_match_start_time: {match_info.get('local_match_start_time')}")
+        print(f"local_match_end_time: {match_info.get('local_match_end_time')}")
+        print(f"metadata.game_start: {match_info.get('metadata', {}).get('game_start')}")
+        print(f"metadata.game_length: {match_info.get('metadata', {}).get('game_length')}")
+        kills_debug = match_info.get('kills', [])
+        if kills_debug:
+            print(f"First kill time_in_match: {kills_debug[0].get('kill_time_in_match')}")
+            print(f"First kill time_in_round: {kills_debug[0].get('kill_time_in_round')}")
+            print(f"Last kill time_in_match: {kills_debug[-1].get('kill_time_in_match')}")
+        print("===========================\n")
+        
         offset_ms = 0
         if "local_match_start_time" in match_info and "local_match_end_time" in match_info and duration_ms > 0:
             start_time = match_info["local_match_start_time"]
@@ -487,6 +502,20 @@ class PlayerTab(QWidget):
             end = int(r.get("end_time_in_match", 0) - offset_ms)
             if end > 0:
                 rounds.append({"start": max(0, start), "end": end})
+                
+        # デスマッチ等でroundsが空の場合、最初のキルから本番開始時間を推定
+        if not rounds and kills_data:
+            first_kill = kills_data[0]
+            k_match = first_kill.get("kill_time_in_match", 0)
+            k_round = first_kill.get("kill_time_in_round", 0)
+            if k_match > 0 and k_round > 0:
+                round_start = int((k_match - k_round) - offset_ms)
+                game_length = match_info.get("metadata", {}).get("game_length", 0)
+                if game_length > 0:
+                    round_end = int(game_length - offset_ms)
+                else:
+                    round_end = duration_ms
+                rounds.append({"start": max(0, round_start), "end": round_end})
             
         self.timeline_overlay.set_data(rounds, events)
 
