@@ -27,8 +27,7 @@ class WatcherThread(QThread):
         self.recorder = FFmpegRecorder(config=self.config)
         self.watcher = LogWatcher(
             on_match_start=self.handle_match_start,
-            on_match_end=self.handle_match_end,
-            on_real_start=self.handle_real_start
+            on_match_end=self.handle_match_end
         )
         self.current_video_path = None
         self.recording_start_time = 0
