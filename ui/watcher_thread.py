@@ -27,10 +27,12 @@ class WatcherThread(QThread):
         self.recorder = FFmpegRecorder(config=self.config)
         self.watcher = LogWatcher(
             on_match_start=self.handle_match_start,
-            on_match_end=self.handle_match_end
+            on_match_end=self.handle_match_end,
+            on_real_match_end=self.handle_real_match_end
         )
         self.current_video_path = None
         self.recording_start_time = 0
+        self.real_match_end_time = 0
         self.real_start_time = 0
         self._is_running = True
 
@@ -40,6 +42,7 @@ class WatcherThread(QThread):
             return
 
         self.recording_start_time = time.time()
+        self.real_match_end_time = 0
         self.log_signal.emit("[Recorder] Match started. Starting FFmpeg recording...")
         try:
             self.current_video_path = self.recorder.start_recording()
@@ -47,11 +50,14 @@ class WatcherThread(QThread):
         except Exception as e:
             self.log_signal.emit(f"[Error] Failed to start recording: {e}")
 
+    def handle_real_match_end(self):
+        self.real_match_end_time = time.time()
+        self.log_signal.emit("[Recorder] Real match end detected in log.")
+
     def handle_match_end(self, is_range: bool):
         if is_range:
             return
 
-        self.match_end_time = time.time()
         self.log_signal.emit("[Recorder] Match ended. Stopping recording...")
         try:
             self.recorder.stop_recording()
@@ -84,11 +90,11 @@ class WatcherThread(QThread):
                     match_data['local_video_path'] = self.current_video_path
                     
                     game_length_sec = match_data.get('metadata', {}).get('game_length', 0)
-                    recorded_duration_sec = self.match_end_time - self.recording_start_time
-                    if game_length_sec > 0 and recorded_duration_sec > 0:
-                        video_offset_ms = int((game_length_sec - recorded_duration_sec) * 1000)
+                    if game_length_sec > 0 and self.real_match_end_time > 0:
+                        recorded_to_end_duration = self.real_match_end_time - self.recording_start_time
+                        video_offset_ms = int((recorded_to_end_duration - game_length_sec) * 1000)
                         match_data['video_offset_ms'] = video_offset_ms
-                        self.log_signal.emit(f"[Sync] Calculated video offset: {video_offset_ms}ms (Game: {game_length_sec}s, Rec: {recorded_duration_sec:.1f}s)")
+                        self.log_signal.emit(f"[Sync] Calculated video offset: {video_offset_ms}ms (Game: {game_length_sec}s, RecToEnd: {recorded_to_end_duration:.1f}s)")
                         
                 filepath = self.store.save_match_metadata(match_data, mmr_change)
                 self.log_signal.emit(f"[Storage] Metadata saved: {filepath}")

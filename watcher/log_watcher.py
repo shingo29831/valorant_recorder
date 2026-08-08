@@ -4,9 +4,10 @@ import subprocess
 from typing import Callable
 
 class LogWatcher:
-    def __init__(self, on_match_start: Callable[[bool], None], on_match_end: Callable[[bool], None]):
+    def __init__(self, on_match_start: Callable[[bool], None], on_match_end: Callable[[bool], None], on_real_match_end: Callable[[], None]):
         self.on_match_start = on_match_start
         self.on_match_end = on_match_end
+        self.on_real_match_end = on_real_match_end
         self.is_in_match = False
         self.is_range = False
 
@@ -45,6 +46,8 @@ class LogWatcher:
                     if "Broadcasting state changed to InGame" in line and not self.is_in_match:
                         self.is_in_match = True
                         self.on_match_start(self.is_range)
+                    elif "LogShooterGameState: Match Ended:" in line and self.is_in_match:
+                        self.on_real_match_end()
                     elif "Broadcasting state changed to TransitionToMainMenu" in line and self.is_in_match:
                         self.is_in_match = False
                         self.on_match_end(self.is_range)
