@@ -320,7 +320,7 @@ class PlayerTab(QWidget):
                 self.play_btn.setText("PAUSE")
                 
                 if "video_offset_ms" in match_info:
-                    offset_ms = -match_info["video_offset_ms"]
+                    offset_ms = match_info["video_offset_ms"]
                 else:
                     basename = os.path.basename(video_path)
                     date_pattern = re.compile(r"(\d{8}_\d{6})")
