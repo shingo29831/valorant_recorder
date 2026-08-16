@@ -1,15 +1,19 @@
 import os
 import time
 import subprocess
+import re
 from typing import Callable
 
 class LogWatcher:
-    def __init__(self, on_match_start: Callable[[bool], None], on_match_end: Callable[[bool], None], on_real_match_end: Callable[[], None]):
+    def __init__(self, on_match_start: Callable[[bool], None], on_match_end: Callable[[bool], None], on_real_match_end: Callable[[], None], on_round_phase_changed: Callable[[str], None] = None):
         self.on_match_start = on_match_start
         self.on_match_end = on_match_end
         self.on_real_match_end = on_real_match_end
+        self.on_round_phase_changed = on_round_phase_changed
         self.is_in_match = False
         self.is_range = False
+        self.phase_pattern_1 = re.compile(r"State:\s*\w+\s*->\s*(PreRound|InProgress|PostRound)")
+        self.phase_pattern_2 = re.compile(r"Match State Changed from\s*\w+\s*to\s*(PreRound|InProgress|PostRound)")
 
     def start_watching(self):
         local_app_data = os.environ.get('LOCALAPPDATA')
@@ -50,5 +54,11 @@ class LogWatcher:
                         self.is_in_match = False
                         self.on_match_end(self.is_range)
                         
+                    # ラウンドフェーズの検知
+                    if self.is_in_match and self.on_round_phase_changed:
+                        match = self.phase_pattern_1.search(line) or self.phase_pattern_2.search(line)
+                        if match:
+                            self.on_round_phase_changed(match.group(1))
+                            
         except PermissionError:
             raise PermissionError("Access denied. The log file might be locked by Vanguard.")

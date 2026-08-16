@@ -80,12 +80,17 @@ class TimelineOverlay(QWidget):
         # 全体を暗く（準備時間・ラウンド外）
         painter.fillRect(start_x, round_y, draw_width, round_h, QColor("#222222"))
         
-        # ラウンド中（本番）を明るく
+        # ラウンドフェーズに応じて色分け
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor("#777777"))
         for r in self.rounds:
             x1 = start_x + (r['start'] / self.duration) * draw_width
             x2 = start_x + (r['end'] / self.duration) * draw_width
+            
+            if r.get('phase') == 'PreRound':
+                painter.setBrush(QColor("#445566"))
+            else:
+                painter.setBrush(QColor("#777777"))
+                
             painter.drawRect(int(x1), round_y, int(max(1, x2 - x1)), round_h)
             
         # 1分（60000ms）ごとの目盛りを描画
@@ -389,15 +394,22 @@ class PlayerTab(QWidget):
         print("===========================\n")
         
         offset_ms = 0
-        if "local_match_start_time" in match_info and "local_match_end_time" in match_info and duration_ms > 0:
+        local_round_events = match_info.get("local_round_events", [])
+        
+        if local_round_events and match_info.get("rounds"):
+            first_local_preround = next((ev for ev in local_round_events if ev["phase"] == "PreRound"), None)
+            if first_local_preround:
+                api_first_start = match_info["rounds"][0].get("start_time_in_match", 0)
+                offset_ms = api_first_start - first_local_preround["time_ms"]
+            else:
+                first_local_inprogress = next((ev for ev in local_round_events if ev["phase"] == "InProgress"), None)
+                if first_local_inprogress:
+                    api_first_start = match_info["rounds"][0].get("start_time_in_match", 0)
+                    offset_ms = api_first_start - first_local_inprogress["time_ms"]
+        elif "local_match_start_time" in match_info and "local_match_end_time" in match_info and duration_ms > 0:
             game_length = match_info.get("metadata", {}).get("game_length")
-            
             if game_length:
                 game_length_sec = game_length / 1000.0 if game_length > 100000 else game_length
-                
-                # PCの時計とサーバーの時計のズレ（NTPのズレ）を完全に無視するため、
-                # 常に「試合終了(game_length)」と「録画終了」を基準に後方合わせを行う。
-                # 試合終了(Victory等)から録画終了(MainMenu遷移)までのラグを約6.5秒と定義
                 end_delay_sec = 6.5
                 offset_sec = game_length_sec + end_delay_sec - (duration_ms / 1000.0)
                 offset_ms = int(offset_sec * 1000)
@@ -492,25 +504,36 @@ class PlayerTab(QWidget):
                 elif not target_display_name:
                     events.append({"time": time_ms, "type": "kill"})
                 
-        for r in match_info.get("rounds", []):
-            start = int(r.get("start_time_in_match", 0) - offset_ms)
-            end = int(r.get("end_time_in_match", 0) - offset_ms)
-            if end > 0:
-                rounds.append({"start": max(0, start), "end": end})
-                
-        # デスマッチ等でroundsが空の場合、最初のキルから本番開始時間を推定
-        if not rounds and kills_data:
-            first_kill = kills_data[0]
-            k_match = first_kill.get("kill_time_in_match", 0)
-            k_round = first_kill.get("kill_time_in_round", 0)
-            if k_match > 0 and k_round > 0:
-                round_start = int((k_match - k_round) - offset_ms)
-                game_length = match_info.get("metadata", {}).get("game_length", 0)
-                if game_length > 0:
-                    round_end = int(game_length - offset_ms)
-                else:
-                    round_end = duration_ms
-                rounds.append({"start": max(0, round_start), "end": round_end})
+        if local_round_events:
+            for i in range(len(local_round_events)):
+                ev = local_round_events[i]
+                phase = ev["phase"]
+                start_time = ev["time_ms"]
+                end_time = duration_ms
+                if i + 1 < len(local_round_events):
+                    end_time = local_round_events[i+1]["time_ms"]
+                    
+                if phase in ["PreRound", "InProgress"]:
+                    rounds.append({"start": start_time, "end": end_time, "phase": phase})
+        else:
+            for r in match_info.get("rounds", []):
+                start = int(r.get("start_time_in_match", 0) - offset_ms)
+                end = int(r.get("end_time_in_match", 0) - offset_ms)
+                if end > 0:
+                    rounds.append({"start": max(0, start), "end": end, "phase": "InProgress"})
+                    
+            if not rounds and kills_data:
+                first_kill = kills_data[0]
+                k_match = first_kill.get("kill_time_in_match", 0)
+                k_round = first_kill.get("kill_time_in_round", 0)
+                if k_match > 0 and k_round > 0:
+                    round_start = int((k_match - k_round) - offset_ms)
+                    game_length = match_info.get("metadata", {}).get("game_length", 0)
+                    if game_length > 0:
+                        round_end = int(game_length - offset_ms)
+                    else:
+                        round_end = duration_ms
+                    rounds.append({"start": max(0, round_start), "end": round_end, "phase": "InProgress"})
             
         self.timeline_overlay.set_data(rounds, events)
 

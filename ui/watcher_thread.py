@@ -28,9 +28,11 @@ class WatcherThread(QThread):
         self.watcher = LogWatcher(
             on_match_start=self.handle_match_start,
             on_match_end=self.handle_match_end,
-            on_real_match_end=self.handle_real_match_end
+            on_real_match_end=self.handle_real_match_end,
+            on_round_phase_changed=self.handle_round_phase_changed
         )
         self.current_video_path = None
+        self.local_round_events = []
         self.recording_start_time = 0
         self.real_start_time = 0
         self._is_running = True
@@ -44,12 +46,19 @@ class WatcherThread(QThread):
             return
 
         self.recording_start_time = time.time()
+        self.local_round_events = []
         self.log_signal.emit("[Recorder] Match started. Starting FFmpeg recording...")
         try:
             self.current_video_path = self.recorder.start_recording()
             self.log_signal.emit(f"[Recorder] Recording to: {self.current_video_path}")
         except Exception as e:
             self.log_signal.emit(f"[Error] Failed to start recording: {e}")
+
+    def handle_round_phase_changed(self, phase: str):
+        if self.recording_start_time > 0:
+            time_ms = int((time.time() - self.recording_start_time) * 1000)
+            self.local_round_events.append({"phase": phase, "time_ms": time_ms})
+            self.log_signal.emit(f"[Recorder] Round phase changed: {phase} at {time_ms}ms")
 
     def handle_match_end(self, is_range: bool):
         if is_range:
@@ -88,6 +97,7 @@ class WatcherThread(QThread):
                     match_data['local_video_path'] = self.current_video_path
                     match_data['local_match_start_time'] = self.recording_start_time
                     match_data['local_match_end_time'] = getattr(self, 'recording_end_time', time.time())
+                    match_data['local_round_events'] = self.local_round_events
                         
                 filepath = self.store.save_match_metadata(match_data, mmr_change)
                 self.log_signal.emit(f"[Storage] Metadata saved: {filepath}")
