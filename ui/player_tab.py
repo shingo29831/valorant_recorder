@@ -4,49 +4,110 @@ import subprocess
 import re
 from datetime import datetime
 from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QListWidget, 
-                             QPushButton, QLabel, QSlider, QListWidgetItem, QStackedWidget,
-                             QStyleOptionSlider, QStyle)
-from PyQt6.QtCore import Qt, QUrl, QSize, pyqtSignal
-from PyQt6.QtGui import QIcon, QPainter, QColor
+                             QPushButton, QLabel, QListWidgetItem, QStackedWidget,
+                             QSizePolicy, QSlider)
+from PyQt6.QtCore import Qt, QUrl, QSize, pyqtSignal, QTimer
+from PyQt6.QtGui import QIcon, QPainter, QColor, QPen
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 from core.config import Config
 
+class VolumePopup(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.WindowType.ToolTip)
+        self.setFixedSize(40, 120)
+        self.setStyleSheet("""
+            VolumePopup { background-color: #222222; border: 1px solid #444444; border-radius: 4px; }
+            QSlider { background: transparent; }
+            QSlider::groove:vertical { background: #444444; width: 4px; border-radius: 2px; }
+            QSlider::handle:vertical { background: #FFFFFF; height: 12px; margin: 0 -4px; border-radius: 6px; }
+            QSlider::sub-page:vertical { background: #FF4655; width: 4px; border-radius: 2px; }
+            QSlider::add-page:vertical { background: #444444; width: 4px; border-radius: 2px; }
+        """)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 10, 0, 10)
+        self.slider = QSlider(Qt.Orientation.Vertical)
+        self.slider.setRange(0, 100)
+        self.slider.setValue(100)
+        layout.addWidget(self.slider, alignment=Qt.AlignmentFlag.AlignHCenter)
+
+    def leaveEvent(self, event):
+        QTimer.singleShot(100, self._check_hide)
+        super().leaveEvent(event)
+        
+    def _check_hide(self):
+        cursor_pos = self.cursor().pos()
+        parent_widget = self.parent()
+        if parent_widget:
+            if not self.geometry().contains(cursor_pos) and not parent_widget.rect().contains(parent_widget.mapFromGlobal(cursor_pos)):
+                self.hide()
+        else:
+            if not self.geometry().contains(cursor_pos):
+                self.hide()
+
+class VolumeWidget(QWidget):
+    volumeChanged = pyqtSignal(float)
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(30, 30)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.icon_label = QLabel("🔊")
+        self.icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.icon_label.setStyleSheet("font-size: 16px; color: white;")
+        layout.addWidget(self.icon_label)
+        
+        self.popup = VolumePopup(self)
+        self.popup.slider.valueChanged.connect(self._on_value_changed)
+        
+    def _on_value_changed(self, val):
+        self.volumeChanged.emit(val / 100.0)
+        if val == 0:
+            self.icon_label.setText("🔇")
+        elif val < 50:
+            self.icon_label.setText("🔉")
+        else:
+            self.icon_label.setText("🔊")
+            
+    def enterEvent(self, event):
+        pos = self.mapToGlobal(self.rect().topLeft())
+        self.popup.move(pos.x() - 5, pos.y() - self.popup.height() + 5)
+        self.popup.show()
+        super().enterEvent(event)
+        
+    def leaveEvent(self, event):
+        QTimer.singleShot(100, self._check_hide)
+        super().leaveEvent(event)
+
+    def _check_hide(self):
+        cursor_pos = self.popup.cursor().pos()
+        if not self.popup.geometry().contains(cursor_pos) and not self.rect().contains(self.mapFromGlobal(cursor_pos)):
+            self.popup.hide()
+
 class TimelineOverlay(QWidget):
     seekRequested = pyqtSignal(int)
 
-    def __init__(self, slider: QSlider, parent=None):
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self.slider = slider
         self.rounds = []
         self.events = []
         self.duration = 0
+        self.position = 0
         self.setFixedHeight(45)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setMouseTracking(True)
         self.hover_x = -1
-
-    def _get_slider_geometry(self):
-        opt = QStyleOptionSlider()
-        self.slider.initStyleOption(opt)
-        
-        opt.sliderPosition = opt.minimum
-        min_rect = self.slider.style().subControlRect(
-            QStyle.ComplexControl.CC_Slider, opt, QStyle.SubControl.SC_SliderHandle, self.slider)
-            
-        opt.sliderPosition = opt.maximum
-        max_rect = self.slider.style().subControlRect(
-            QStyle.ComplexControl.CC_Slider, opt, QStyle.SubControl.SC_SliderHandle, self.slider)
-            
-        start_x = min_rect.center().x()
-        end_x = max_rect.center().x()
-        
-        if end_x <= start_x:
-            return 10, self.width() - 20
-            
-        return start_x, end_x - start_x
+        self.is_dragging = False
 
     def set_duration(self, duration):
         self.duration = duration
+        self.update()
+
+    def set_position(self, position):
+        self.position = position
         self.update()
 
     def set_data(self, rounds, events):
@@ -61,8 +122,26 @@ class TimelineOverlay(QWidget):
         
     def mouseMoveEvent(self, event):
         self.hover_x = event.position().x()
+        if self.is_dragging and self.duration > 0:
+            x = max(0, min(self.hover_x, self.width()))
+            pos_ms = int((x / self.width()) * self.duration)
+            self.seekRequested.emit(pos_ms)
         self.update()
         super().mouseMoveEvent(event)
+
+    def mousePressEvent(self, event):
+        if self.duration <= 0 or event.button() != Qt.MouseButton.LeftButton:
+            return
+        self.is_dragging = True
+        x = event.position().x()
+        x = max(0, min(x, self.width()))
+        pos_ms = int((x / self.width()) * self.duration)
+        self.seekRequested.emit(pos_ms)
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.is_dragging = False
+        super().mouseReleaseEvent(event)
 
     def paintEvent(self, event):
         if self.duration <= 0:
@@ -71,41 +150,45 @@ class TimelineOverlay(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         
+        width = self.width()
         height = self.height()
-        start_x, draw_width = self._get_slider_geometry()
         
-        round_y = height - 8
-        round_h = 8
+        round_y = height - 12
+        round_h = 12
         
-        # 全体を暗く（準備時間・ラウンド外）
-        painter.fillRect(start_x, round_y, draw_width, round_h, QColor("#222222"))
+        painter.fillRect(0, round_y, width, round_h, QColor("#222222"))
         
-        # ラウンドフェーズに応じて色分け
         painter.setPen(Qt.PenStyle.NoPen)
         for r in self.rounds:
-            x1 = start_x + (r['start'] / self.duration) * draw_width
-            x2 = start_x + (r['end'] / self.duration) * draw_width
+            x1 = (r['start'] / self.duration) * width
+            x2 = (r['end'] / self.duration) * width
             
             phase = r.get('phase')
             if phase == 'InProgress':
-                painter.setBrush(QColor("#DDDDDD"))  # ラウンド中は明るい色
+                painter.setBrush(QColor("#666666"))
             elif phase == 'PreRound':
-                painter.setBrush(QColor("#555555"))  # 準備時間は暗い灰色
+                painter.setBrush(QColor("#444444"))
             elif phase == 'PostRound':
-                painter.setBrush(QColor("#333333"))  # 終了後はさらに暗い灰色
+                painter.setBrush(QColor("#333333"))
             else:
-                painter.setBrush(QColor("#777777"))
+                painter.setBrush(QColor("#555555"))
                 
             painter.drawRect(int(x1), round_y, int(max(1, x2 - x1)), round_h)
             
-        # 1分（60000ms）ごとの目盛りを描画
-        painter.setPen(QColor("#555555"))
+        progress_w = (self.position / self.duration) * width
+        painter.setBrush(QColor(255, 70, 85, 150))
+        painter.drawRect(0, round_y, int(progress_w), round_h)
+        
+        painter.setPen(QPen(QColor("#FF4655"), 2))
+        painter.drawLine(int(progress_w), round_y - 2, int(progress_w), round_y + round_h + 2)
+            
+        painter.setPen(QColor("#888888"))
         for ms in range(0, self.duration, 60000):
-            x = start_x + (ms / self.duration) * draw_width
+            x = (ms / self.duration) * width
             painter.drawLine(int(x), round_y, int(x), round_y + round_h)
             
         for ev in self.events:
-            x = start_x + (ev['time'] / self.duration) * draw_width
+            x = (ev['time'] / self.duration) * width
             
             if ev['type'] == 'kill':
                 color = QColor("#00FF00")
@@ -116,18 +199,15 @@ class TimelineOverlay(QWidget):
             else:
                 color = QColor("#FFFFFF")
                 
-            # 縦線を描画
             painter.setPen(color)
             painter.drawLine(int(x), round_y - 14, int(x), round_y)
                 
-            # アイコンを描画
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(color)
             painter.drawEllipse(int(x) - 4, round_y - 18, 8, 8)
             
-        # ホバー時の時間表示
-        if self.hover_x >= start_x and self.hover_x <= start_x + draw_width:
-            ratio = (self.hover_x - start_x) / draw_width
+        if self.hover_x >= 0 and self.hover_x <= width:
+            ratio = self.hover_x / width
             hover_ms = int(ratio * self.duration)
             
             s = hover_ms // 1000
@@ -138,16 +218,6 @@ class TimelineOverlay(QWidget):
             painter.setPen(QColor("#FFFFFF"))
             painter.drawText(int(self.hover_x) - 15, round_y - 25, time_str)
 
-    def mousePressEvent(self, event):
-        if self.duration <= 0:
-            return
-            
-        start_x, draw_width = self._get_slider_geometry()
-        x = event.position().x() - start_x
-        x = max(0, min(x, draw_width))
-        
-        pos_ms = int((x / draw_width) * self.duration)
-        self.seekRequested.emit(pos_ms)
 class PlayerTab(QWidget):
     def __init__(self, config: Config):
         super().__init__()
@@ -215,33 +285,28 @@ class PlayerTab(QWidget):
         self.media_player.setAudioOutput(self.audio_output)
         self.media_player.setVideoOutput(self.video_widget)
         
-        self.slider = QSlider(Qt.Orientation.Horizontal)
-        self.slider.sliderMoved.connect(self.set_position)
+        self.timeline_overlay = TimelineOverlay()
+        self.timeline_overlay.seekRequested.connect(self.set_position)
         self.media_player.positionChanged.connect(self.position_changed)
         self.media_player.durationChanged.connect(self.duration_changed)
         self.media_player.errorOccurred.connect(self.handle_media_error)
-        
-        self.timeline_overlay = TimelineOverlay(self.slider)
-        self.timeline_overlay.seekRequested.connect(self.set_position)
-        
-        slider_layout = QVBoxLayout()
-        slider_layout.setSpacing(0)
-        slider_layout.setContentsMargins(0, 0, 0, 0)
-        slider_layout.addWidget(self.timeline_overlay)
-        slider_layout.addWidget(self.slider)
         
         controls_layout = QHBoxLayout()
         self.play_btn = QPushButton("PLAY")
         self.play_btn.setFixedWidth(100)
         self.play_btn.clicked.connect(self.toggle_play)
         
+        self.volume_widget = VolumeWidget()
+        self.volume_widget.volumeChanged.connect(self.audio_output.setVolume)
+        
         self.time_label = QLabel("00:00 / 00:00")
         self.time_label.setFixedWidth(100)
         self.time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
         controls_layout.addWidget(self.play_btn)
+        controls_layout.addWidget(self.volume_widget)
         controls_layout.addWidget(self.time_label)
-        controls_layout.addLayout(slider_layout)
+        controls_layout.addWidget(self.timeline_overlay)
         
         layout.addWidget(self.video_widget, stretch=1)
         layout.addLayout(controls_layout)
@@ -384,19 +449,6 @@ class PlayerTab(QWidget):
             return
             
         match_info = self.current_match_data.get("match_info", self.current_match_data)
-        
-        print("\n=== TIMELINE DEBUG INFO ===")
-        print(f"Duration (ms): {duration_ms}")
-        print(f"local_match_start_time: {match_info.get('local_match_start_time')}")
-        print(f"local_match_end_time: {match_info.get('local_match_end_time')}")
-        print(f"metadata.game_start: {match_info.get('metadata', {}).get('game_start')}")
-        print(f"metadata.game_length: {match_info.get('metadata', {}).get('game_length')}")
-        kills_debug = match_info.get('kills', [])
-        if kills_debug:
-            print(f"First kill time_in_match: {kills_debug[0].get('kill_time_in_match')}")
-            print(f"First kill time_in_round: {kills_debug[0].get('kill_time_in_round')}")
-            print(f"Last kill time_in_match: {kills_debug[-1].get('kill_time_in_match')}")
-        print("===========================\n")
         
         offset_ms = 0
         local_round_events = match_info.get("local_round_events", [])
@@ -567,12 +619,11 @@ class PlayerTab(QWidget):
         return f"{m:02d}:{s:02d}"
 
     def position_changed(self, position):
-        self.slider.setValue(position)
+        self.timeline_overlay.set_position(position)
         duration = self.media_player.duration()
         self.time_label.setText(f"{self.format_time(position)} / {self.format_time(duration)}")
 
     def duration_changed(self, duration):
-        self.slider.setRange(0, duration)
         self.timeline_overlay.set_duration(duration)
         position = self.media_player.position()
         self.time_label.setText(f"{self.format_time(position)} / {self.format_time(duration)}")
