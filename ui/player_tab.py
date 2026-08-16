@@ -3,14 +3,173 @@ import json
 import subprocess
 import re
 from datetime import datetime
-from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QListWidget, 
-                             QPushButton, QLabel, QListWidgetItem, QStackedWidget,
-                             QSizePolicy, QSlider, QMenu)
-from PyQt6.QtCore import Qt, QUrl, QSize, pyqtSignal, QTimer
-from PyQt6.QtGui import QIcon, QPainter, QColor, QPen
+from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, 
+                             QPushButton, QLabel, QStackedWidget,
+                             QSizePolicy, QSlider, QMenu, QScrollArea, QLayout, QInputDialog)
+from PyQt6.QtCore import Qt, QUrl, QSize, pyqtSignal, QTimer, QPoint, QRect
+from PyQt6.QtGui import QIcon, QPainter, QColor, QPen, QPixmap
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 from core.config import Config
+
+class ClickableVideoWidget(QVideoWidget):
+    clicked = pyqtSignal()
+    
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+class FlowLayout(QLayout):
+    def __init__(self, parent=None, margin=-1, hSpacing=10, vSpacing=10):
+        super().__init__(parent)
+        if margin != -1:
+            self.setContentsMargins(margin, margin, margin, margin)
+        self._hSpace = hSpacing
+        self._vSpace = vSpacing
+        self.itemList = []
+
+    def addItem(self, item):
+        self.itemList.append(item)
+
+    def horizontalSpacing(self):
+        return self._hSpace
+
+    def verticalSpacing(self):
+        return self._vSpace
+
+    def count(self):
+        return len(self.itemList)
+
+    def itemAt(self, index):
+        if 0 <= index < len(self.itemList):
+            return self.itemList[index]
+        return None
+
+    def takeAt(self, index):
+        if 0 <= index < len(self.itemList):
+            return self.itemList.pop(index)
+        return None
+
+    def expandingDirections(self):
+        return Qt.Orientation(0)
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        return self.doLayout(QRect(0, 0, width, 0), True)
+
+    def setGeometry(self, rect):
+        super().setGeometry(rect)
+        self.doLayout(rect, False)
+
+    def sizeHint(self):
+        return self.minimumSize()
+
+    def minimumSize(self):
+        size = QSize()
+        for item in self.itemList:
+            size = size.expandedTo(item.minimumSize())
+        margins = self.contentsMargins()
+        size += QSize(margins.left() + margins.right(), margins.top() + margins.bottom())
+        return size
+
+    def doLayout(self, rect, testOnly):
+        x = rect.x()
+        y = rect.y()
+        lineHeight = 0
+
+        for item in self.itemList:
+            wid = item.widget()
+            spaceX = self.horizontalSpacing()
+            spaceY = self.verticalSpacing()
+
+            nextX = x + item.sizeHint().width() + spaceX
+            if nextX - spaceX > rect.right() and lineHeight > 0:
+                x = rect.x()
+                y = y + lineHeight + spaceY
+                nextX = x + item.sizeHint().width() + spaceX
+                lineHeight = 0
+
+            if not testOnly:
+                item.setGeometry(QRect(QPoint(x, y), item.sizeHint()))
+
+            x = nextX
+            lineHeight = max(lineHeight, item.sizeHint().height())
+
+        return y + lineHeight - rect.y()
+
+class RecordItemWidget(QWidget):
+    doubleClicked = pyqtSignal(str)
+    renameRequested = pyqtSignal(str, str)
+
+    def __init__(self, json_filename, display_name, thumb_path, result, parent=None):
+        super().__init__(parent)
+        self.json_filename = json_filename
+        self.display_name = display_name
+        self.setFixedSize(260, 180)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(5, 5, 5, 5)
+        
+        self.thumb_label = QLabel()
+        self.thumb_label.setFixedSize(240, 135)
+        self.thumb_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        if thumb_path and os.path.exists(thumb_path):
+            pixmap = QPixmap(thumb_path)
+            if not pixmap.isNull():
+                self.thumb_label.setPixmap(pixmap.scaled(240, 135, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation))
+            else:
+                self.thumb_label.setText("No Thumbnail")
+                self.thumb_label.setStyleSheet("background-color: black; color: white;")
+        else:
+            self.thumb_label.setText("No Thumbnail")
+            self.thumb_label.setStyleSheet("background-color: black; color: white;")
+            
+        self.name_label = QLabel(display_name)
+        self.name_label.setWordWrap(True)
+        self.name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        
+        layout.addWidget(self.thumb_label, alignment=Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(self.name_label)
+        
+        if result == "win":
+            bg_color = "#2E7D32"
+            border_color = "#4CAF50"
+        elif result == "loss":
+            bg_color = "#C62828"
+            border_color = "#F44336"
+        else:
+            bg_color = "#424242"
+            border_color = "#757575"
+            
+        self.setStyleSheet(f"""
+            RecordItemWidget {{
+                background-color: {bg_color};
+                border: 2px solid {border_color};
+                border-radius: 8px;
+            }}
+            RecordItemWidget:hover {{
+                border: 2px solid #FFFFFF;
+            }}
+            QLabel {{
+                background: transparent;
+                border: none;
+                color: white;
+            }}
+        """)
+        
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.doubleClicked.emit(self.json_filename)
+            
+    def contextMenuEvent(self, event):
+        menu = QMenu(self)
+        rename_action = menu.addAction("Rename")
+        action = menu.exec(event.globalPos())
+        if action == rename_action:
+            self.renameRequested.emit(self.json_filename, self.display_name)
 
 class VolumePopup(QWidget):
     def __init__(self, parent=None):
@@ -219,6 +378,8 @@ class TimelineOverlay(QWidget):
             painter.drawText(int(self.hover_x) - 15, round_y - 25, time_str)
 
 class PlayerTab(QWidget):
+    settingsRequested = pyqtSignal()
+
     def __init__(self, config: Config):
         super().__init__()
         self.config = config
@@ -246,62 +407,54 @@ class PlayerTab(QWidget):
         title_label = QLabel("MATCH RECORDINGS")
         title_label.setStyleSheet("font-size: 18px; font-weight: bold; color: #FF4655;")
         
+        settings_btn = QPushButton("⚙")
+        settings_btn.setFixedSize(40, 40)
+        settings_btn.setStyleSheet("font-size: 20px; border-radius: 20px; background-color: #333333; color: white;")
+        settings_btn.clicked.connect(self.settingsRequested.emit)
+        
         header_layout.addWidget(title_label)
         header_layout.addStretch()
+        header_layout.addWidget(settings_btn)
         
-        self.record_list = QListWidget()
-        self.record_list.setViewMode(QListWidget.ViewMode.ListMode)
-        self.record_list.setIconSize(QSize(240, 135))
-        self.record_list.setSpacing(5)
-        self.record_list.setWordWrap(True)
-        self.record_list.setStyleSheet("""
-            QListWidget::item {
-                border-bottom: 1px solid #333333;
-                padding: 5px;
-            }
-            QListWidget::item:selected {
-                background-color: #444444;
-            }
-        """)
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setStyleSheet("QScrollArea { border: none; background-color: transparent; }")
         
-        self.record_list.itemDoubleClicked.connect(self.load_recording)
-        self.record_list.itemChanged.connect(self.on_item_changed)
-        self.record_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.record_list.customContextMenuRequested.connect(self.show_context_menu)
+        self.scroll_content = QWidget()
+        self.scroll_content.setStyleSheet("background-color: transparent;")
+        self.scroll_layout = QVBoxLayout(self.scroll_content)
+        self.scroll_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        
+        self.scroll_area.setWidget(self.scroll_content)
         
         layout.addLayout(header_layout)
-        layout.addWidget(self.record_list)
+        layout.addWidget(self.scroll_area)
         self.list_page.setLayout(layout)
 
-    def show_context_menu(self, position):
-        item = self.record_list.itemAt(position)
-        if not item or not item.data(Qt.ItemDataRole.UserRole):
-            return
-            
-        menu = QMenu()
-        rename_action = menu.addAction("Rename")
-        
-        action = menu.exec(self.record_list.mapToGlobal(position))
-        if action == rename_action:
-            self.record_list.editItem(item)
+    def _clear_layout(self, layout):
+        if layout is not None:
+            while layout.count():
+                item = layout.takeAt(0)
+                widget = item.widget()
+                if widget:
+                    widget.deleteLater()
+                elif item.layout():
+                    self._clear_layout(item.layout())
+            layout.deleteLater()
 
-    def on_item_changed(self, item):
-        new_name = item.text()
-        json_filename = item.data(Qt.ItemDataRole.UserRole)
-        if not json_filename:
-            return
-            
-        json_path = os.path.join(self.config.SAVE_DIR, json_filename)
-        try:
-            with open(json_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-                
-            data["custom_name"] = new_name
-            
-            with open(json_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=4)
-        except Exception as e:
-            print(f"[PlayerTab] Error saving custom name: {e}")
+    def rename_record(self, json_filename, current_name):
+        new_name, ok = QInputDialog.getText(self, "Rename", "Enter new name:", text=current_name)
+        if ok and new_name and new_name != current_name:
+            json_path = os.path.join(self.config.SAVE_DIR, json_filename)
+            try:
+                with open(json_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                data["custom_name"] = new_name
+                with open(json_path, 'w', encoding='utf-8') as f:
+                    json.dump(data, f, ensure_ascii=False, indent=4)
+                self.refresh_list()
+            except Exception as e:
+                print(f"[PlayerTab] Error saving custom name: {e}")
 
     def setup_player_page(self):
         self.player_page = QWidget()
@@ -313,8 +466,9 @@ class PlayerTab(QWidget):
         back_btn.clicked.connect(self.show_list_page)
         layout.addWidget(back_btn)
         
-        self.video_widget = QVideoWidget()
+        self.video_widget = ClickableVideoWidget()
         self.video_widget.setStyleSheet("background-color: #000000;")
+        self.video_widget.clicked.connect(self.toggle_play)
         
         self.media_player = QMediaPlayer()
         self.audio_output = QAudioOutput()
@@ -328,9 +482,6 @@ class PlayerTab(QWidget):
         self.media_player.errorOccurred.connect(self.handle_media_error)
         
         controls_layout = QHBoxLayout()
-        self.play_btn = QPushButton("PLAY")
-        self.play_btn.setFixedWidth(100)
-        self.play_btn.clicked.connect(self.toggle_play)
         
         self.volume_widget = VolumeWidget()
         self.volume_widget.volumeChanged.connect(self.audio_output.setVolume)
@@ -339,7 +490,6 @@ class PlayerTab(QWidget):
         self.time_label.setFixedWidth(100)
         self.time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
-        controls_layout.addWidget(self.play_btn)
         controls_layout.addWidget(self.volume_widget)
         controls_layout.addWidget(self.time_label)
         controls_layout.addWidget(self.timeline_overlay)
@@ -443,11 +593,56 @@ class PlayerTab(QWidget):
                     
         return "Unknown Agent"
 
+    def _get_match_result(self, match_info: dict, kills_data: list) -> str:
+        riot_id = getattr(self.config, "RIOT_ID", "").lower()
+        tag_line = getattr(self.config, "TAG_LINE", "").lower()
+        
+        target_team = None
+        players = match_info.get("players", {}).get("all_players", [])
+        
+        for p in players:
+            p_name = p.get("name", "").lower()
+            p_tag = p.get("tag", "").lower()
+            if p_name == riot_id and p_tag == tag_line:
+                target_team = p.get("team", "").lower()
+                break
+                
+        if not target_team:
+            target_display_name = self._guess_player_name(kills_data)
+            if target_display_name:
+                for p in players:
+                    if p.get("name") == target_display_name:
+                        target_team = p.get("team", "").lower()
+                        break
+                        
+        if not target_team:
+            return "unknown"
+            
+        teams = match_info.get("teams", {})
+        team_info = teams.get(target_team)
+        if team_info:
+            has_won = team_info.get("has_won")
+            if has_won:
+                return "win"
+            else:
+                other_team = "blue" if target_team == "red" else "red"
+                other_team_info = teams.get(other_team, {})
+                if not has_won and not other_team_info.get("has_won"):
+                    return "draw"
+                return "loss"
+                
+        return "unknown"
+
     def refresh_list(self):
-        self.record_list.blockSignals(True)
-        self.record_list.clear()
+        while self.scroll_layout.count():
+            item = self.scroll_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                widget.deleteLater()
+            elif item.layout():
+                self._clear_layout(item.layout())
+                
         if not os.path.exists(self.config.SAVE_DIR):
-            self.record_list.blockSignals(False)
             return
             
         records_by_date = {}
@@ -478,16 +673,18 @@ class PlayerTab(QWidget):
                     date_key = dt.strftime('%Y-%m-%d')
                     time_str = dt.strftime('%H:%M')
                     
+                    kills_data = match_info.get("kills", [])
+                    
                     if custom_name:
                         display_name = custom_name
                     else:
                         mode = match_info.get("metadata", {}).get("mode", "Unknown")
                         map_name = match_info.get("metadata", {}).get("map", "Unknown")
-                        kills_data = match_info.get("kills", [])
                         agent_name = self._get_agent_name(match_info, kills_data)
                         
                         display_name = f"{mode} - {map_name} - {agent_name} - {date_key} {time_str}"
                     
+                    result = self._get_match_result(match_info, kills_data)
                     video_path = self._find_video_for_json(f, data)
                     
                     thumb_path = ""
@@ -507,40 +704,33 @@ class PlayerTab(QWidget):
                     records_by_date[date_key].append({
                         'filename': f,
                         'display_name': display_name,
-                        'thumb_path': thumb_path if os.path.exists(thumb_path) else ""
+                        'thumb_path': thumb_path if os.path.exists(thumb_path) else "",
+                        'result': result
                     })
                     
                 except Exception as e:
                     print(f"[PlayerTab] Error loading {f}: {e}")
                     
         for date_key in sorted(records_by_date.keys(), reverse=True):
-            header_item = QListWidgetItem(date_key)
-            header_item.setFlags(Qt.ItemFlag.NoItemFlags)
-            header_item.setBackground(QColor("#222222"))
-            header_item.setForeground(QColor("#FF4655"))
-            font = header_item.font()
-            font.setBold(True)
-            font.setPointSize(14)
-            header_item.setFont(font)
-            self.record_list.addItem(header_item)
+            date_label = QLabel(date_key)
+            date_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #FF4655; margin-top: 15px; margin-bottom: 5px;")
+            self.scroll_layout.addWidget(date_label)
+            
+            flow_widget = QWidget()
+            flow_layout = FlowLayout(flow_widget)
             
             for rec in records_by_date[date_key]:
-                item = QListWidgetItem(rec['display_name'])
-                item.setData(Qt.ItemDataRole.UserRole, rec['filename'])
-                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
-                if rec['thumb_path']:
-                    item.setIcon(QIcon(rec['thumb_path']))
-                self.record_list.addItem(item)
+                item_widget = RecordItemWidget(rec['filename'], rec['display_name'], rec['thumb_path'], rec['result'])
+                item_widget.doubleClicked.connect(self.load_recording_by_filename)
+                item_widget.renameRequested.connect(self.rename_record)
+                flow_layout.addWidget(item_widget)
                 
-        self.record_list.blockSignals(False)
-
-    def load_recording(self, item):
-        json_filename = item.data(Qt.ItemDataRole.UserRole)
-        if not json_filename:
-            return
+            self.scroll_layout.addWidget(flow_widget)
             
+        self.scroll_layout.addStretch()
+
+    def load_recording_by_filename(self, json_filename):
         json_path = os.path.join(self.config.SAVE_DIR, json_filename)
-        
         self.stacked_widget.setCurrentWidget(self.player_page)
         
         try:
@@ -553,7 +743,6 @@ class PlayerTab(QWidget):
                 abs_path = os.path.abspath(video_path)
                 self.media_player.setSource(QUrl.fromLocalFile(abs_path))
                 self.media_player.play()
-                self.play_btn.setText("PAUSE")
             else:
                 self.media_player.setSource(QUrl())
                 print(f"[PlayerTab] Video file not found for {json_filename}.")
@@ -725,10 +914,8 @@ class PlayerTab(QWidget):
     def toggle_play(self):
         if self.media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
             self.media_player.pause()
-            self.play_btn.setText("PLAY")
         else:
             self.media_player.play()
-            self.play_btn.setText("PAUSE")
 
     def format_time(self, ms):
         s = ms // 1000

@@ -1,7 +1,10 @@
-from PyQt6.QtWidgets import QWidget, QFormLayout, QLineEdit, QComboBox, QPushButton, QMessageBox, QVBoxLayout, QLabel
+from PyQt6.QtWidgets import QWidget, QFormLayout, QLineEdit, QComboBox, QPushButton, QMessageBox, QVBoxLayout, QLabel, QHBoxLayout
+from PyQt6.QtCore import pyqtSignal
 from core.config import Config
 
 class SettingsTab(QWidget):
+    backRequested = pyqtSignal()
+
     def __init__(self, config: Config):
         super().__init__()
         self.config = config
@@ -9,9 +12,20 @@ class SettingsTab(QWidget):
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(40, 40, 40, 40)
         
+        header_layout = QHBoxLayout()
         title = QLabel("APPLICATION SETTINGS")
-        title.setStyleSheet("font-size: 24px; font-weight: bold; color: #FF4655; margin-bottom: 20px;")
-        main_layout.addWidget(title)
+        title.setStyleSheet("font-size: 24px; font-weight: bold; color: #FF4655;")
+        
+        back_btn = QPushButton("← BACK TO RECORDINGS")
+        back_btn.setFixedWidth(200)
+        back_btn.clicked.connect(self.backRequested.emit)
+        
+        header_layout.addWidget(title)
+        header_layout.addStretch()
+        header_layout.addWidget(back_btn)
+        
+        main_layout.addLayout(header_layout)
+        main_layout.addSpacing(20)
         
         form_layout = QFormLayout()
         form_layout.setSpacing(15)
