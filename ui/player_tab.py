@@ -403,18 +403,16 @@ class PlayerTab(QWidget):
         layout = QVBoxLayout()
         layout.setContentsMargins(20, 20, 20, 20)
         
-        header_layout = QHBoxLayout()
-        title_label = QLabel("MATCH RECORDINGS")
-        title_label.setStyleSheet("font-size: 18px; font-weight: bold; color: #FF4655;")
+        top_layout = QHBoxLayout()
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.addStretch()
         
-        settings_btn = QPushButton("⚙")
-        settings_btn.setFixedSize(40, 40)
-        settings_btn.setStyleSheet("font-size: 20px; border-radius: 20px; background-color: #333333; color: white;")
+        settings_btn = QPushButton("Settings")
+        settings_btn.setFixedSize(100, 30)
+        settings_btn.setStyleSheet("border-radius: 15px; background-color: #333333; color: white; font-weight: bold;")
         settings_btn.clicked.connect(self.settingsRequested.emit)
         
-        header_layout.addWidget(title_label)
-        header_layout.addStretch()
-        header_layout.addWidget(settings_btn)
+        top_layout.addWidget(settings_btn)
         
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
@@ -427,7 +425,7 @@ class PlayerTab(QWidget):
         
         self.scroll_area.setWidget(self.scroll_content)
         
-        layout.addLayout(header_layout)
+        layout.addLayout(top_layout)
         layout.addWidget(self.scroll_area)
         self.list_page.setLayout(layout)
 

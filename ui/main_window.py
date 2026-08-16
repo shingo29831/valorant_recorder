@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QMainWindow, QTabWidget
+from PyQt6.QtWidgets import QMainWindow, QStackedWidget
 from core.config import Config
 from ui.watcher_thread import WatcherThread
 from ui.settings_tab import SettingsTab
@@ -12,14 +12,17 @@ class MainWindow(QMainWindow):
         
         self.config = Config()
         
-        self.tabs = QTabWidget()
-        self.setCentralWidget(self.tabs)
+        self.stacked_widget = QStackedWidget()
+        self.setCentralWidget(self.stacked_widget)
         
         self.player_tab = PlayerTab(self.config)
         self.settings_tab = SettingsTab(self.config)
         
-        self.tabs.addTab(self.player_tab, "Recordings")
-        self.tabs.addTab(self.settings_tab, "Settings")
+        self.stacked_widget.addWidget(self.player_tab)
+        self.stacked_widget.addWidget(self.settings_tab)
+        
+        self.player_tab.settingsRequested.connect(lambda: self.stacked_widget.setCurrentWidget(self.settings_tab))
+        self.settings_tab.backRequested.connect(lambda: self.stacked_widget.setCurrentWidget(self.player_tab))
         
         self.statusBar().showMessage("Initializing...")
         
