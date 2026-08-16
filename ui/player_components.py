@@ -262,11 +262,10 @@ class VolumeWidget(QWidget):
             self.popup.hide()
 
 class PlayerContainer(QWidget):
-    def __init__(self, video_widget, controls_widget, aspect_ratio=16/9, parent=None):
+    def __init__(self, video_widget, aspect_ratio=16/9, parent=None):
         super().__init__(parent)
         self.aspect_ratio = aspect_ratio
         self.video_widget = video_widget
-        self.controls_widget = controls_widget
         
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
@@ -275,9 +274,8 @@ class PlayerContainer(QWidget):
         self.inner_container = QWidget()
         self.inner_layout = QVBoxLayout(self.inner_container)
         self.inner_layout.setContentsMargins(0, 0, 0, 0)
-        self.inner_layout.setSpacing(5)
-        self.inner_layout.addWidget(self.video_widget, stretch=1)
-        self.inner_layout.addWidget(self.controls_widget)
+        self.inner_layout.setSpacing(0)
+        self.inner_layout.addWidget(self.video_widget)
         
         self.main_layout.addWidget(self.inner_container, alignment=Qt.AlignmentFlag.AlignCenter)
 
@@ -285,18 +283,15 @@ class PlayerContainer(QWidget):
         w = event.size().width()
         h = event.size().height()
         
-        ctrl_h = self.controls_widget.sizeHint().height()
-        avail_video_h = h - ctrl_h - self.inner_layout.spacing()
-        
-        if avail_video_h > 0:
-            if w / avail_video_h > self.aspect_ratio:
-                new_video_h = avail_video_h
+        if h > 0:
+            if w / h > self.aspect_ratio:
+                new_video_h = h
                 new_video_w = int(new_video_h * self.aspect_ratio)
             else:
                 new_video_w = w
                 new_video_h = int(new_video_w / self.aspect_ratio)
                 
-            self.inner_container.setFixedSize(new_video_w, new_video_h + ctrl_h + self.inner_layout.spacing())
+            self.inner_container.setFixedSize(new_video_w, new_video_h)
             
         super().resizeEvent(event)
 

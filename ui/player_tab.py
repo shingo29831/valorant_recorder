@@ -111,9 +111,13 @@ class PlayerTab(QWidget):
 
     def setup_player_page(self):
         self.player_page = QWidget()
-        main_layout = QHBoxLayout()
-        main_layout.setContentsMargins(20, 20, 20, 20)
-        main_layout.setSpacing(10)
+        page_layout = QVBoxLayout()
+        page_layout.setContentsMargins(20, 20, 20, 20)
+        page_layout.setSpacing(10)
+        
+        top_layout = QHBoxLayout()
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.setSpacing(10)
         
         left_container = QWidget()
         left_container.setFixedWidth(50)
@@ -169,16 +173,19 @@ class PlayerTab(QWidget):
         controls_layout.addWidget(self.time_label)
         controls_layout.addWidget(self.timeline_overlay)
         
-        self.player_container = PlayerContainer(self.video_widget, controls_widget)
+        self.player_container = PlayerContainer(self.video_widget)
         
         right_container = QWidget()
         right_container.setFixedWidth(50)
         
-        main_layout.addWidget(left_container)
-        main_layout.addWidget(self.player_container, stretch=1)
-        main_layout.addWidget(right_container)
+        top_layout.addWidget(left_container)
+        top_layout.addWidget(self.player_container, stretch=1)
+        top_layout.addWidget(right_container)
         
-        self.player_page.setLayout(main_layout)
+        page_layout.addLayout(top_layout, stretch=1)
+        page_layout.addWidget(controls_widget)
+        
+        self.player_page.setLayout(page_layout)
 
     def show_list_page(self):
         self.media_player.stop()
