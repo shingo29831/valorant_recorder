@@ -25,6 +25,7 @@ class MainWindow(QMainWindow):
         
         self.watcher_thread = WatcherThread(self.config)
         self.watcher_thread.log_signal.connect(self.update_status)
+        self.watcher_thread.match_saved_signal.connect(self.player_tab.refresh_list)
         self.watcher_thread.start()
 
     def update_status(self, message: str):

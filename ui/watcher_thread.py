@@ -13,6 +13,7 @@ from recorder.ffmpeg_recorder import FFmpegRecorder
 
 class WatcherThread(QThread):
     log_signal = pyqtSignal(str)
+    match_saved_signal = pyqtSignal()
     
     def __init__(self, config: Config):
         super().__init__()
@@ -101,6 +102,7 @@ class WatcherThread(QThread):
                         
                 filepath = self.store.save_match_metadata(match_data, mmr_change)
                 self.log_signal.emit(f"[Storage] Metadata saved: {filepath}")
+                self.match_saved_signal.emit()
             except Exception as e:
                 self.log_signal.emit(f"[Error] Failed to process match metadata: {e}")
         else:
@@ -166,6 +168,7 @@ class WatcherThread(QThread):
             "local_video_path": video_path
         }
         self.store.save_match_metadata(match_data, 0)
+        self.match_saved_signal.emit()
 
     def _background_worker(self):
         while self._is_running:
@@ -198,6 +201,7 @@ class WatcherThread(QThread):
                         api_match_data['local_video_path'] = video_path
                         filepath = self.store.save_match_metadata(api_match_data, mmr_change)
                         self.log_signal.emit(f"[Background] Saved metadata: {filepath}")
+                        self.match_saved_signal.emit()
                         
                     elif game_start > vid_time + 3600:
                         self.log_signal.emit(f"[Background] Video {os.path.basename(video_path)} is likely a custom match. Skipping.")

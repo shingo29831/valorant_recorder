@@ -246,13 +246,8 @@ class PlayerTab(QWidget):
         title_label = QLabel("MATCH RECORDINGS")
         title_label.setStyleSheet("font-size: 18px; font-weight: bold; color: #FF4655;")
         
-        refresh_btn = QPushButton("REFRESH LIST")
-        refresh_btn.setFixedWidth(150)
-        refresh_btn.clicked.connect(self.refresh_list)
-        
         header_layout.addWidget(title_label)
         header_layout.addStretch()
-        header_layout.addWidget(refresh_btn)
         
         self.record_list = QListWidget()
         self.record_list.setViewMode(QListWidget.ViewMode.IconMode)
