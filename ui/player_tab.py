@@ -5,7 +5,7 @@ import re
 from datetime import datetime
 from PyQt6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QListWidget, 
                              QPushButton, QLabel, QListWidgetItem, QStackedWidget,
-                             QSizePolicy, QSlider)
+                             QSizePolicy, QSlider, QMenu)
 from PyQt6.QtCore import Qt, QUrl, QSize, pyqtSignal, QTimer
 from PyQt6.QtGui import QIcon, QPainter, QColor, QPen
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
@@ -250,17 +250,58 @@ class PlayerTab(QWidget):
         header_layout.addStretch()
         
         self.record_list = QListWidget()
-        self.record_list.setViewMode(QListWidget.ViewMode.IconMode)
+        self.record_list.setViewMode(QListWidget.ViewMode.ListMode)
         self.record_list.setIconSize(QSize(240, 135))
-        self.record_list.setResizeMode(QListWidget.ResizeMode.Adjust)
-        self.record_list.setSpacing(15)
-        self.record_list.setGridSize(QSize(260, 180))
+        self.record_list.setSpacing(5)
         self.record_list.setWordWrap(True)
-        self.record_list.itemClicked.connect(self.load_recording)
+        self.record_list.setStyleSheet("""
+            QListWidget::item {
+                border-bottom: 1px solid #333333;
+                padding: 5px;
+            }
+            QListWidget::item:selected {
+                background-color: #444444;
+            }
+        """)
+        
+        self.record_list.itemDoubleClicked.connect(self.load_recording)
+        self.record_list.itemChanged.connect(self.on_item_changed)
+        self.record_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.record_list.customContextMenuRequested.connect(self.show_context_menu)
         
         layout.addLayout(header_layout)
         layout.addWidget(self.record_list)
         self.list_page.setLayout(layout)
+
+    def show_context_menu(self, position):
+        item = self.record_list.itemAt(position)
+        if not item or not item.data(Qt.ItemDataRole.UserRole):
+            return
+            
+        menu = QMenu()
+        rename_action = menu.addAction("Rename")
+        
+        action = menu.exec(self.record_list.mapToGlobal(position))
+        if action == rename_action:
+            self.record_list.editItem(item)
+
+    def on_item_changed(self, item):
+        new_name = item.text()
+        json_filename = item.data(Qt.ItemDataRole.UserRole)
+        if not json_filename:
+            return
+            
+        json_path = os.path.join(self.config.SAVE_DIR, json_filename)
+        try:
+            with open(json_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                
+            data["custom_name"] = new_name
+            
+            with open(json_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=4)
+        except Exception as e:
+            print(f"[PlayerTab] Error saving custom name: {e}")
 
     def setup_player_page(self):
         self.player_page = QWidget()
@@ -382,10 +423,34 @@ class PlayerTab(QWidget):
             return max(counts, key=counts.get)
         return ""
 
+    def _get_agent_name(self, match_info: dict, kills_data: list) -> str:
+        riot_id = getattr(self.config, "RIOT_ID", "").lower()
+        tag_line = getattr(self.config, "TAG_LINE", "").lower()
+        
+        players = match_info.get("players", {}).get("all_players", [])
+        
+        for p in players:
+            p_name = p.get("name", "").lower()
+            p_tag = p.get("tag", "").lower()
+            if p_name == riot_id and p_tag == tag_line:
+                return p.get("character", "Unknown Agent")
+                
+        target_display_name = self._guess_player_name(kills_data)
+        if target_display_name:
+            for p in players:
+                if p.get("name") == target_display_name:
+                    return p.get("character", "Unknown Agent")
+                    
+        return "Unknown Agent"
+
     def refresh_list(self):
+        self.record_list.blockSignals(True)
         self.record_list.clear()
         if not os.path.exists(self.config.SAVE_DIR):
+            self.record_list.blockSignals(False)
             return
+            
+        records_by_date = {}
             
         for f in sorted(os.listdir(self.config.SAVE_DIR), reverse=True):
             if f.endswith(".json"):
@@ -394,9 +459,38 @@ class PlayerTab(QWidget):
                     with open(json_path, 'r', encoding='utf-8') as jf:
                         data = json.load(jf)
                     
-                    video_path = self._find_video_for_json(f, data)
-                    item = QListWidgetItem(f)
+                    match_info = data.get("match_info", data)
+                    custom_name = data.get("custom_name")
                     
+                    game_start = match_info.get("metadata", {}).get("game_start")
+                    if game_start:
+                        dt = datetime.fromtimestamp(game_start)
+                    else:
+                        date_match = re.search(r"(\d{8}_\d{6})", f)
+                        if date_match:
+                            try:
+                                dt = datetime.strptime(date_match.group(1), "%Y%m%d_%H%M%S")
+                            except ValueError:
+                                dt = datetime.now()
+                        else:
+                            dt = datetime.now()
+                            
+                    date_key = dt.strftime('%Y-%m-%d')
+                    time_str = dt.strftime('%H:%M')
+                    
+                    if custom_name:
+                        display_name = custom_name
+                    else:
+                        mode = match_info.get("metadata", {}).get("mode", "Unknown")
+                        map_name = match_info.get("metadata", {}).get("map", "Unknown")
+                        kills_data = match_info.get("kills", [])
+                        agent_name = self._get_agent_name(match_info, kills_data)
+                        
+                        display_name = f"{mode} - {map_name} - {agent_name} - {date_key} {time_str}"
+                    
+                    video_path = self._find_video_for_json(f, data)
+                    
+                    thumb_path = ""
                     if video_path and os.path.exists(video_path):
                         thumb_path = os.path.join(self.config.SAVE_DIR, f.replace('.json', '.jpg'))
                         if not os.path.exists(thumb_path):
@@ -406,16 +500,45 @@ class PlayerTab(QWidget):
                                 "-vf", "scale=240:-1", thumb_path
                             ]
                             subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                            
+                    if date_key not in records_by_date:
+                        records_by_date[date_key] = []
                         
-                        if os.path.exists(thumb_path):
-                            item.setIcon(QIcon(thumb_path))
+                    records_by_date[date_key].append({
+                        'filename': f,
+                        'display_name': display_name,
+                        'thumb_path': thumb_path if os.path.exists(thumb_path) else ""
+                    })
                     
-                    self.record_list.addItem(item)
                 except Exception as e:
                     print(f"[PlayerTab] Error loading {f}: {e}")
+                    
+        for date_key in sorted(records_by_date.keys(), reverse=True):
+            header_item = QListWidgetItem(date_key)
+            header_item.setFlags(Qt.ItemFlag.NoItemFlags)
+            header_item.setBackground(QColor("#222222"))
+            header_item.setForeground(QColor("#FF4655"))
+            font = header_item.font()
+            font.setBold(True)
+            font.setPointSize(14)
+            header_item.setFont(font)
+            self.record_list.addItem(header_item)
+            
+            for rec in records_by_date[date_key]:
+                item = QListWidgetItem(rec['display_name'])
+                item.setData(Qt.ItemDataRole.UserRole, rec['filename'])
+                item.setFlags(item.flags() | Qt.ItemFlag.ItemIsEditable | Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+                if rec['thumb_path']:
+                    item.setIcon(QIcon(rec['thumb_path']))
+                self.record_list.addItem(item)
+                
+        self.record_list.blockSignals(False)
 
     def load_recording(self, item):
-        json_filename = item.text()
+        json_filename = item.data(Qt.ItemDataRole.UserRole)
+        if not json_filename:
+            return
+            
         json_path = os.path.join(self.config.SAVE_DIR, json_filename)
         
         self.stacked_widget.setCurrentWidget(self.player_page)
