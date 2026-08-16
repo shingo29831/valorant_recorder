@@ -12,10 +12,14 @@ from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtSvg import QSvgRenderer
 from core.config import Config
 from ui.player_components import (ClickableVideoWidget, FlowLayout, RecordItemWidget, 
-                                  VolumeWidget, TimelineOverlay)
+                                  VolumeWidget, TimelineOverlay, PlayerContainer)
 
 SETTINGS_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white">
   <path d="M19.14,12.94c0.04-0.3,0.06-0.61,0.06-0.94c0-0.32-0.02-0.64-0.06-0.94l2.03-1.58c0.18-0.14,0.23-0.41,0.12-0.61 l-1.92-3.32c-0.12-0.22-0.37-0.29-0.59-0.22l-2.39,0.96c-0.5-0.38-1.03-0.7-1.62-0.94L14.4,2.81c-0.04-0.24-0.24-0.41-0.48-0.41 h-3.84c-0.24,0-0.43,0.17-0.47,0.41L9.25,5.35C8.66,5.59,8.12,5.92,7.63,6.29L5.24,5.33c-0.22-0.08-0.47,0-0.59,0.22L2.73,8.87 C2.62,9.08,2.66,9.34,2.86,9.48l2.03,1.58C4.84,11.36,4.8,11.69,4.8,12s0.02,0.64,0.06,0.94l-2.03,1.58 c-0.18,0.14-0.23,0.41-0.12,0.61l1.92,3.32c0.12,0.22,0.37,0.29,0.59,0.22l2.39-0.96c0.5,0.38,1.03,0.7,1.62,0.94l0.36,2.54 c0.05,0.24,0.24,0.41,0.48,0.41h3.84c0.24,0,0.43-0.17,0.47-0.41l0.36-2.54c0.59-0.24,1.13-0.56,1.62-0.94l2.39,0.96 c0.22,0.08,0.47,0,0.59-0.22l1.92-3.32c0.12-0.22,0.07-0.49-0.12-0.61L19.14,12.94z M12,15.6c-1.98,0-3.6-1.62-3.6-3.6 s1.62-3.6,3.6-3.6s3.6,1.62,3.6,3.6S13.98,15.6,12,15.6z"/>
+</svg>"""
+
+BACK_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white">
+  <path d="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z" />
 </svg>"""
 
 class PlayerTab(QWidget):
@@ -107,13 +111,33 @@ class PlayerTab(QWidget):
 
     def setup_player_page(self):
         self.player_page = QWidget()
-        layout = QVBoxLayout()
-        layout.setContentsMargins(20, 20, 20, 20)
+        main_layout = QHBoxLayout()
+        main_layout.setContentsMargins(20, 20, 20, 20)
+        main_layout.setSpacing(10)
         
-        back_btn = QPushButton("← BACK TO LIST")
-        back_btn.setFixedWidth(150)
+        left_container = QWidget()
+        left_container.setFixedWidth(50)
+        left_layout = QVBoxLayout(left_container)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        
+        back_btn = QPushButton()
+        back_btn.setFixedSize(40, 40)
+        back_btn.setStyleSheet("border-radius: 20px; background-color: #333333;")
+        back_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        
+        pixmap = QPixmap(24, 24)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        renderer = QSvgRenderer(QByteArray(BACK_SVG))
+        renderer.render(painter)
+        painter.end()
+        
+        back_btn.setIcon(QIcon(pixmap))
+        back_btn.setIconSize(QSize(24, 24))
         back_btn.clicked.connect(self.show_list_page)
-        layout.addWidget(back_btn)
+        
+        left_layout.addWidget(back_btn, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        left_layout.addStretch()
         
         self.video_widget = ClickableVideoWidget()
         self.video_widget.setStyleSheet("background-color: #000000;")
@@ -130,7 +154,9 @@ class PlayerTab(QWidget):
         self.media_player.durationChanged.connect(self.duration_changed)
         self.media_player.errorOccurred.connect(self.handle_media_error)
         
-        controls_layout = QHBoxLayout()
+        controls_widget = QWidget()
+        controls_layout = QHBoxLayout(controls_widget)
+        controls_layout.setContentsMargins(0, 0, 0, 0)
         
         self.volume_widget = VolumeWidget()
         self.volume_widget.volumeChanged.connect(self.audio_output.setVolume)
@@ -143,10 +169,16 @@ class PlayerTab(QWidget):
         controls_layout.addWidget(self.time_label)
         controls_layout.addWidget(self.timeline_overlay)
         
-        layout.addWidget(self.video_widget, stretch=1)
-        layout.addLayout(controls_layout)
+        self.player_container = PlayerContainer(self.video_widget, controls_widget)
         
-        self.player_page.setLayout(layout)
+        right_container = QWidget()
+        right_container.setFixedWidth(50)
+        
+        main_layout.addWidget(left_container)
+        main_layout.addWidget(self.player_container, stretch=1)
+        main_layout.addWidget(right_container)
+        
+        self.player_page.setLayout(main_layout)
 
     def show_list_page(self):
         self.media_player.stop()

@@ -6,7 +6,7 @@ from PyQt6.QtMultimediaWidgets import QVideoWidget
 from PyQt6.QtSvg import QSvgRenderer
 
 KILL_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-  <g fill="#00FF00" stroke="#000000" stroke-width="0.5">
+  <g fill="#00A2FF" stroke="#000000" stroke-width="0.5">
     <g transform="translate(12,12) rotate(45) translate(-12,-12)">
       <path d="M10.5,17 H13.5 V21 H10.5 Z M7,15 H17 V17 H7 Z M10.5,5 L12,2 L13.5,5 V15 H10.5 Z" />
     </g>
@@ -24,7 +24,7 @@ DEATH_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
 </svg>"""
 
 ASSIST_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-  <path d="M21,8h-4.5l1.2-3.6c0.2-0.6-0.3-1.2-0.9-1.2c-0.3,0-0.6,0.1-0.8,0.3L10,9.5V20h8.5c0.8,0,1.5-0.5,1.7-1.2l1.9-6.8 C22.3,11.1,21.8,10.2,21,8z M8,10H4v10h4V10z" fill="#00A2FF" stroke="#000000" stroke-width="0.5"/>
+  <path d="M21,8h-4.5l1.2-3.6c0.2-0.6-0.3-1.2-0.9-1.2c-0.3,0-0.6,0.1-0.8,0.3L10,9.5V20h8.5c0.8,0,1.5-0.5,1.7-1.2l1.9-6.8 C22.3,11.1,21.8,10.2,21,8z M8,10H4v10h4V10z" fill="#00FF00" stroke="#000000" stroke-width="0.5"/>
 </svg>"""
 
 class ClickableVideoWidget(QVideoWidget):
@@ -261,6 +261,45 @@ class VolumeWidget(QWidget):
         if not self.popup.geometry().contains(cursor_pos) and not self.rect().contains(self.mapFromGlobal(cursor_pos)):
             self.popup.hide()
 
+class PlayerContainer(QWidget):
+    def __init__(self, video_widget, controls_widget, aspect_ratio=16/9, parent=None):
+        super().__init__(parent)
+        self.aspect_ratio = aspect_ratio
+        self.video_widget = video_widget
+        self.controls_widget = controls_widget
+        
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+        self.main_layout.setSpacing(0)
+        
+        self.inner_container = QWidget()
+        self.inner_layout = QVBoxLayout(self.inner_container)
+        self.inner_layout.setContentsMargins(0, 0, 0, 0)
+        self.inner_layout.setSpacing(5)
+        self.inner_layout.addWidget(self.video_widget, stretch=1)
+        self.inner_layout.addWidget(self.controls_widget)
+        
+        self.main_layout.addWidget(self.inner_container, alignment=Qt.AlignmentFlag.AlignCenter)
+
+    def resizeEvent(self, event):
+        w = event.size().width()
+        h = event.size().height()
+        
+        ctrl_h = self.controls_widget.sizeHint().height()
+        avail_video_h = h - ctrl_h - self.inner_layout.spacing()
+        
+        if avail_video_h > 0:
+            if w / avail_video_h > self.aspect_ratio:
+                new_video_h = avail_video_h
+                new_video_w = int(new_video_h * self.aspect_ratio)
+            else:
+                new_video_w = w
+                new_video_h = int(new_video_w / self.aspect_ratio)
+                
+            self.inner_container.setFixedSize(new_video_w, new_video_h + ctrl_h + self.inner_layout.spacing())
+            
+        super().resizeEvent(event)
+
 class TimelineOverlay(QWidget):
     seekRequested = pyqtSignal(int)
 
@@ -406,13 +445,13 @@ class TimelineOverlay(QWidget):
             x = (ev['time'] / self.duration) * width
             
             if ev['type'] == 'kill':
-                color = QColor("#00FF00")
+                color = QColor("#00A2FF")
                 renderer = self.kill_renderer
             elif ev['type'] == 'death':
                 color = QColor("#FF0000")
                 renderer = self.death_renderer
             elif ev['type'] == 'assist':
-                color = QColor("#00A2FF")
+                color = QColor("#00FF00")
                 renderer = self.assist_renderer
             else:
                 color = QColor("#FFFFFF")
