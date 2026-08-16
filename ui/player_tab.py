@@ -86,8 +86,13 @@ class TimelineOverlay(QWidget):
             x1 = start_x + (r['start'] / self.duration) * draw_width
             x2 = start_x + (r['end'] / self.duration) * draw_width
             
-            if r.get('phase') == 'PreRound':
-                painter.setBrush(QColor("#445566"))
+            phase = r.get('phase')
+            if phase == 'InProgress':
+                painter.setBrush(QColor("#DDDDDD"))  # ラウンド中は明るい色
+            elif phase == 'PreRound':
+                painter.setBrush(QColor("#555555"))  # 準備時間は暗い灰色
+            elif phase == 'PostRound':
+                painter.setBrush(QColor("#333333"))  # 終了後はさらに暗い灰色
             else:
                 painter.setBrush(QColor("#777777"))
                 
@@ -518,7 +523,7 @@ class PlayerTab(QWidget):
                 if i + 1 < len(local_round_events):
                     end_time = local_round_events[i+1]["time_ms"]
                     
-                if phase in ["PreRound", "InProgress"]:
+                if phase in ["PreRound", "InProgress", "PostRound"]:
                     rounds.append({"start": start_time, "end": end_time, "phase": phase})
         else:
             if kills_data:
