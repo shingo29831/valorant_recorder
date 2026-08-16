@@ -5,16 +5,26 @@ from PyQt6.QtGui import QColor, QPen, QPixmap, QPainter
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 from PyQt6.QtSvg import QSvgRenderer
 
-KILL_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00FF00">
-  <path d="M21.7,2.3c-0.3-0.3-0.8-0.4-1.2-0.2c-0.4,0.2-0.7,0.6-0.7,1v1.6l-4.3,4.3l-1.4-1.4c-0.4-0.4-1-0.4-1.4,0l-1.4,1.4L2.6,0.3 C2.2-0.1,1.6-0.1,1.2,0.3S0.8,1.3,1.2,1.7l8.7,8.7l-1.4,1.4c-0.4,0.4-0.4,1,0,1.4l1.4,1.4l-4.3,4.3H4c-0.4,0-0.8,0.2-1,0.6 c-0.2,0.4-0.1,0.9,0.2,1.2l3,3c0.2,0.2,0.5,0.3,0.7,0.3c0.3,0,0.5-0.1,0.7-0.3c0.4-0.4,0.4-1,0-1.4l-1.6-1.6v-0.6l4.3-4.3l1.4,1.4 c0.4,0.4,1,0.4,1.4,0l1.4-1.4l8.7,8.7c0.2,0.2,0.5,0.3,0.7,0.3c0.3,0,0.5-0.1,0.7-0.3c0.4-0.4,0.4-1,0-1.4l-8.7-8.7l1.4-1.4 c0.4-0.4,0.4-1,0-1.4l-1.4-1.4l4.3-4.3V4c0-0.4,0.2-0.8,0.6-1c0.4-0.2,0.9-0.1,1.2,0.2l3,3c0.4,0.4,1,0.4,1.4,0s0.4-1,0-1.4 L21.7,2.3z"/>
+KILL_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <g fill="#00FF00" stroke="#000000" stroke-width="0.5">
+    <g transform="translate(12,12) rotate(45) translate(-12,-12)">
+      <path d="M10.5,17 H13.5 V21 H10.5 Z M7,15 H17 V17 H7 Z M10.5,5 L12,2 L13.5,5 V15 H10.5 Z" />
+    </g>
+    <g transform="translate(12,12) rotate(-45) translate(-12,-12)">
+      <path d="M10.5,17 H13.5 V21 H10.5 Z M7,15 H17 V17 H7 Z M10.5,5 L12,2 L13.5,5 V15 H10.5 Z" />
+    </g>
+  </g>
 </svg>"""
 
-DEATH_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#FF0000">
-  <path d="M12,2C6.48,2,2,6.48,2,12c0,4.84,3.44,8.87,8,9.8V22h4v-0.2c4.56-0.93,8-4.96,8-9.8C22,6.48,17.52,2,12,2z M8.5,14 C7.12,14,6,12.88,6,11.5S7.12,9,8.5,9S11,10.12,11,11.5S9.88,14,8.5,14z M15.5,14c-1.38,0-2.5-1.12-2.5-2.5S14.12,9,15.5,9 S18,10.12,18,11.5S16.88,14,15.5,14z M14,18h-4v-2h4V18z"/>
+DEATH_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <g fill="#FF0000" stroke="#000000" stroke-width="0.5">
+    <path d="M12,2 C6.5,2 3,6 3,11 c0,3.5 2,6 4,7 h10 c2,-1 4,-3.5 4,-7 C21,6 17.5,2 12,2 z M8,13 c-1.5,0 -2.5,-1.5 -2.5,-3 c0,-1.5 1,-3 2.5,-3 s2.5,1.5 2.5,3 C10.5,11.5 9.5,13 8,13 z M16,13 c-1.5,0 -2.5,-1.5 -2.5,-3 c0,-1.5 1,-3 2.5,-3 s2.5,1.5 2.5,3 C18.5,11.5 17.5,13 16,13 z M12,15.5 l-1.5,-2 h3 L12,15.5 z" />
+    <path d="M7.5,19.5 v2.5 h1.5 v-1.5 h2 v1.5 h2 v-1.5 h2 v1.5 h1.5 v-2.5 H7.5 z" />
+  </g>
 </svg>"""
 
-ASSIST_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#00A2FF">
-  <path d="M10,9H4C2.9,9,2,9.9,2,11v4c0,1.1,0.9,2,2,2h6c1.1,0,2-0.9,2-2v-4C12,9.9,11.1,9,10,9z M20,9h-6c-1.1,0-2,0.9-2,2v4 c0,1.1,0.9,2,2,2h6c1.1,0,2-0.9,2-2v-4C22,9.9,21.1,9,20,9z"/>
+ASSIST_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <path d="M21,8h-4.5l1.2-3.6c0.2-0.6-0.3-1.2-0.9-1.2c-0.3,0-0.6,0.1-0.8,0.3L10,9.5V20h8.5c0.8,0,1.5-0.5,1.7-1.2l1.9-6.8 C22.3,11.1,21.8,10.2,21,8z M8,10H4v10h4V10z" fill="#00A2FF" stroke="#000000" stroke-width="0.5"/>
 </svg>"""
 
 class ClickableVideoWidget(QVideoWidget):
@@ -260,7 +270,7 @@ class TimelineOverlay(QWidget):
         self.events = []
         self.duration = 0
         self.position = 0
-        self.setFixedHeight(45)
+        self.setFixedHeight(55)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setMouseTracking(True)
         self.hover_x = -1
@@ -290,18 +300,53 @@ class TimelineOverlay(QWidget):
         
     def mouseMoveEvent(self, event):
         self.hover_x = event.position().x()
+        y = event.position().y()
+        width = self.width()
+        height = self.height()
+        round_y = height - 12
+        
         if self.is_dragging and self.duration > 0:
             x = max(0, min(self.hover_x, self.width()))
             pos_ms = int((x / self.width()) * self.duration)
             self.seekRequested.emit(pos_ms)
+        else:
+            is_hovering_icon = False
+            if self.duration > 0:
+                for ev in self.events:
+                    ev_x = (ev['time'] / self.duration) * width
+                    if (ev_x - 12) <= self.hover_x <= (ev_x + 12) and (round_y - 34) <= y <= (round_y - 10):
+                        is_hovering_icon = True
+                        break
+            if is_hovering_icon:
+                self.setCursor(Qt.CursorShape.PointingHandCursor)
+            else:
+                self.setCursor(Qt.CursorShape.ArrowCursor)
+                
         self.update()
         super().mouseMoveEvent(event)
 
     def mousePressEvent(self, event):
         if self.duration <= 0 or event.button() != Qt.MouseButton.LeftButton:
             return
-        self.is_dragging = True
+            
         x = event.position().x()
+        y = event.position().y()
+        width = self.width()
+        height = self.height()
+        round_y = height - 12
+        
+        clicked_event_time = None
+        for ev in reversed(self.events):
+            ev_x = (ev['time'] / self.duration) * width
+            if (ev_x - 12) <= x <= (ev_x + 12) and (round_y - 34) <= y <= (round_y - 10):
+                clicked_event_time = ev['time']
+                break
+                
+        if clicked_event_time is not None:
+            self.seekRequested.emit(clicked_event_time)
+            return
+
+        self.is_dragging = True
         x = max(0, min(x, self.width()))
         pos_ms = int((x / self.width()) * self.duration)
         self.seekRequested.emit(pos_ms)
@@ -372,10 +417,10 @@ class TimelineOverlay(QWidget):
                 renderer = None
                 
             painter.setPen(color)
-            painter.drawLine(int(x), round_y - 14, int(x), round_y)
+            painter.drawLine(int(x), round_y - 10, int(x), round_y)
                 
             if renderer:
-                icon_rect = QRectF(x - 8, round_y - 30, 16, 16)
+                icon_rect = QRectF(x - 12, round_y - 34, 24, 24)
                 renderer.render(painter, icon_rect)
             else:
                 painter.setPen(Qt.PenStyle.NoPen)
@@ -392,4 +437,4 @@ class TimelineOverlay(QWidget):
             time_str = f"{m:02d}:{s:02d}"
             
             painter.setPen(QColor("#FFFFFF"))
-            painter.drawText(int(self.hover_x) - 15, round_y - 25, time_str)
+            painter.drawText(int(self.hover_x) - 15, round_y - 38, time_str)
