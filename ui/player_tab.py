@@ -395,16 +395,23 @@ class PlayerTab(QWidget):
         
         offset_ms = 0
         local_round_events = match_info.get("local_round_events", [])
+        kills_data = match_info.get("kills", [])
         
-        if local_round_events and match_info.get("rounds"):
+        api_first_start = 0
+        if kills_data:
+            first_kill = kills_data[0]
+            k_match = first_kill.get("kill_time_in_match", 0)
+            k_round = first_kill.get("kill_time_in_round", 0)
+            if k_match > 0 and k_round > 0:
+                api_first_start = k_match - k_round
+
+        if local_round_events and api_first_start > 0:
             first_local_preround = next((ev for ev in local_round_events if ev["phase"] == "PreRound"), None)
             if first_local_preround:
-                api_first_start = match_info["rounds"][0].get("start_time_in_match", 0)
                 offset_ms = api_first_start - first_local_preround["time_ms"]
             else:
                 first_local_inprogress = next((ev for ev in local_round_events if ev["phase"] == "InProgress"), None)
                 if first_local_inprogress:
-                    api_first_start = match_info["rounds"][0].get("start_time_in_match", 0)
                     offset_ms = api_first_start - first_local_inprogress["time_ms"]
         elif "local_match_start_time" in match_info and "local_match_end_time" in match_info and duration_ms > 0:
             game_length = match_info.get("metadata", {}).get("game_length")
@@ -454,8 +461,6 @@ class PlayerTab(QWidget):
                 target_puuid = p.get("puuid")
                 target_display_name = p.get("name")
                 break
-        
-        kills_data = match_info.get("kills", [])
         
         if not target_puuid and kills_data:
             target_display_name = self._guess_player_name(kills_data)
@@ -516,24 +521,26 @@ class PlayerTab(QWidget):
                 if phase in ["PreRound", "InProgress"]:
                     rounds.append({"start": start_time, "end": end_time, "phase": phase})
         else:
-            for r in match_info.get("rounds", []):
-                start = int(r.get("start_time_in_match", 0) - offset_ms)
-                end = int(r.get("end_time_in_match", 0) - offset_ms)
-                if end > 0:
-                    rounds.append({"start": max(0, start), "end": end, "phase": "InProgress"})
-                    
-            if not rounds and kills_data:
-                first_kill = kills_data[0]
-                k_match = first_kill.get("kill_time_in_match", 0)
-                k_round = first_kill.get("kill_time_in_round", 0)
-                if k_match > 0 and k_round > 0:
-                    round_start = int((k_match - k_round) - offset_ms)
-                    game_length = match_info.get("metadata", {}).get("game_length", 0)
-                    if game_length > 0:
-                        round_end = int(game_length - offset_ms)
+            if kills_data:
+                round_starts = []
+                for k in kills_data:
+                    k_match = k.get("kill_time_in_match", 0)
+                    k_round = k.get("kill_time_in_round", 0)
+                    if k_match > 0 and k_round > 0:
+                        r_start = k_match - k_round
+                        if not round_starts or abs(round_starts[-1] - r_start) > 5000:
+                            round_starts.append(r_start)
+                
+                for i, r_start in enumerate(round_starts):
+                    start = int(r_start - offset_ms)
+                    if i + 1 < len(round_starts):
+                        end = int(round_starts[i+1] - offset_ms)
                     else:
-                        round_end = duration_ms
-                    rounds.append({"start": max(0, round_start), "end": round_end, "phase": "InProgress"})
+                        game_length = match_info.get("metadata", {}).get("game_length", 0)
+                        end = int(game_length - offset_ms) if game_length > 0 else duration_ms
+                    
+                    if end > start:
+                        rounds.append({"start": max(0, start), "end": end, "phase": "InProgress"})
             
         self.timeline_overlay.set_data(rounds, events)
 
