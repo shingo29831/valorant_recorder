@@ -205,16 +205,13 @@ def main():
             if any(pattern.search(line) for pattern in compiled_exclude):
                 continue
                 
-            # 既知の必要なログにマッチする場合もスキップ
+            # 既知の必要なログにマッチする場合のみ出力
             if any(pattern.search(line) for pattern in compiled_known):
-                continue
-                
-            # どちらにもマッチしない（未分類の）ログのみ出力
-            outfile.write(line)
-            kept_lines_count += 1
+                outfile.write(line)
+                kept_lines_count += 1
 
     print(f"Done! Filtered log saved to: {output_path}")
-    print(f"Total lines: {total_lines_count} -> Unclassified lines: {kept_lines_count}")
+    print(f"Total lines: {total_lines_count} -> Known (required) lines: {kept_lines_count}")
 
 if __name__ == "__main__":
     main()
