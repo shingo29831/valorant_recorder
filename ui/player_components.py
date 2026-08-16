@@ -309,10 +309,15 @@ class TimelineOverlay(QWidget):
         self.setMouseTracking(True)
         self.hover_x = -1
         self.is_dragging = False
+        self.filters = {"kill": True, "death": True, "assist": True}
         
         self.kill_renderer = QSvgRenderer(QByteArray(KILL_SVG))
         self.death_renderer = QSvgRenderer(QByteArray(DEATH_SVG))
         self.assist_renderer = QSvgRenderer(QByteArray(ASSIST_SVG))
+
+    def set_filters(self, filters):
+        self.filters = filters
+        self.update()
 
     def set_duration(self, duration):
         self.duration = duration
@@ -348,6 +353,8 @@ class TimelineOverlay(QWidget):
             is_hovering_icon = False
             if self.duration > 0:
                 for ev in self.events:
+                    if not self.filters.get(ev['type'], True):
+                        continue
                     ev_x = (ev['time'] / self.duration) * width
                     if (ev_x - 12) <= self.hover_x <= (ev_x + 12) and (round_y - 34) <= y <= (round_y - 10):
                         is_hovering_icon = True
@@ -372,6 +379,8 @@ class TimelineOverlay(QWidget):
         
         clicked_event_time = None
         for ev in reversed(self.events):
+            if not self.filters.get(ev['type'], True):
+                continue
             ev_x = (ev['time'] / self.duration) * width
             if (ev_x - 12) <= x <= (ev_x + 12) and (round_y - 34) <= y <= (round_y - 10):
                 clicked_event_time = ev['time']
@@ -437,6 +446,9 @@ class TimelineOverlay(QWidget):
             painter.drawLine(int(x), round_y, int(x), round_y + round_h)
             
         for ev in self.events:
+            if not self.filters.get(ev['type'], True):
+                continue
+                
             x = (ev['time'] / self.duration) * width
             
             if ev['type'] == 'kill':
