@@ -290,7 +290,8 @@ class TimelineOverlay(QWidget):
 
     def set_data(self, rounds, events):
         self.rounds = rounds
-        self.events = events
+        priority = {'assist': 0, 'death': 1, 'kill': 2}
+        self.events = sorted(events, key=lambda e: (priority.get(e['type'], -1), e['time']))
         self.update()
 
     def leaveEvent(self, event):
@@ -343,7 +344,8 @@ class TimelineOverlay(QWidget):
                 break
                 
         if clicked_event_time is not None:
-            self.seekRequested.emit(clicked_event_time)
+            seek_time = max(0, clicked_event_time - 5000)
+            self.seekRequested.emit(seek_time)
             return
 
         self.is_dragging = True
