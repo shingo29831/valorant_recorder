@@ -86,10 +86,15 @@ class WatcherThread(QThread):
                 if abs(game_start - self.recording_start_time) < 3600:
                     match_data = api_match_data
                     match_id = match_data['metadata']['matchid']
-                    mmr_change = self.api.fetch_mmr_change(match_id)
+                    try:
+                        mmr_change = self.api.fetch_mmr_change(match_id)
+                    except Exception as e:
+                        self.log_signal.emit(f"[API] MMR fetch skipped (likely not competitive): {e}")
+                        mmr_change = 0
                     self.log_signal.emit("[API] Successfully fetched current match data.")
                     break
-            except Exception:
+            except Exception as e:
+                self.log_signal.emit(f"[API] Error fetching match data: {e}")
                 pass
 
         if match_data:
@@ -196,7 +201,11 @@ class WatcherThread(QThread):
                     if diff < 3600:
                         self.log_signal.emit(f"[Background] Match found for {os.path.basename(video_path)}.")
                         match_id = api_match_data['metadata']['matchid']
-                        mmr_change = self.api.fetch_mmr_change(match_id, retries=1, delay=2)
+                        try:
+                            mmr_change = self.api.fetch_mmr_change(match_id, retries=1, delay=2)
+                        except Exception as e:
+                            self.log_signal.emit(f"[Background] MMR fetch skipped (likely not competitive): {e}")
+                            mmr_change = 0
                         
                         api_match_data['local_video_path'] = video_path
                         filepath = self.store.save_match_metadata(api_match_data, mmr_change)
