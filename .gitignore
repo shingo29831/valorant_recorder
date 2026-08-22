@@ -38,3 +38,6 @@ match_*.json
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# aiskel output directory
+ai_meta/

@@ -47,53 +47,79 @@ class FFmpegRecorder:
     def _audio_capture_loop(self):
         # COM競合を防ぐため、別スレッド内でインポートを遅延させる
         import soundcard as sc
+        import sounddevice as sd
         import warnings
+        from contextlib import ExitStack
         warnings.filterwarnings("ignore", category=sc.SoundcardRuntimeWarning)
         
         samplerate = 48000
         frames_per_buffer = 1024
+        mic_gain = float(getattr(self.config, 'RECORD_AUDIO_MIC_GAIN', '1.0'))
         
         try:
             speaker = sc.default_speaker()
             spk_mic = sc.get_microphone(speaker.id, include_loopback=True)
             
-            mic = None
-            if self.config.RECORD_AUDIO_MIC:
-                mics = sc.all_microphones()
-                for m in mics:
-                    if self.config.RECORD_AUDIO_MIC in m.name:
-                        mic = m
+            mic_device_id = None
+            if self.config.RECORD_AUDIO_MIC and self.config.RECORD_AUDIO_MIC != "None":
+                for i, d in enumerate(sd.query_devices()):
+                    if d['max_input_channels'] > 0 and self.config.RECORD_AUDIO_MIC in d['name']:
+                        mic_device_id = i
                         break
-                if not mic and mics:
-                    mic = sc.default_microphone()
+                if mic_device_id is None:
+                    mic_device_id = sd.default.device[0]
 
-            if mic:
-                with spk_mic.recorder(samplerate=samplerate, channels=2) as spk_rec, \
-                     mic.recorder(samplerate=samplerate, channels=2) as mic_rec:
-                    if hasattr(self, 'audio_ready_event'):
-                        self.audio_ready_event.set()
-                    while not self.stop_event.is_set():
-                        spk_data = spk_rec.record(numframes=frames_per_buffer)
-                        mic_data = mic_rec.record(numframes=frames_per_buffer)
+            with ExitStack() as stack:
+                spk_rec = stack.enter_context(spk_mic.recorder(samplerate=samplerate, channels=2))
+                
+                mic_stream = None
+                if mic_device_id is not None:
+                    # マイクをステレオとして開く。モノラルマイクの場合は自動複製されないためフォールバックする
+                    try:
+                        mic_stream = stack.enter_context(sd.InputStream(
+                            device=mic_device_id, channels=2, samplerate=samplerate, dtype='float32'))
+                        mic_channels = 2
+                    except Exception:
+                        mic_stream = stack.enter_context(sd.InputStream(
+                            device=mic_device_id, channels=1, samplerate=samplerate, dtype='float32'))
+                        mic_channels = 1
+                    mic_stream.start()
+                
+                if hasattr(self, 'audio_ready_event'):
+                    self.audio_ready_event.set()
+
+                mic_buffer = np.zeros((0, 2), dtype=np.float32)
+
+                while not self.stop_event.is_set():
+                    # システム音声をマスタークロックとしてブロック読み込み
+                    spk_data = spk_rec.record(numframes=frames_per_buffer)
+                    
+                    if mic_stream is not None:
+                        available = mic_stream.read_available
+                        if available > 0:
+                            new_data, _ = mic_stream.read(available)
+                            if mic_channels == 1:
+                                new_data = np.repeat(new_data, 2, axis=1)
+                            mic_buffer = np.vstack((mic_buffer, new_data))
                         
-                        mixed = spk_data + mic_data
-                        mixed = np.clip(mixed, -1.0, 1.0)
-                        
-                        try:
-                            self.audio_queue.put_nowait(mixed.astype(np.float32).tobytes())
-                        except queue.Full:
-                            pass
-            else:
-                with spk_mic.recorder(samplerate=samplerate, channels=2) as spk_rec:
-                    if hasattr(self, 'audio_ready_event'):
-                        self.audio_ready_event.set()
-                    while not self.stop_event.is_set():
-                        spk_data = spk_rec.record(numframes=frames_per_buffer)
-                        
-                        try:
-                            self.audio_queue.put_nowait(spk_data.astype(np.float32).tobytes())
-                        except queue.Full:
-                            pass
+                        if len(mic_buffer) >= frames_per_buffer:
+                            mic_data = mic_buffer[:frames_per_buffer] * mic_gain
+                            mic_buffer = mic_buffer[frames_per_buffer:]
+                        else:
+                            # マイクのデータが足りない場合はゼロ埋めして同期を維持
+                            mic_data = np.zeros((frames_per_buffer, 2), dtype=np.float32)
+                    else:
+                        mic_data = np.zeros_like(spk_data)
+                    
+                    # システム音とマイク音を結合して4chストリームにする (FL, FR, RL, RR)
+                    combined = np.concatenate((spk_data, mic_data), axis=1)
+                    combined = np.clip(combined, -1.0, 1.0)
+                    
+                    try:
+                        self.audio_queue.put_nowait(combined.astype(np.float32).tobytes())
+                    except queue.Full:
+                        pass
+
         except Exception as e:
             if self.log_file and not self.log_file.closed:
                 self.log_file.write(f"Audio capture error: {e}\n")
@@ -151,10 +177,12 @@ class FFmpegRecorder:
             "-thread_queue_size", "1024",
             "-f", "f32le",
             "-ar", "48000",
-            "-ac", "2",
+            "-ac", "4",
             "-i", "pipe:0",
+            "-filter_complex", "[1:a]aresample=async=1[a_res];[a_res]pan=stereo|c0=c0|c1=c1[a0];[a_res]pan=stereo|c0=c2|c1=c3[a1]",
             "-map", "0:v",
-            "-map", "1:a",
+            "-map", "[a0]",
+            "-map", "[a1]",
             "-c:v", self.actual_encoder,
             "-preset", preset,
             "-tune", tune,
@@ -162,7 +190,6 @@ class FFmpegRecorder:
             "-pix_fmt", "yuv420p",
             "-c:a", "aac",
             "-b:a", "192k",
-            "-af", "aresample=async=1",
             "-shortest",
             self.current_filepath
         ])
