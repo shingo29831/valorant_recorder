@@ -47,7 +47,6 @@ class FFmpegRecorder:
     def _audio_capture_loop(self):
         # COM競合を防ぐため、別スレッド内でインポートを遅延させる
         import soundcard as sc
-        import sounddevice as sd
         import warnings
         from contextlib import ExitStack
         warnings.filterwarnings("ignore", category=sc.SoundcardRuntimeWarning)
@@ -60,53 +59,60 @@ class FFmpegRecorder:
             speaker = sc.default_speaker()
             spk_mic = sc.get_microphone(speaker.id, include_loopback=True)
             
-            mic_device_id = None
+            mic_device = None
             if self.config.RECORD_AUDIO_MIC and self.config.RECORD_AUDIO_MIC != "None":
-                for i, d in enumerate(sd.query_devices()):
-                    if d['max_input_channels'] > 0 and self.config.RECORD_AUDIO_MIC in d['name']:
-                        mic_device_id = i
+                for m in sc.all_microphones(include_loopback=False):
+                    if self.config.RECORD_AUDIO_MIC in m.name:
+                        mic_device = m
                         break
-                if mic_device_id is None:
-                    mic_device_id = sd.default.device[0]
+                if mic_device is None:
+                    mic_device = sc.default_microphone()
 
             with ExitStack() as stack:
                 spk_rec = stack.enter_context(spk_mic.recorder(samplerate=samplerate, channels=2))
                 
-                mic_stream = None
-                if mic_device_id is not None:
-                    # マイクをステレオとして開く。モノラルマイクの場合は自動複製されないためフォールバックする
+                mic_rec = None
+                if mic_device is not None:
                     try:
-                        mic_stream = stack.enter_context(sd.InputStream(
-                            device=mic_device_id, channels=2, samplerate=samplerate, dtype='float32'))
+                        mic_rec = stack.enter_context(mic_device.recorder(samplerate=samplerate, channels=2))
                         mic_channels = 2
                     except Exception:
-                        mic_stream = stack.enter_context(sd.InputStream(
-                            device=mic_device_id, channels=1, samplerate=samplerate, dtype='float32'))
+                        mic_rec = stack.enter_context(mic_device.recorder(samplerate=samplerate, channels=1))
                         mic_channels = 1
-                    mic_stream.start()
                 
                 if hasattr(self, 'audio_ready_event'):
                     self.audio_ready_event.set()
 
-                mic_buffer = np.zeros((0, 2), dtype=np.float32)
+                mic_queue = queue.Queue()
+                mic_stop = threading.Event()
+                
+                def mic_worker():
+                    try:
+                        while not mic_stop.is_set() and not self.stop_event.is_set():
+                            data = mic_rec.record(numframes=frames_per_buffer)
+                            if mic_channels == 1:
+                                data = np.repeat(data, 2, axis=1)
+                            try:
+                                mic_queue.put_nowait(data)
+                            except queue.Full:
+                                pass
+                    except Exception:
+                        pass
+
+                mic_thread = None
+                if mic_rec is not None:
+                    mic_thread = threading.Thread(target=mic_worker, daemon=True)
+                    mic_thread.start()
 
                 while not self.stop_event.is_set():
                     # システム音声をマスタークロックとしてブロック読み込み
                     spk_data = spk_rec.record(numframes=frames_per_buffer)
                     
-                    if mic_stream is not None:
-                        available = mic_stream.read_available
-                        if available > 0:
-                            new_data, _ = mic_stream.read(available)
-                            if mic_channels == 1:
-                                new_data = np.repeat(new_data, 2, axis=1)
-                            mic_buffer = np.vstack((mic_buffer, new_data))
-                        
-                        if len(mic_buffer) >= frames_per_buffer:
-                            mic_data = mic_buffer[:frames_per_buffer] * mic_gain
-                            mic_buffer = mic_buffer[frames_per_buffer:]
-                        else:
-                            # マイクのデータが足りない場合はゼロ埋めして同期を維持
+                    if mic_rec is not None:
+                        try:
+                            mic_data = mic_queue.get_nowait()
+                            mic_data = mic_data * mic_gain
+                        except queue.Empty:
                             mic_data = np.zeros((frames_per_buffer, 2), dtype=np.float32)
                     else:
                         mic_data = np.zeros_like(spk_data)
@@ -119,6 +125,10 @@ class FFmpegRecorder:
                         self.audio_queue.put_nowait(combined.astype(np.float32).tobytes())
                     except queue.Full:
                         pass
+
+                if mic_thread is not None:
+                    mic_stop.set()
+                    mic_thread.join(timeout=1.0)
 
         except Exception as e:
             if self.log_file and not self.log_file.closed:
@@ -172,6 +182,26 @@ class FFmpegRecorder:
         if self.config.RECORD_VIDEO_FORMAT != "ddagrab":
             cmd.extend(["-video_size", self.config.RECORD_RESOLUTION])
             
+        gate_level = float(getattr(self.config, 'RECORD_AUDIO_MIC_NOISE_GATE', '0')) / 100.0
+        denoise = getattr(self.config, 'RECORD_AUDIO_MIC_DENOISE', 'False') == 'True'
+
+        filter_complex = "[1:a]aresample=async=1[a_res];[a_res]pan=stereo|c0=c0|c1=c1[a0];[a_res]pan=stereo|c0=c2|c1=c3[a1]"
+        
+        mic_filters = []
+        if denoise:
+            mic_filters.append("afftdn=nf=-25")
+            
+        if gate_level > 0:
+            # UI上のレベル(平方根スケール)を実際の振幅閾値に戻す
+            amp_threshold = gate_level ** 2
+            mic_filters.append(f"agate=threshold={amp_threshold:.4f}:ratio=10:attack=10:release=100")
+            
+        if mic_filters:
+            filter_complex += f";[a1]{','.join(mic_filters)}[a1_out]"
+            mic_map = "[a1_out]"
+        else:
+            mic_map = "[a1]"
+
         cmd.extend([
             "-i", input_source,
             "-thread_queue_size", "1024",
@@ -179,10 +209,10 @@ class FFmpegRecorder:
             "-ar", "48000",
             "-ac", "4",
             "-i", "pipe:0",
-            "-filter_complex", "[1:a]aresample=async=1[a_res];[a_res]pan=stereo|c0=c0|c1=c1[a0];[a_res]pan=stereo|c0=c2|c1=c3[a1]",
+            "-filter_complex", filter_complex,
             "-map", "0:v",
             "-map", "[a0]",
-            "-map", "[a1]",
+            "-map", mic_map,
             "-c:v", self.actual_encoder,
             "-preset", preset,
             "-tune", tune,
@@ -191,6 +221,7 @@ class FFmpegRecorder:
             "-c:a", "aac",
             "-b:a", "192k",
             "-shortest",
+            "-movflags", "frag_keyframe+empty_moov",
             self.current_filepath
         ])
 
@@ -234,12 +265,17 @@ class FFmpegRecorder:
                 if self.process.stdin:
                     self.process.stdin.close()
                 
-                if os.name == 'nt':
-                    os.kill(self.process.pid, signal.CTRL_BREAK_EVENT)
-                else:
-                    self.process.terminate()
+                # stdinを閉じたことで-shortestが発動し、FFmpegが自然終了するのを待つ
+                try:
+                    self.process.wait(timeout=3.0)
+                except subprocess.TimeoutExpired:
+                    # 自然終了しなかった場合のみシグナルを送信
+                    if os.name == 'nt':
+                        os.kill(self.process.pid, signal.CTRL_BREAK_EVENT)
+                    else:
+                        self.process.terminate()
                     
-                self.process.wait(timeout=15)
+                    self.process.wait(timeout=15)
             except subprocess.TimeoutExpired:
                 self.process.terminate()
                 self.process.wait()
