@@ -46,11 +46,27 @@ class LogWatcher:
                         else:
                             self.is_range = False
 
-                    # 試合開始と終了の検知（射撃訓練場フラグを渡す）
-                    if "Broadcasting state changed to InGame" in line and not self.is_in_match:
+                    # 試合開始の検知 (デスマッチ等もカバーするためトリガーを拡張)
+                    is_start = (
+                        "Broadcasting state changed to InGame" in line or
+                        "Match State Changed from WaitingToStart to PreRound" in line or
+                        "Match State Changed from WaitingToStart to InProgress" in line or
+                        "State: WaitingToStart -> PreRound" in line or
+                        "State: WaitingToStart -> InProgress" in line
+                    )
+                    
+                    # 試合終了の検知
+                    is_end = (
+                        "Broadcasting state changed to TransitionToMainMenu" in line or
+                        "Broadcasting state changed to PostGame" in line or
+                        "Match State Changed from InProgress to WaitingPostMatch" in line or
+                        "State: InProgress -> WaitingPostMatch" in line
+                    )
+
+                    if is_start and not self.is_in_match:
                         self.is_in_match = True
                         self.on_match_start(self.is_range)
-                    elif "Broadcasting state changed to TransitionToMainMenu" in line and self.is_in_match:
+                    elif is_end and self.is_in_match:
                         self.is_in_match = False
                         self.on_match_end(self.is_range)
                         
