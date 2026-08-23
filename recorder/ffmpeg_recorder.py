@@ -185,7 +185,8 @@ class FFmpegRecorder:
         gate_level = float(getattr(self.config, 'RECORD_AUDIO_MIC_NOISE_GATE', '0')) / 100.0
         denoise = getattr(self.config, 'RECORD_AUDIO_MIC_DENOISE', 'False') == 'True'
 
-        filter_complex = "[1:a]aresample=async=1[a_res];[a_res]pan=stereo|c0=c0|c1=c1[a0];[a_res]pan=stereo|c0=c2|c1=c3[a1]"
+        # a_resをasplit=2で2つのストリームに複製してから、それぞれをpanフィルタに渡す
+        filter_complex = "[1:a]aresample=async=1,asplit=2[a_res1][a_res2];[a_res1]pan=stereo|c0=c0|c1=c1[a0];[a_res2]pan=stereo|c0=c2|c1=c3[a1]"
         
         mic_filters = []
         if denoise:
@@ -221,7 +222,6 @@ class FFmpegRecorder:
             "-c:a", "aac",
             "-b:a", "192k",
             "-shortest",
-            "-movflags", "faststart",
             self.current_filepath
         ])
 
@@ -269,34 +269,55 @@ class FFmpegRecorder:
             self.audio_write_thread.join(timeout=5)
             self.audio_write_thread = None
             
-        # 2. stdinを閉じてFFmpegに音声ストリームの終了(EOF)を伝える
-        # これにより -shortest が発動し、FFmpegは正常な終了処理(moovアトム書き込み等)を開始する
         if self.process:
+            # 2. FFmpegに終了シグナルを送信して安全に終了させる
+            # stdinは生データ(pipe:0)を受け取っているため、EOFだけでは映像入力(ddagrab等)が終了せずハングアップする。
+            # そのため、明示的にシグナルを送って正常な終了処理(moovアトム書き込み)を開始させる。
+            try:
+                if os.name == 'nt':
+                    os.kill(self.process.pid, signal.CTRL_BREAK_EVENT)
+                else:
+                    self.process.send_signal(signal.SIGINT)
+            except Exception:
+                pass
+
+            # 3. stdinを閉じる
             if self.process.stdin:
                 try:
                     self.process.stdin.close()
                 except Exception:
                     pass
-            
-            # 3. FFmpegが正常終了するのを待機
+                
+            # 4. FFmpegが正常終了(moovアトム書き込み等)するのを待機
             try:
                 self.process.wait(timeout=15.0)
             except subprocess.TimeoutExpired:
-                # タイムアウトした場合はシグナルを送信して終了を促す
-                try:
-                    if os.name == 'nt':
-                        os.kill(self.process.pid, signal.CTRL_BREAK_EVENT)
-                    else:
-                        self.process.send_signal(signal.SIGINT)
-                    self.process.wait(timeout=5.0)
-                except subprocess.TimeoutExpired:
-                    self.process.terminate()
-                    self.process.wait()
-                except Exception:
-                    pass
+                self.process.terminate()
+                self.process.wait()
+            except Exception:
+                pass
             
+            returncode = self.process.poll()
+            if returncode is not None and returncode != 0:
+                print(f"[FFmpegRecorder] FFmpeg exited abnormally with code {returncode}")
+                
             self.process = None
             
         if self.log_file:
             self.log_file.close()
             self.log_file = None
+            
+        # 録画終了時にエラーログの末尾をコンソールに出力して原因を特定しやすくする
+        if self.current_filepath:
+            log_path = os.path.join(os.path.dirname(self.current_filepath), "ffmpeg_error.log")
+            if os.path.exists(log_path):
+                try:
+                    with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                        lines = f.readlines()
+                        if lines:
+                            print("\n=== FFmpeg Error Log (Last 20 lines) ===")
+                            for line in lines[-20:]:
+                                print(line.strip())
+                            print("========================================\n")
+                except Exception as e:
+                    print(f"[FFmpegRecorder] Could not read log file: {e}")
