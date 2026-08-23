@@ -114,9 +114,19 @@ class MicMonitorThread(QThread):
                     mic_device = sc.default_microphone()
 
             if mic_device is not None:
-                with mic_device.recorder(samplerate=48000, channels=1) as recorder:
+                try:
+                    recorder = mic_device.recorder(samplerate=48000, channels=2)
+                    channels = 2
+                except Exception:
+                    recorder = mic_device.recorder(samplerate=48000, channels=1)
+                    channels = 1
+                    
+                with recorder:
                     while self.running:
                         data = recorder.record(numframes=2400)
+                        if channels == 2:
+                            # ステレオの場合は平均をとってモノラルにダウンミックス
+                            data = data.mean(axis=1, keepdims=True)
                         self.audio_callback(data, 2400, None, None)
             else:
                 while self.running:

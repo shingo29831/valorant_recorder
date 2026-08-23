@@ -84,11 +84,12 @@ class FFmpegRecorder:
                     self.audio_ready_event.set()
 
                 mic_queue = queue.Queue()
-                mic_stop = threading.Event()
+                spk_queue = queue.Queue()
+                worker_stop = threading.Event()
                 
                 def mic_worker():
                     try:
-                        while not mic_stop.is_set() and not self.stop_event.is_set():
+                        while not worker_stop.is_set() and not self.stop_event.is_set():
                             data = mic_rec.record(numframes=frames_per_buffer)
                             if mic_channels == 1:
                                 data = np.repeat(data, 2, axis=1)
@@ -99,14 +100,36 @@ class FFmpegRecorder:
                     except Exception:
                         pass
 
+                def spk_worker():
+                    try:
+                        while not worker_stop.is_set() and not self.stop_event.is_set():
+                            data = spk_rec.record(numframes=frames_per_buffer)
+                            try:
+                                spk_queue.put_nowait(data)
+                            except queue.Full:
+                                pass
+                    except Exception:
+                        pass
+
                 mic_thread = None
                 if mic_rec is not None:
                     mic_thread = threading.Thread(target=mic_worker, daemon=True)
                     mic_thread.start()
+                    
+                spk_thread = threading.Thread(target=spk_worker, daemon=True)
+                spk_thread.start()
+
+                # 無音時にFFmpegが音声データ不足でハングアップしないよう、タイムアウトを短く設定して
+                # 積極的に無音データを生成・供給する（FFmpegのstdinバッファが同期を取る）
+                timeout_sec = 0.01
 
                 while not self.stop_event.is_set():
-                    # システム音声をマスタークロックとしてブロック読み込み
-                    spk_data = spk_rec.record(numframes=frames_per_buffer)
+                    # スピーカー音が鳴っていないとrecordがブロックするため、タイムアウト付きで取得し、
+                    # 取得できない場合は無音データを生成してFFmpegのエンコード停止を防ぐ
+                    try:
+                        spk_data = spk_queue.get(timeout=timeout_sec)
+                    except queue.Empty:
+                        spk_data = np.zeros((frames_per_buffer, 2), dtype=np.float32)
                     
                     if mic_rec is not None:
                         try:
@@ -126,9 +149,11 @@ class FFmpegRecorder:
                     except queue.Full:
                         pass
 
+                worker_stop.set()
                 if mic_thread is not None:
-                    mic_stop.set()
                     mic_thread.join(timeout=1.0)
+                if spk_thread is not None:
+                    spk_thread.join(timeout=1.0)
 
         except Exception as e:
             if self.log_file and not self.log_file.closed:
@@ -186,7 +211,7 @@ class FFmpegRecorder:
         denoise = getattr(self.config, 'RECORD_AUDIO_MIC_DENOISE', 'False') == 'True'
 
         # a_resをasplit=2で2つのストリームに複製してから、それぞれをpanフィルタに渡す
-        filter_complex = "[1:a]aresample=async=1,asplit=2[a_res1][a_res2];[a_res1]pan=stereo|c0=c0|c1=c1[a0];[a_res2]pan=stereo|c0=c2|c1=c3[a1]"
+        filter_complex = "[1:a]asplit=2[a_res1][a_res2];[a_res1]pan=stereo|c0=c0|c1=c1[a0];[a_res2]pan=stereo|c0=c2|c1=c3[a1]"
         
         mic_filters = []
         if denoise:
@@ -198,7 +223,8 @@ class FFmpegRecorder:
             mic_filters.append(f"agate=threshold={amp_threshold:.4f}:ratio=10:attack=10:release=100")
             
         if mic_filters:
-            filter_complex += f";[a1]{','.join(mic_filters)}[a1_out]"
+            # フィルタ適用後にチャンネルレイアウトやサンプリングレートが失われないようaformatで明示的に指定する
+            filter_complex += f";[a1]{','.join(mic_filters)},aformat=channel_layouts=stereo:sample_rates=48000[a1_out]"
             mic_map = "[a1_out]"
         else:
             mic_map = "[a1]"
@@ -298,26 +324,26 @@ class FFmpegRecorder:
                 pass
             
             returncode = self.process.poll()
-            if returncode is not None and returncode != 0:
+            # WindowsでCTRL_BREAK_EVENTを送った場合、終了コードは255や3221225786になるため正常とみなす
+            if returncode is not None and returncode != 0 and returncode not in (255, 3221225786):
                 print(f"[FFmpegRecorder] FFmpeg exited abnormally with code {returncode}")
-                
+                # 異常終了時のみログを出力
+                if self.current_filepath:
+                    log_path = os.path.join(os.path.dirname(self.current_filepath), "ffmpeg_error.log")
+                    if os.path.exists(log_path):
+                        try:
+                            with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                                lines = f.readlines()
+                                if lines:
+                                    print("\n=== FFmpeg Error Log (Last 20 lines) ===")
+                                    for line in lines[-20:]:
+                                        print(line.strip())
+                                    print("========================================\n")
+                        except Exception as e:
+                            print(f"[FFmpegRecorder] Could not read log file: {e}")
+                            
             self.process = None
             
         if self.log_file:
             self.log_file.close()
             self.log_file = None
-            
-        # 録画終了時にエラーログの末尾をコンソールに出力して原因を特定しやすくする
-        if self.current_filepath:
-            log_path = os.path.join(os.path.dirname(self.current_filepath), "ffmpeg_error.log")
-            if os.path.exists(log_path):
-                try:
-                    with open(log_path, "r", encoding="utf-8", errors="replace") as f:
-                        lines = f.readlines()
-                        if lines:
-                            print("\n=== FFmpeg Error Log (Last 20 lines) ===")
-                            for line in lines[-20:]:
-                                print(line.strip())
-                            print("========================================\n")
-                except Exception as e:
-                    print(f"[FFmpegRecorder] Could not read log file: {e}")
