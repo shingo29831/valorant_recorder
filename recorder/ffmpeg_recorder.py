@@ -221,7 +221,7 @@ class FFmpegRecorder:
             "-c:a", "aac",
             "-b:a", "192k",
             "-shortest",
-            "-movflags", "frag_keyframe+empty_moov",
+            "-movflags", "faststart",
             self.current_filepath
         ])
 
@@ -260,29 +260,7 @@ class FFmpegRecorder:
     def stop_recording(self):
         self.stop_event.set()
         
-        if self.process:
-            try:
-                if self.process.stdin:
-                    self.process.stdin.close()
-                
-                # stdinを閉じたことで-shortestが発動し、FFmpegが自然終了するのを待つ
-                try:
-                    self.process.wait(timeout=3.0)
-                except subprocess.TimeoutExpired:
-                    # 自然終了しなかった場合のみシグナルを送信
-                    if os.name == 'nt':
-                        os.kill(self.process.pid, signal.CTRL_BREAK_EVENT)
-                    else:
-                        self.process.terminate()
-                    
-                    self.process.wait(timeout=15)
-            except subprocess.TimeoutExpired:
-                self.process.terminate()
-                self.process.wait()
-            except Exception:
-                pass
-            self.process = None
-            
+        # 1. 音声キャプチャと書き込みスレッドを先に安全に終了させる
         if self.audio_record_thread:
             self.audio_record_thread.join(timeout=5)
             self.audio_record_thread = None
@@ -290,6 +268,34 @@ class FFmpegRecorder:
         if self.audio_write_thread:
             self.audio_write_thread.join(timeout=5)
             self.audio_write_thread = None
+            
+        # 2. stdinを閉じてFFmpegに音声ストリームの終了(EOF)を伝える
+        # これにより -shortest が発動し、FFmpegは正常な終了処理(moovアトム書き込み等)を開始する
+        if self.process:
+            if self.process.stdin:
+                try:
+                    self.process.stdin.close()
+                except Exception:
+                    pass
+            
+            # 3. FFmpegが正常終了するのを待機
+            try:
+                self.process.wait(timeout=15.0)
+            except subprocess.TimeoutExpired:
+                # タイムアウトした場合はシグナルを送信して終了を促す
+                try:
+                    if os.name == 'nt':
+                        os.kill(self.process.pid, signal.CTRL_BREAK_EVENT)
+                    else:
+                        self.process.send_signal(signal.SIGINT)
+                    self.process.wait(timeout=5.0)
+                except subprocess.TimeoutExpired:
+                    self.process.terminate()
+                    self.process.wait()
+                except Exception:
+                    pass
+            
+            self.process = None
             
         if self.log_file:
             self.log_file.close()
