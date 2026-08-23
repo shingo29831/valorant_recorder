@@ -1,4 +1,9 @@
 import sys
+from core.patcher import patch_soundcard_lib
+
+# UIや他のモジュールが読み込まれる前にsoundcardライブラリのバグを修正する
+patch_soundcard_lib()
+
 from PyQt6.QtWidgets import QApplication
 from ui.main_window import MainWindow
 

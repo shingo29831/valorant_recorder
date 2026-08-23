@@ -9,7 +9,8 @@ from datetime import datetime
 from core.config import Config
 from recorder.ffmpeg_downloader import ensure_ffmpeg_downloaded
 
-warnings.filterwarnings("ignore", message="data discontinuity in recording")
+warnings.filterwarnings("ignore", message=".*data discontinuity.*")
+warnings.filterwarnings("ignore", module=".*soundcard.*")
 
 class FFmpegRecorder:
     def __init__(self, config: Config):
@@ -49,7 +50,8 @@ class FFmpegRecorder:
         import soundcard as sc
         import warnings
         from contextlib import ExitStack
-        warnings.filterwarnings("ignore", category=sc.SoundcardRuntimeWarning)
+        warnings.simplefilter("ignore", category=sc.SoundcardRuntimeWarning)
+        warnings.filterwarnings("ignore", message=".*data discontinuity.*")
         
         samplerate = 48000
         frames_per_buffer = 1024
@@ -77,8 +79,14 @@ class FFmpegRecorder:
                         mic_rec = stack.enter_context(mic_device.recorder(samplerate=samplerate, channels=2))
                         mic_channels = 2
                     except Exception:
-                        mic_rec = stack.enter_context(mic_device.recorder(samplerate=samplerate, channels=1))
-                        mic_channels = 1
+                        try:
+                            mic_rec = stack.enter_context(mic_device.recorder(samplerate=samplerate, channels=1))
+                            mic_channels = 1
+                        except Exception as e:
+                            if self.log_file and not self.log_file.closed:
+                                self.log_file.write(f"Failed to initialize mic recorder: {e}\n")
+                                self.log_file.flush()
+                            mic_rec = None
                 
                 if hasattr(self, 'audio_ready_event'):
                     self.audio_ready_event.set()
@@ -88,19 +96,31 @@ class FFmpegRecorder:
                 worker_stop = threading.Event()
                 
                 def mic_worker():
+                    warnings.simplefilter("ignore", category=sc.SoundcardRuntimeWarning)
                     try:
                         while not worker_stop.is_set() and not self.stop_event.is_set():
                             data = mic_rec.record(numframes=frames_per_buffer)
                             if mic_channels == 1:
                                 data = np.repeat(data, 2, axis=1)
+                            
+                            # データサイズが異なる場合のパディング/トリミング（形状不一致によるクラッシュ防止）
+                            if data.shape[0] < frames_per_buffer:
+                                pad = np.zeros((frames_per_buffer - data.shape[0], 2), dtype=np.float32)
+                                data = np.concatenate((data, pad), axis=0)
+                            elif data.shape[0] > frames_per_buffer:
+                                data = data[:frames_per_buffer, :]
+                                
                             try:
                                 mic_queue.put_nowait(data)
                             except queue.Full:
                                 pass
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        if self.log_file and not self.log_file.closed:
+                            self.log_file.write(f"Mic worker error: {e}\n")
+                            self.log_file.flush()
 
                 def spk_worker():
+                    warnings.simplefilter("ignore", category=sc.SoundcardRuntimeWarning)
                     try:
                         while not worker_stop.is_set() and not self.stop_event.is_set():
                             data = spk_rec.record(numframes=frames_per_buffer)
@@ -119,19 +139,39 @@ class FFmpegRecorder:
                 spk_thread = threading.Thread(target=spk_worker, daemon=True)
                 spk_thread.start()
 
-                # 無音時にFFmpegが音声データ不足でハングアップしないよう、タイムアウトを短く設定して
-                # 積極的に無音データを生成・供給する（FFmpegのstdinバッファが同期を取る）
-                timeout_sec = 0.01
+                buffer_duration = frames_per_buffer / samplerate
+                # 音が鳴っている時は、揺らぎを許容するためにバッファ時間より少し長めのタイムアウトを設定
+                timeout_sec = buffer_duration * 1.5
 
                 while not self.stop_event.is_set():
+                    # スピーカーのキューが溜まりすぎている場合は古いデータを捨てる（遅延・音ズレ防止）
+                    while spk_queue.qsize() > 2:
+                        try:
+                            spk_queue.get_nowait()
+                        except queue.Empty:
+                            break
+
                     # スピーカー音が鳴っていないとrecordがブロックするため、タイムアウト付きで取得し、
                     # 取得できない場合は無音データを生成してFFmpegのエンコード停止を防ぐ
                     try:
                         spk_data = spk_queue.get(timeout=timeout_sec)
+                        # データが取得できた場合（音が鳴っている場合）は、揺らぎを許容するタイムアウトに戻す
+                        timeout_sec = buffer_duration * 1.5
                     except queue.Empty:
                         spk_data = np.zeros((frames_per_buffer, 2), dtype=np.float32)
+                        # タイムアウトした場合（無音でブロックしている場合）は、
+                        # 時間ズレ（音ズレ）を防ぐために正確なバッファ時間をタイムアウトに設定し、
+                        # 実時間と同じペースで無音データを生成する
+                        timeout_sec = buffer_duration
                     
                     if mic_rec is not None:
+                        # マイクのキューが溜まりすぎている場合は古いデータを捨てる（遅延・音ズレ防止）
+                        while mic_queue.qsize() > 2:
+                            try:
+                                mic_queue.get_nowait()
+                            except queue.Empty:
+                                break
+                                
                         try:
                             mic_data = mic_queue.get_nowait()
                             mic_data = mic_data * mic_gain
@@ -219,7 +259,9 @@ class FFmpegRecorder:
             
         if gate_level > 0:
             # UI上のレベル(平方根スケール)を実際の振幅閾値に戻す
-            amp_threshold = gate_level ** 2
+            # UIのメーター計算 (level = sqrt(rms) * 2) の逆算に近い形でスケールダウンし、
+            # 閾値が高すぎて音が完全に消えるのを防ぐ
+            amp_threshold = (gate_level / 2.0) ** 2
             mic_filters.append(f"agate=threshold={amp_threshold:.4f}:ratio=10:attack=10:release=100")
             
         if mic_filters:

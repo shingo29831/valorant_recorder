@@ -118,16 +118,27 @@ class MicMonitorThread(QThread):
                     recorder = mic_device.recorder(samplerate=48000, channels=2)
                     channels = 2
                 except Exception:
-                    recorder = mic_device.recorder(samplerate=48000, channels=1)
-                    channels = 1
+                    try:
+                        recorder = mic_device.recorder(samplerate=48000, channels=1)
+                        channels = 1
+                    except Exception as e:
+                        import traceback
+                        print(f"Failed to initialize recorder:")
+                        traceback.print_exc()
+                        recorder = None
                     
-                with recorder:
+                if recorder is not None:
+                    with recorder:
+                        while self.running:
+                            data = recorder.record(numframes=2400)
+                            if channels == 2:
+                                # ステレオの場合は平均をとってモノラルにダウンミックス
+                                data = data.mean(axis=1, keepdims=True)
+                            self.audio_callback(data, 2400, None, None)
+                else:
                     while self.running:
-                        data = recorder.record(numframes=2400)
-                        if channels == 2:
-                            # ステレオの場合は平均をとってモノラルにダウンミックス
-                            data = data.mean(axis=1, keepdims=True)
-                        self.audio_callback(data, 2400, None, None)
+                        self.level_ready.emit(0.0)
+                        self.msleep(50)
             else:
                 while self.running:
                     self.level_ready.emit(0.0)
@@ -135,6 +146,9 @@ class MicMonitorThread(QThread):
         except Exception as e:
             import traceback
             import os
+            print("\n=== MicMonitorThread Error ===")
+            traceback.print_exc()
+            print("==============================\n")
             log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "mic_error.log")
             with open(log_path, "a", encoding="utf-8") as f:
                 f.write(f"MicMonitorThread error:\n{traceback.format_exc()}\n")
