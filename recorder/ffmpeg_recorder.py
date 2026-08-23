@@ -271,6 +271,13 @@ class FFmpegRecorder:
         else:
             mic_map = "[a1]"
 
+        # システム音とマイク音をそれぞれ asplit で複製し、
+        # 1. ミックス用 (通常再生用)
+        # 2. システム音単独 (編集用)
+        # 3. マイク音単独 (編集用)
+        # の3つのオーディオトラックを生成する
+        filter_complex += f";[a0]asplit=2[a0_mix][a0_out];{mic_map}asplit=2[a1_mix][a1_out];[a0_mix][a1_mix]amix=inputs=2:duration=longest:normalize=0[a_mixed]"
+
         cmd.extend([
             "-i", input_source,
             "-thread_queue_size", "1024",
@@ -280,8 +287,9 @@ class FFmpegRecorder:
             "-i", "pipe:0",
             "-filter_complex", filter_complex,
             "-map", "0:v",
-            "-map", "[a0]",
-            "-map", mic_map,
+            "-map", "[a_mixed]",
+            "-map", "[a0_out]",
+            "-map", "[a1_out]",
             "-c:v", self.actual_encoder,
             "-preset", preset,
             "-tune", tune,
