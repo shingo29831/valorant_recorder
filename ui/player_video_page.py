@@ -8,13 +8,65 @@ from PyQt6.QtGui import QIcon, QPixmap, QPainter
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtSvg import QSvgRenderer
 from core.config import Config
-from ui.player_components import ClickableVideoWidget, VolumeWidget, TimelineOverlay, PlayerContainer
+from ui.player_components import ClickableVideoWidget, VolumeWidget, MicVolumeWidget, TimelineOverlay, PlayerContainer
+from recorder.ffmpeg_downloader import ensure_ffmpeg_downloaded
+import tempfile
+import shutil
+import subprocess
+from PyQt6.QtCore import QThread
 from ui.player_utils import find_video_for_json, guess_player_name
 from ui.event_toggle_widget import EventToggleWidget
 
 BACK_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white">
   <path d="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z" />
 </svg>"""
+
+class RemixThread(QThread):
+    finished = pyqtSignal(bool, str)
+
+    def __init__(self, video_path, mic_volume, ffmpeg_path):
+        super().__init__()
+        self.video_path = video_path
+        self.mic_volume = mic_volume
+        self.ffmpeg_path = ffmpeg_path
+
+    def run(self):
+        try:
+            temp_fd, temp_path = tempfile.mkstemp(suffix=".mp4")
+            os.close(temp_fd)
+
+            # 0:a:1 (システム音) と 0:a:2 (マイク音) を合成して新しいミックス音を作る
+            filter_complex = f"[0:a:2]volume={self.mic_volume:.2f}[a2_vol];[0:a:1][a2_vol]amix=inputs=2:duration=longest:normalize=0[a_mixed]"
+            
+            cmd = [
+                self.ffmpeg_path,
+                "-y",
+                "-i", self.video_path,
+                "-filter_complex", filter_complex,
+                "-map", "0:v",
+                "-map", "[a_mixed]",
+                "-map", "0:a:1",
+                "-map", "0:a:2",
+                "-c:v", "copy",
+                "-c:a:0", "aac",
+                "-b:a:0", "192k",
+                "-c:a:1", "copy",
+                "-c:a:2", "copy",
+                temp_path
+            ]
+            
+            process = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            
+            if process.returncode != 0:
+                os.remove(temp_path)
+                self.finished.emit(False, f"FFmpeg error: {process.stderr}")
+                return
+
+            shutil.move(temp_path, self.video_path)
+            self.finished.emit(True, "")
+            
+        except Exception as e:
+            self.finished.emit(False, str(e))
 
 class PlayerVideoPage(QWidget):
     backRequested = pyqtSignal()
@@ -78,11 +130,22 @@ class PlayerVideoPage(QWidget):
         self.volume_widget = VolumeWidget()
         self.volume_widget.volumeChanged.connect(self.audio_output.setVolume)
         
+        self.mic_volume_widget = MicVolumeWidget()
+        self.mic_volume_widget.volumeChanged.connect(self.on_mic_volume_changed)
+        self.current_mic_volume = 1.0
+        
+        self.remix_btn = QPushButton("リミックス保存")
+        self.remix_btn.setStyleSheet("background-color: #FF4655; color: white; border-radius: 4px; padding: 4px 8px; font-weight: bold;")
+        self.remix_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.remix_btn.clicked.connect(self.start_remix)
+        
         self.time_label = QLabel("00:00 / 00:00")
         self.time_label.setFixedWidth(100)
         self.time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
         controls_layout.addWidget(self.volume_widget)
+        controls_layout.addWidget(self.mic_volume_widget)
+        controls_layout.addWidget(self.remix_btn)
         controls_layout.addWidget(self.time_label)
         controls_layout.addWidget(self.timeline_overlay)
         
@@ -102,12 +165,62 @@ class PlayerVideoPage(QWidget):
         self.media_player.stop()
         self.backRequested.emit()
 
+    def on_mic_volume_changed(self, volume):
+        self.current_mic_volume = volume
+
+    def start_remix(self):
+        if not self.current_match_data or not hasattr(self, 'current_json_filename'):
+            return
+            
+        video_path = find_video_for_json(self.config.SAVE_DIR, self.current_json_filename, self.current_match_data)
+        if not video_path or not os.path.exists(video_path):
+            return
+            
+        # ファイルロックを解除して上書き可能にする
+        self.media_player.stop()
+        self.media_player.setSource(QUrl())
+        
+        self.remix_btn.setText("処理中...")
+        self.remix_btn.setEnabled(False)
+        
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        ffmpeg_path = ensure_ffmpeg_downloaded(project_root)
+        
+        self.remix_thread = RemixThread(video_path, self.current_mic_volume, ffmpeg_path)
+        self.remix_thread.finished.connect(self.on_remix_finished)
+        self.remix_thread.start()
+
+    def on_remix_finished(self, success, error_msg):
+        self.remix_btn.setText("リミックス保存")
+        self.remix_btn.setEnabled(True)
+        
+        if success:
+            print("[PlayerVideoPage] Remix successful.")
+            if hasattr(self, 'current_json_filename') and self.current_match_data:
+                json_path = os.path.join(self.config.SAVE_DIR, self.current_json_filename)
+                self.current_match_data["mic_volume"] = self.current_mic_volume
+                try:
+                    with open(json_path, 'w', encoding='utf-8') as f:
+                        json.dump(self.current_match_data, f, ensure_ascii=False, indent=4)
+                except Exception as e:
+                    print(f"[PlayerVideoPage] Failed to save mic volume to JSON: {e}")
+        else:
+            print(f"[PlayerVideoPage] Remix failed: {error_msg}")
+            
+        if hasattr(self, 'current_json_filename'):
+            self.load_recording(self.current_json_filename)
+
     def load_recording(self, json_filename):
+        self.current_json_filename = json_filename
         json_path = os.path.join(self.config.SAVE_DIR, json_filename)
         
         try:
             with open(json_path, 'r', encoding='utf-8') as f:
                 self.current_match_data = json.load(f)
+                
+            saved_volume = self.current_match_data.get("mic_volume", 1.0)
+            self.current_mic_volume = saved_volume
+            self.mic_volume_widget.set_volume(saved_volume)
                 
             video_path = find_video_for_json(self.config.SAVE_DIR, json_filename, self.current_match_data)
             

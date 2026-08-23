@@ -486,3 +486,86 @@ class TimelineOverlay(QWidget):
             
             painter.setPen(QColor("#FFFFFF"))
             painter.drawText(int(self.hover_x) - 15, round_y - 38, time_str)
+
+class MicVolumePopup(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent, Qt.WindowType.ToolTip)
+        self.setFixedSize(40, 120)
+        self.setStyleSheet("""
+            MicVolumePopup { background-color: #222222; border: 1px solid #444444; border-radius: 4px; }
+            QSlider { background: transparent; }
+            QSlider::groove:vertical { background: #444444; width: 4px; border-radius: 2px; }
+            QSlider::handle:vertical { background: #FFFFFF; height: 12px; margin: 0 -4px; border-radius: 6px; }
+            QSlider::sub-page:vertical { background: #00A2FF; width: 4px; border-radius: 2px; }
+            QSlider::add-page:vertical { background: #444444; width: 4px; border-radius: 2px; }
+        """)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 10, 0, 10)
+        self.slider = QSlider(Qt.Orientation.Vertical)
+        self.slider.setRange(0, 200)
+        self.slider.setValue(100)
+        layout.addWidget(self.slider, alignment=Qt.AlignmentFlag.AlignHCenter)
+
+    def leaveEvent(self, event):
+        QTimer.singleShot(100, self._check_hide)
+        super().leaveEvent(event)
+        
+    def _check_hide(self):
+        cursor_pos = self.cursor().pos()
+        parent_widget = self.parent()
+        if parent_widget:
+            if not self.geometry().contains(cursor_pos) and not parent_widget.rect().contains(parent_widget.mapFromGlobal(cursor_pos)):
+                self.hide()
+        else:
+            if not self.geometry().contains(cursor_pos):
+                self.hide()
+
+class MicVolumeWidget(QWidget):
+    volumeChanged = pyqtSignal(float)
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(30, 30)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.icon_label = QLabel("🎤")
+        self.icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.icon_label.setStyleSheet("font-size: 16px; color: white;")
+        layout.addWidget(self.icon_label)
+        
+        self.popup = MicVolumePopup(self)
+        self.popup.slider.valueChanged.connect(self._on_value_changed)
+        
+    def _on_value_changed(self, val):
+        self.volumeChanged.emit(val / 100.0)
+        if val == 0:
+            self.icon_label.setStyleSheet("font-size: 16px; color: gray;")
+        else:
+            self.icon_label.setStyleSheet("font-size: 16px; color: white;")
+            
+    def set_volume(self, volume):
+        val = int(volume * 100)
+        self.popup.slider.blockSignals(True)
+        self.popup.slider.setValue(val)
+        self.popup.slider.blockSignals(False)
+        if val == 0:
+            self.icon_label.setStyleSheet("font-size: 16px; color: gray;")
+        else:
+            self.icon_label.setStyleSheet("font-size: 16px; color: white;")
+            
+    def enterEvent(self, event):
+        pos = self.mapToGlobal(self.rect().topLeft())
+        self.popup.move(pos.x() - 5, pos.y() - self.popup.height() + 5)
+        self.popup.show()
+        super().enterEvent(event)
+        
+    def leaveEvent(self, event):
+        QTimer.singleShot(100, self._check_hide)
+        super().leaveEvent(event)
+
+    def _check_hide(self):
+        cursor_pos = self.popup.cursor().pos()
+        if not self.popup.geometry().contains(cursor_pos) and not self.rect().contains(self.mapFromGlobal(cursor_pos)):
+            self.popup.hide()
