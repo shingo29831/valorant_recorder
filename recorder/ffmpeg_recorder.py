@@ -260,7 +260,8 @@ class FFmpegRecorder:
         denoise_mode = str(getattr(self.config, 'RECORD_AUDIO_MIC_DENOISE', 'None'))
 
         # a_resをasplit=2で2つのストリームに複製してから、それぞれをpanフィルタに渡す
-        filter_complex = "[1:a]asplit=2[a_res1][a_res2];[a_res1]pan=stereo|c0=c0|c1=c1[a0];[a_res2]pan=stereo|c0=c2|c1=c3[a1]"
+        # FFmpegの自動ダウンミックスによる音量減衰を防ぐため、ゲイン(1.0*)を明示的に指定
+        filter_complex = "[1:a]asplit=2[a_res1][a_res2];[a_res1]pan=stereo|c0=1.0*c0|c1=1.0*c1[a0];[a_res2]pan=stereo|c0=1.0*c2|c1=1.0*c3[a1]"
         
         mic_filters = []
         if denoise_mode in ('True', 'Standard (FFmpeg)', 'AI (RNNoise)'):
@@ -276,11 +277,12 @@ class FFmpegRecorder:
                 mic_filters.append(f"arnndn=m={model_path_str}")
             
         if gate_level > 0:
-            # UI上のレベル(平方根スケール)を実際の振幅閾値に戻す
-            # UIのメーター計算 (level = sqrt(rms) * 2) の逆算に近い形でスケールダウンし、
-            # 閾値が高すぎて音が完全に消えるのを防ぐ
+            # UIのパーセンテージ(0.0〜1.0)をFFmpegのagateフィルタ用の振幅閾値に変換
+            # モニター時(MicMonitorThread)の計算式 (gate_level / 2.0)**2 に合わせる
             amp_threshold = (gate_level / 2.0) ** 2
-            mic_filters.append(f"agate=threshold={amp_threshold:.4f}:ratio=10:attack=10:release=100")
+            # ただし、FFmpegのagateは閾値の解釈が厳格なため、極端な減衰を防ぐために少し緩和する
+            # ratio=4 (モニターの0.01倍減衰より自然な減衰)、attack=10、release=100
+            mic_filters.append(f"agate=threshold={amp_threshold:.4f}:ratio=4:attack=10:release=100")
             
         if mic_filters:
             # フィルタ適用後にチャンネルレイアウトやサンプリングレートが失われないようaformatで明示的に指定する
