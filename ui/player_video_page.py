@@ -64,6 +64,13 @@ class PlayerVideoPage(QWidget):
         self.audio_output = QAudioOutput()
         self.media_player.setAudioOutput(self.audio_output)
         self.media_player.setVideoOutput(self.video_widget)
+        self.media_player.tracksChanged.connect(self._on_media_tracks_changed)
+        
+        # マイク音を同時に再生・独立制御するためのサブプレイヤー
+        self.mic_player = QMediaPlayer()
+        self.mic_audio_output = QAudioOutput()
+        self.mic_player.setAudioOutput(self.mic_audio_output)
+        self.mic_player.tracksChanged.connect(self._on_mic_tracks_changed)
         
         self.timeline_overlay = TimelineOverlay()
         self.timeline_overlay.seekRequested.connect(self.set_position)
@@ -106,14 +113,18 @@ class PlayerVideoPage(QWidget):
 
     def request_back(self):
         self.media_player.stop()
+        self.mic_player.stop()
         self.media_player.setSource(QUrl())
+        self.mic_player.setSource(QUrl())
         self.backRequested.emit()
 
     def cleanup_media(self):
         # メモリ解放のため、再生を停止しソースをクリアする
         if self.media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
             self.media_player.pause()
+            self.mic_player.pause()
         self.media_player.setSource(QUrl())
+        self.mic_player.setSource(QUrl())
 
     def restore_media(self):
         # 再表示時に元の動画を再ロードする
@@ -133,7 +144,31 @@ class PlayerVideoPage(QWidget):
         if vol_float > 1.0:
             vol_float /= 100.0
         self.current_mic_volume = vol_float
+        self.mic_audio_output.setVolume(vol_float)
         self._save_volume_settings()
+
+    def _on_media_tracks_changed(self):
+        tracks = self.media_player.audioTracks()
+        if len(tracks) >= 3:
+            # 3トラック構成(ミックス, システム, マイク)の場合、システム音(インデックス1)を選択
+            self.media_player.setActiveAudioTrack(1)
+        elif len(tracks) > 0:
+            # 2トラック以下の場合、デフォルト(インデックス0)を選択
+            self.media_player.setActiveAudioTrack(0)
+
+    def _on_mic_tracks_changed(self):
+        tracks = self.mic_player.audioTracks()
+        if len(tracks) >= 3:
+            # 3トラック構成の場合、マイク音(インデックス2)を選択
+            self.mic_player.setActiveAudioTrack(2)
+            self.mic_audio_output.setVolume(self.current_mic_volume)
+        elif len(tracks) == 2:
+            # 2トラック構成の場合、マイク音(インデックス1)を選択
+            self.mic_player.setActiveAudioTrack(1)
+            self.mic_audio_output.setVolume(self.current_mic_volume)
+        elif len(tracks) == 1:
+            # 1トラックのみ(過去のミックス済み動画)の場合は二重再生を防ぐためミュート
+            self.mic_audio_output.setVolume(0)
 
     def _save_volume_settings(self):
         if hasattr(self, 'current_json_filename') and self.current_match_data:
@@ -166,10 +201,14 @@ class PlayerVideoPage(QWidget):
             
             if video_path and os.path.exists(video_path):
                 abs_path = os.path.abspath(video_path)
-                self.media_player.setSource(QUrl.fromLocalFile(abs_path))
+                url = QUrl.fromLocalFile(abs_path)
+                self.media_player.setSource(url)
+                self.mic_player.setSource(url)
                 self.media_player.play()
+                self.mic_player.play()
             else:
                 self.media_player.setSource(QUrl())
+                self.mic_player.setSource(QUrl())
                 print(f"[PlayerVideoPage] Video file not found for {json_filename}.")
                 self._update_timeline_data(0)
                 
@@ -339,8 +378,13 @@ class PlayerVideoPage(QWidget):
     def toggle_play(self):
         if self.media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
             self.media_player.pause()
+            self.mic_player.pause()
         else:
+            # 再生再開時にズレを防ぐため位置を同期
+            pos = self.media_player.position()
+            self.mic_player.setPosition(pos)
             self.media_player.play()
+            self.mic_player.play()
 
     def format_time(self, ms):
         s = ms // 1000
@@ -363,3 +407,4 @@ class PlayerVideoPage(QWidget):
 
     def set_position(self, position):
         self.media_player.setPosition(position)
+        self.mic_player.setPosition(position)
