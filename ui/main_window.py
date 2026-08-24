@@ -5,6 +5,7 @@ from core.config import Config
 from ui.watcher_thread import WatcherThread
 from ui.settings_tab import SettingsTab
 from ui.player_tab import PlayerTab
+from ui.notification_overlay import NotificationOverlay
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -35,10 +36,13 @@ class MainWindow(QMainWindow):
         
         self.setup_tray_icon()
         
+        self.notification_overlay = NotificationOverlay()
+        
         self.watcher_thread = WatcherThread(self.config)
         self.watcher_thread.log_signal.connect(self.update_status)
         self.watcher_thread.match_saved_signal.connect(self.player_tab.refresh_list)
         self.watcher_thread.recording_state_changed.connect(self.update_rec_button)
+        self.watcher_thread.recording_state_changed.connect(self.show_recording_notification)
         self.watcher_thread.start()
 
     def setup_tray_icon(self):
@@ -83,6 +87,12 @@ class MainWindow(QMainWindow):
             self.rec_button.setText("⏹ Stop Recording")
         else:
             self.rec_button.setText("🔴 Start Recording")
+
+    def show_recording_notification(self, is_recording):
+        if is_recording:
+            self.notification_overlay.show_message("🔴 録画を開始しました")
+        else:
+            self.notification_overlay.show_message("⏹ 録画を終了しました")
 
     def update_status(self, message: str):
         self.statusBar().showMessage(message)

@@ -57,6 +57,7 @@ class FFmpegRecorder:
         samplerate = 48000
         frames_per_buffer = 1024
         mic_gain = float(getattr(self.config, 'RECORD_AUDIO_MIC_GAIN', '1.0'))
+        system_gain = float(getattr(self.config, 'RECORD_AUDIO_SYSTEM_GAIN', '1.0'))
         
         try:
             speaker = sc.default_speaker()
@@ -162,6 +163,7 @@ class FFmpegRecorder:
                     # 取得できない場合は無音データを生成してFFmpegのエンコード停止を防ぐ
                     try:
                         spk_data = spk_queue.get(timeout=timeout_sec)
+                        spk_data = spk_data * system_gain
                         # データが取得できた場合（音が鳴っている場合）は、揺らぎを許容するタイムアウトに戻す
                         timeout_sec = buffer_duration * 1.5
                     except queue.Empty:

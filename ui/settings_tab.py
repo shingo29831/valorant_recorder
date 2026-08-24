@@ -55,6 +55,55 @@ class VolumeMeter(QWidget):
             painter.setPen(QColor(255, 255, 255))
             painter.drawLine(gate_x, 0, gate_x, height)
 
+class SystemAudioMonitorThread(QThread):
+    level_ready = pyqtSignal(float)
+
+    def __init__(self, gain):
+        super().__init__()
+        self.gain = gain
+        self.running = True
+
+    def set_gain(self, gain):
+        self.gain = gain
+
+    def process_audio(self, data):
+        data = data * self.gain
+        peak = np.max(np.abs(data))
+        level = min(1.0, peak ** 0.5)
+        self.level_ready.emit(float(level))
+        return data
+
+    def run(self):
+        import warnings
+        warnings.filterwarnings("ignore", message=".*data discontinuity.*")
+        warnings.filterwarnings("ignore", module=".*soundcard.*")
+        try:
+            import soundcard as sc
+            warnings.simplefilter("ignore", category=sc.SoundcardRuntimeWarning)
+            
+            speaker = sc.default_speaker()
+            spk_mic = sc.get_microphone(speaker.id, include_loopback=True)
+            
+            with spk_mic.recorder(samplerate=48000, channels=2) as recorder:
+                while self.running:
+                    data = recorder.record(numframes=2400)
+                    # ステレオの場合は平均をとってモノラルにダウンミックスしてレベル計算
+                    data_mono = data.mean(axis=1, keepdims=True)
+                    self.process_audio(data_mono)
+        except Exception as e:
+            import traceback
+            import os
+            print("\n=== SystemAudioMonitorThread Error ===")
+            traceback.print_exc()
+            print("======================================\n")
+            log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sys_audio_error.log")
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(f"SystemAudioMonitorThread error:\n{traceback.format_exc()}\n")
+
+    def stop(self):
+        self.running = False
+        self.wait()
+
 class MicMonitorThread(QThread):
     level_ready = pyqtSignal(float)
 
@@ -249,6 +298,20 @@ class SettingsTab(QWidget):
         self.res_input.addItems(["1920x1080", "2560x1440", "1280x720"])
         self.res_input.setCurrentText(self.config.RECORD_RESOLUTION)
         
+        self.system_gain_slider = QSlider(Qt.Orientation.Horizontal)
+        self.system_gain_slider.setRange(0, 300)
+        sys_gain_val = float(getattr(self.config, 'RECORD_AUDIO_SYSTEM_GAIN', '1.0'))
+        self.system_gain_slider.setValue(int(sys_gain_val * 100))
+        
+        self.system_gain_label = QLabel(f"{sys_gain_val:.2f}x")
+        self.system_gain_label.setFixedWidth(40)
+        
+        sys_gain_layout = QHBoxLayout()
+        sys_gain_layout.addWidget(self.system_gain_slider)
+        sys_gain_layout.addWidget(self.system_gain_label)
+        
+        self.system_volume_meter = VolumeMeter()
+        
         self.riot_id_input = QLineEdit(self.config.RIOT_ID)
         self.tag_line_input = QLineEdit(self.config.TAG_LINE)
         self.api_key_input = QLineEdit(self.config.API_KEY)
@@ -332,6 +395,8 @@ class SettingsTab(QWidget):
         monitor_layout.addWidget(self.monitor_warning_label)
         monitor_layout.setSpacing(2)
         
+        form_layout.addRow("System Gain:", sys_gain_layout)
+        form_layout.addRow("System Level:", self.system_volume_meter)
         form_layout.addRow("Microphone:", self.mic_input)
         form_layout.addRow("Mic Gain:", gain_layout)
         form_layout.addRow("Noise Cancel:", self.mic_denoise_combo)
@@ -341,12 +406,14 @@ class SettingsTab(QWidget):
         
         main_layout.addLayout(form_layout)
         
+        self.system_gain_slider.valueChanged.connect(self._on_system_gain_changed)
         self.mic_gain_slider.valueChanged.connect(self._on_gain_changed)
         self.mic_gate_slider.valueChanged.connect(self._on_gate_changed)
         self.mic_denoise_combo.currentIndexChanged.connect(self._on_denoise_changed)
         self.mic_input.currentIndexChanged.connect(self._on_mic_changed)
         self.mic_monitor_cb.stateChanged.connect(self._on_monitor_changed)
         self.monitor_thread = None
+        self.sys_monitor_thread = None
         
         self.riot_id_input.textChanged.connect(self._save_settings)
         self.tag_line_input.textChanged.connect(self._save_settings)
@@ -357,6 +424,13 @@ class SettingsTab(QWidget):
         
         main_layout.addStretch()
         self.setLayout(main_layout)
+
+    def _on_system_gain_changed(self, value):
+        gain = value / 100.0
+        self.system_gain_label.setText(f"{gain:.2f}x")
+        if self.sys_monitor_thread:
+            self.sys_monitor_thread.set_gain(gain)
+        self._save_settings()
 
     def _on_gain_changed(self, value):
         gain = value / 100.0
@@ -429,13 +503,29 @@ class SettingsTab(QWidget):
             self.monitor_thread = None
             self.volume_meter.set_level(0.0)
 
+    def _start_system_monitor(self):
+        if self.sys_monitor_thread is not None:
+            return
+        gain = self.system_gain_slider.value() / 100.0
+        self.sys_monitor_thread = SystemAudioMonitorThread(gain)
+        self.sys_monitor_thread.level_ready.connect(self.system_volume_meter.set_level)
+        self.sys_monitor_thread.start()
+
+    def _stop_system_monitor(self):
+        if self.sys_monitor_thread:
+            self.sys_monitor_thread.stop()
+            self.sys_monitor_thread = None
+            self.system_volume_meter.set_level(0.0)
+
     def showEvent(self, event):
         super().showEvent(event)
         self._start_mic_monitor()
+        self._start_system_monitor()
 
     def hideEvent(self, event):
         super().hideEvent(event)
         self._stop_mic_monitor()
+        self._stop_system_monitor()
 
     def _save_settings(self, *args):
         self.config.RIOT_ID = self.riot_id_input.text()
@@ -444,6 +534,8 @@ class SettingsTab(QWidget):
         self.config.RECORD_FPS = self.fps_input.currentText()
         self.config.RECORD_ENCODER = self.encoder_input.currentText()
         self.config.RECORD_RESOLUTION = self.res_input.currentText()
+        
+        self.config.RECORD_AUDIO_SYSTEM_GAIN = str(self.system_gain_slider.value() / 100.0)
         
         mic_val = self.mic_input.currentText()
         self.config.RECORD_AUDIO_MIC = "" if mic_val == "None" else mic_val
