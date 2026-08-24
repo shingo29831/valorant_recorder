@@ -1,5 +1,5 @@
 import os
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QSlider, QLayout, QMenu, QSizePolicy
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QSlider, QLayout, QMenu, QSizePolicy, QPushButton
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QPoint, QRect, QSize, QByteArray, QRectF
 from PyQt6.QtGui import QColor, QPen, QPixmap, QPainter
 from PyQt6.QtMultimediaWidgets import QVideoWidget
@@ -118,6 +118,7 @@ class FlowLayout(QLayout):
 class RecordItemWidget(QWidget):
     doubleClicked = pyqtSignal(str)
     renameRequested = pyqtSignal(str, str)
+    deleteRequested = pyqtSignal(str)
 
     def __init__(self, json_filename, display_name, thumb_path, result, parent=None):
         super().__init__(parent)
@@ -175,6 +176,51 @@ class RecordItemWidget(QWidget):
             }}
         """)
         
+        self.checkbox = QPushButton(self)
+        self.checkbox.setCheckable(True)
+        self.checkbox.setFixedSize(24, 24)
+        self.checkbox.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(0, 0, 0, 0.6);
+                border: 2px solid #FFFFFF;
+                border-radius: 4px;
+            }
+        """)
+        self.checkbox.setText("")
+        self.checkbox.toggled.connect(self._on_checkbox_toggled)
+        self.checkbox.move(self.width() - 29, 5)
+        self.checkbox.hide()
+
+    def _on_checkbox_toggled(self, checked):
+        if checked:
+            self.checkbox.setText("✓")
+            self.checkbox.setStyleSheet("""
+                QPushButton {
+                    background-color: #FF4655;
+                    color: white;
+                    font-weight: bold;
+                    border: 2px solid #FFFFFF;
+                    border-radius: 4px;
+                }
+            """)
+        else:
+            self.checkbox.setText("")
+            self.checkbox.setStyleSheet("""
+                QPushButton {
+                    background-color: rgba(0, 0, 0, 0.6);
+                    border: 2px solid #FFFFFF;
+                    border-radius: 4px;
+                }
+            """)
+
+    def set_delete_mode(self, enabled):
+        self.checkbox.setVisible(enabled)
+        if not enabled:
+            self.checkbox.setChecked(False)
+
+    def is_checked(self):
+        return self.checkbox.isChecked()
+        
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.doubleClicked.emit(self.json_filename)
@@ -182,9 +228,12 @@ class RecordItemWidget(QWidget):
     def contextMenuEvent(self, event):
         menu = QMenu(self)
         rename_action = menu.addAction("Rename")
+        delete_action = menu.addAction("Delete")
         action = menu.exec(event.globalPos())
         if action == rename_action:
             self.renameRequested.emit(self.json_filename, self.display_name)
+        elif action == delete_action:
+            self.deleteRequested.emit(self.json_filename)
 
 class VolumePopup(QWidget):
     def __init__(self, parent=None):
