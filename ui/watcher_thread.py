@@ -160,7 +160,8 @@ class WatcherThread(QThread):
             except Exception as e:
                 self.log_signal.emit(f"[Error] Failed to process match metadata: {e}")
         else:
-            self.log_signal.emit("[API] Match data not available yet. Will retry in background.")
+            self.log_signal.emit("[API] Match data not found after retries. Saving as local-only match.")
+            self._create_dummy_metadata(video_path, start_time)
 
     def _get_pending_videos(self):
         if not os.path.exists(self.config.SAVE_DIR):

@@ -3,7 +3,7 @@ import json
 import re
 from datetime import datetime
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel
-from PyQt6.QtCore import Qt, QUrl, QSize, pyqtSignal, QByteArray
+from PyQt6.QtCore import Qt, QUrl, QSize, pyqtSignal, QByteArray, QTimer
 from PyQt6.QtGui import QIcon, QPixmap, QPainter
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtSvg import QSvgRenderer
@@ -60,8 +60,12 @@ class PlayerVideoPage(QWidget):
         self.video_widget.setStyleSheet("background-color: #000000;")
         self.video_widget.clicked.connect(self.toggle_play)
         
+        self.current_sys_volume = float(getattr(self.config, 'PLAYER_SYS_VOLUME', 1.0))
+        self.current_mic_volume = float(getattr(self.config, 'PLAYER_MIC_VOLUME', 1.0))
+
         self.media_player = QMediaPlayer(self)
         self.audio_output = QAudioOutput(self)
+        self.audio_output.setVolume(min(self.current_sys_volume, 1.0))
         self.media_player.setAudioOutput(self.audio_output)
         self.media_player.setVideoOutput(self.video_widget)
         self.media_player.mediaStatusChanged.connect(self._on_media_player_status_changed)
@@ -69,6 +73,7 @@ class PlayerVideoPage(QWidget):
         # マイク音を同時に再生・独立制御するためのサブプレイヤー
         self.mic_player = QMediaPlayer(self)
         self.mic_audio_output = QAudioOutput(self)
+        self.mic_audio_output.setVolume(min(self.current_mic_volume, 1.0))
         self.mic_player.setAudioOutput(self.mic_audio_output)
         self.mic_player.mediaStatusChanged.connect(self._on_mic_player_status_changed)
         
@@ -85,12 +90,10 @@ class PlayerVideoPage(QWidget):
         controls_layout = QHBoxLayout(controls_widget)
         controls_layout.setContentsMargins(0, 0, 0, 0)
         
-        self.current_sys_volume = float(getattr(self.config, 'PLAYER_SYS_VOLUME', 1.0))
         self.volume_widget = VolumeWidget()
         self.volume_widget.set_volume(self.current_sys_volume)
         self.volume_widget.volumeChanged.connect(self.on_sys_volume_changed)
         
-        self.current_mic_volume = float(getattr(self.config, 'PLAYER_MIC_VOLUME', 1.0))
         self.mic_volume_widget = MicVolumeWidget()
         self.mic_volume_widget.set_volume(self.current_mic_volume)
         self.mic_volume_widget.volumeChanged.connect(self.on_mic_volume_changed)
@@ -124,17 +127,14 @@ class PlayerVideoPage(QWidget):
         self.backRequested.emit()
 
     def cleanup_media(self):
-        # メモリ解放のため、再生を停止しソースをクリアする
+        # 最小化・非表示時は再生を一時停止するのみとし、ソースと再生位置を保持する
         if self.media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
             self.media_player.pause()
             self.mic_player.pause()
-        self.media_player.setSource(QUrl())
-        self.mic_player.setSource(QUrl())
 
     def restore_media(self):
-        # 再表示時に元の動画を再ロードする
-        if hasattr(self, 'current_json_filename') and self.current_json_filename:
-            self.load_recording(self.current_json_filename)
+        # ソースと再生位置を保持しているため、再ロードは行わない
+        pass
 
     def on_sys_volume_changed(self, volume):
         vol_float = float(volume) / 100.0
@@ -164,12 +164,8 @@ class PlayerVideoPage(QWidget):
             tracks = self.mic_player.audioTracks()
             if len(tracks) >= 3:
                 self.mic_player.setActiveAudioTrack(2)
-                self.mic_audio_output.setVolume(min(self.current_mic_volume, 1.0))
             elif len(tracks) == 2:
                 self.mic_player.setActiveAudioTrack(1)
-                self.mic_audio_output.setVolume(min(self.current_mic_volume, 1.0))
-            else:
-                self.mic_audio_output.setVolume(0)
             self.mic_loaded = True
             self._check_both_loaded_and_play()
 
@@ -179,6 +175,16 @@ class PlayerVideoPage(QWidget):
             self.mic_loaded = False
             self.media_player.play()
             self.mic_player.play()
+            
+            # 再生開始直後のトラック切り替えノイズや大音量を防ぐため、遅延させて音量を復元する
+            QTimer.singleShot(150, self._restore_volume)
+
+    def _restore_volume(self):
+        self.audio_output.setVolume(min(self.current_sys_volume, 1.0))
+        if len(self.mic_player.audioTracks()) >= 2:
+            self.mic_audio_output.setVolume(min(self.current_mic_volume, 1.0))
+        else:
+            self.mic_audio_output.setVolume(0)
 
     def _save_volume_settings(self):
         self.config.PLAYER_SYS_VOLUME = self.current_sys_volume
@@ -195,9 +201,9 @@ class PlayerVideoPage(QWidget):
             with open(json_path, 'r', encoding='utf-8') as f:
                 self.current_match_data = json.load(f)
                 
-            # JSONからの音量読み込みを廃止し、アプリ共通の音量設定を適用
-            self.audio_output.setVolume(min(self.current_sys_volume, 1.0))
-            self.mic_audio_output.setVolume(min(self.current_mic_volume, 1.0))
+            # ロード時およびトラック切り替え時の音漏れ（大音量）を防ぐため、一時的にミュートする
+            self.audio_output.setVolume(0)
+            self.mic_audio_output.setVolume(0)
                 
             video_path = find_video_for_json(self.config.SAVE_DIR, json_filename, self.current_match_data)
             
