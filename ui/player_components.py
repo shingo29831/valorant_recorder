@@ -218,6 +218,9 @@ class RecordItemWidget(QWidget):
         if not enabled:
             self.checkbox.setChecked(False)
 
+    def set_checked(self, checked):
+        self.checkbox.setChecked(checked)
+
     def is_checked(self):
         return self.checkbox.isChecked()
         

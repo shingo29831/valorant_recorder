@@ -115,12 +115,55 @@ class PlayerListPage(QWidget):
             item = self.scroll_layout.itemAt(i)
             widget = item.widget()
             if widget and isinstance(widget, QWidget):
-                layout = widget.layout()
-                if isinstance(layout, FlowLayout):
-                    for j in range(layout.count()):
-                        flow_item = layout.itemAt(j)
-                        if flow_item and flow_item.widget() and isinstance(flow_item.widget(), RecordItemWidget):
-                            flow_item.widget().set_delete_mode(self.delete_mode)
+                if widget.property("is_date_header"):
+                    layout = widget.layout()
+                    cb_item = layout.itemAt(0)
+                    if cb_item and cb_item.widget() and isinstance(cb_item.widget(), QPushButton):
+                        cb = cb_item.widget()
+                        cb.setVisible(self.delete_mode)
+                        if not self.delete_mode:
+                            cb.blockSignals(True)
+                            cb.setChecked(False)
+                            self._update_date_checkbox_style(cb, False)
+                            cb.blockSignals(False)
+                else:
+                    layout = widget.layout()
+                    if isinstance(layout, FlowLayout):
+                        for j in range(layout.count()):
+                            flow_item = layout.itemAt(j)
+                            if flow_item and flow_item.widget() and isinstance(flow_item.widget(), RecordItemWidget):
+                                flow_item.widget().set_delete_mode(self.delete_mode)
+
+    def _update_date_checkbox_style(self, checkbox, checked):
+        if checked:
+            checkbox.setText("✓")
+            checkbox.setStyleSheet("""
+                QPushButton {
+                    background-color: #FF4655;
+                    color: white;
+                    font-weight: bold;
+                    border: 2px solid #FFFFFF;
+                    border-radius: 4px;
+                }
+            """)
+        else:
+            checkbox.setText("")
+            checkbox.setStyleSheet("""
+                QPushButton {
+                    background-color: rgba(0, 0, 0, 0.6);
+                    border: 2px solid #FFFFFF;
+                    border-radius: 4px;
+                }
+            """)
+
+    def _on_date_checkbox_toggled(self, checked, flow_widget, checkbox):
+        self._update_date_checkbox_style(checkbox, checked)
+        layout = flow_widget.layout()
+        if isinstance(layout, FlowLayout):
+            for j in range(layout.count()):
+                flow_item = layout.itemAt(j)
+                if flow_item and flow_item.widget() and isinstance(flow_item.widget(), RecordItemWidget):
+                    flow_item.widget().set_checked(checked)
 
     def toggle_delete_mode(self, checked):
         if checked:
@@ -282,12 +325,37 @@ class PlayerListPage(QWidget):
                     print(f"[PlayerListPage] Error loading {f}: {e}")
                     
         for date_key in sorted(records_by_date.keys(), reverse=True):
+            date_header_widget = QWidget()
+            date_header_widget.setProperty("is_date_header", True)
+            date_header_layout = QHBoxLayout(date_header_widget)
+            date_header_layout.setContentsMargins(0, 15, 0, 5)
+            
+            date_checkbox = QPushButton()
+            date_checkbox.setCheckable(True)
+            date_checkbox.setFixedSize(20, 20)
+            date_checkbox.setStyleSheet("""
+                QPushButton {
+                    background-color: rgba(0, 0, 0, 0.6);
+                    border: 2px solid #FFFFFF;
+                    border-radius: 4px;
+                }
+            """)
+            date_checkbox.setText("")
+            date_checkbox.setVisible(self.delete_mode)
+            
             date_label = QLabel(date_key)
-            date_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #FF4655; margin-top: 15px; margin-bottom: 5px;")
-            self.scroll_layout.addWidget(date_label)
+            date_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #FF4655;")
+            
+            date_header_layout.addWidget(date_checkbox)
+            date_header_layout.addWidget(date_label)
+            date_header_layout.addStretch()
+            
+            self.scroll_layout.addWidget(date_header_widget)
             
             flow_widget = QWidget()
             flow_layout = FlowLayout(flow_widget)
+            
+            date_checkbox.toggled.connect(lambda checked, fw=flow_widget, cb=date_checkbox: self._on_date_checkbox_toggled(checked, fw, cb))
             
             for rec in records_by_date[date_key]:
                 item_widget = RecordItemWidget(rec['filename'], rec['display_name'], rec['thumb_path'], rec['result'])
