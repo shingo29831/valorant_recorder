@@ -101,12 +101,7 @@ class MainWindow(QMainWindow):
         # ウィンドウの閉じるボタンが押された時は非表示にしてトレイに格納する
         event.ignore()
         self.hide()
-        self.tray_icon.showMessage(
-            "Valorant Recorder",
-            "Application is still running in the background.",
-            QSystemTrayIcon.MessageIcon.Information,
-            2000
-        )
+        self.notification_overlay.show_message("バックグラウンドで実行を継続します")
 
     def hideEvent(self, event):
         super().hideEvent(event)
