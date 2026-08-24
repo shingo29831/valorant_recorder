@@ -342,11 +342,12 @@ class SettingsTab(QWidget):
         self.mic_monitor_cb.stateChanged.connect(self._on_monitor_changed)
         self.monitor_thread = None
         
-        save_btn = QPushButton("SAVE SETTINGS")
-        save_btn.setFixedWidth(200)
-        save_btn.setStyleSheet("margin-top: 30px;")
-        save_btn.clicked.connect(self.save_settings)
-        main_layout.addWidget(save_btn)
+        self.riot_id_input.textChanged.connect(self._save_settings)
+        self.tag_line_input.textChanged.connect(self._save_settings)
+        self.api_key_input.textChanged.connect(self._save_settings)
+        self.fps_input.currentTextChanged.connect(self._save_settings)
+        self.encoder_input.currentTextChanged.connect(self._save_settings)
+        self.res_input.currentTextChanged.connect(self._save_settings)
         
         main_layout.addStretch()
         self.setLayout(main_layout)
@@ -356,12 +357,14 @@ class SettingsTab(QWidget):
         self.mic_gain_label.setText(f"{gain:.2f}x")
         if self.monitor_thread:
             self.monitor_thread.set_gain(gain)
+        self._save_settings()
 
     def _on_gate_changed(self, value):
         self.mic_gate_label.setText(f"{value}%")
         self.volume_meter.set_gate_threshold(value / 100.0)
         if self.monitor_thread:
             self.monitor_thread.set_gate_threshold(value / 100.0)
+        self._save_settings()
 
     def _on_monitor_changed(self, state):
         if self.monitor_thread:
@@ -394,11 +397,13 @@ class SettingsTab(QWidget):
         
         if self.monitor_thread:
             self.monitor_thread.set_denoise(mode == "AI (RNNoise)")
+        self._save_settings()
 
     def _on_mic_changed(self):
         self._stop_mic_monitor()
         if self.isVisible():
             self._start_mic_monitor()
+        self._save_settings()
 
     def _start_mic_monitor(self):
         if self.monitor_thread is not None:
@@ -426,7 +431,7 @@ class SettingsTab(QWidget):
         super().hideEvent(event)
         self._stop_mic_monitor()
 
-    def save_settings(self):
+    def _save_settings(self, *args):
         self.config.RIOT_ID = self.riot_id_input.text()
         self.config.TAG_LINE = self.tag_line_input.text()
         self.config.API_KEY = self.api_key_input.text()
@@ -441,4 +446,3 @@ class SettingsTab(QWidget):
         self.config.RECORD_AUDIO_MIC_DENOISE = self.mic_denoise_combo.currentText()
         
         self.config.save()
-        QMessageBox.information(self, "Success", "Settings saved successfully.\nPlease restart the application to apply changes.")

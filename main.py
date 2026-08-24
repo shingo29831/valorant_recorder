@@ -5,6 +5,8 @@ from core.patcher import patch_soundcard_lib
 patch_soundcard_lib()
 
 from PyQt6.QtWidgets import QApplication
+from PyQt6.QtNetwork import QLocalSocket, QLocalServer
+from PyQt6.QtCore import QTextStream
 from ui.main_window import MainWindow
 
 VALORANT_STYLE = """
@@ -78,11 +80,51 @@ QStatusBar {
 }
 """
 
+SERVER_NAME = "ValorantRecorderSingleInstance"
+
 def main():
     app = QApplication(sys.argv)
+    
+    # 既にアプリが起動しているかチェック
+    socket = QLocalSocket()
+    socket.connectToServer(SERVER_NAME)
+    if socket.waitForConnected(500):
+        # 起動済みの場合は "show" コマンドを送って自身のプロセスは終了する
+        stream = QTextStream(socket)
+        stream << "show"
+        stream.flush()
+        socket.waitForBytesWritten(500)
+        return
+
+    # 初回起動の場合はローカルサーバーを立ててコマンドを待ち受ける
+    server = QLocalServer()
+    server.removeServer(SERVER_NAME)
+    if not server.listen(SERVER_NAME):
+        print(f"Failed to start local server: {server.errorString()}")
+        return
+        
     app.setStyleSheet(VALORANT_STYLE)
+    # 最後のウィンドウが閉じられてもアプリを終了しないように設定
+    app.setQuitOnLastWindowClosed(False)
+    
     window = MainWindow()
-    window.show()
+    
+    def handle_connection():
+        client = server.nextPendingConnection()
+        if client:
+            if client.waitForReadyRead(1000):
+                stream = QTextStream(client)
+                msg = stream.readAll()
+                if msg == "show":
+                    window.show_window()
+            client.disconnectFromServer()
+            
+    server.newConnection.connect(handle_connection)
+    
+    # コマンドライン引数に --tray が指定されていない場合のみ初回起動時にUIを表示する
+    if "--tray" not in sys.argv:
+        window.show()
+        
     sys.exit(app.exec())
 
 if __name__ == "__main__":
