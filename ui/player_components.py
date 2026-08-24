@@ -246,6 +246,18 @@ class VolumeWidget(QWidget):
         else:
             self.icon_label.setText("🔊")
             
+    def set_volume(self, volume):
+        val = int(volume * 100)
+        self.popup.slider.blockSignals(True)
+        self.popup.slider.setValue(val)
+        self.popup.slider.blockSignals(False)
+        if val == 0:
+            self.icon_label.setText("🔇")
+        elif val < 50:
+            self.icon_label.setText("🔉")
+        else:
+            self.icon_label.setText("🔊")
+            
     def enterEvent(self, event):
         pos = self.mapToGlobal(self.rect().topLeft())
         self.popup.move(pos.x() - 5, pos.y() - self.popup.height() + 5)
