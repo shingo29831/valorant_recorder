@@ -64,13 +64,13 @@ class PlayerVideoPage(QWidget):
         self.audio_output = QAudioOutput()
         self.media_player.setAudioOutput(self.audio_output)
         self.media_player.setVideoOutput(self.video_widget)
-        self.media_player.tracksChanged.connect(self._on_media_tracks_changed)
+        self.media_player.mediaStatusChanged.connect(self._on_media_player_status_changed)
         
         # マイク音を同時に再生・独立制御するためのサブプレイヤー
         self.mic_player = QMediaPlayer()
         self.mic_audio_output = QAudioOutput()
         self.mic_player.setAudioOutput(self.mic_audio_output)
-        self.mic_player.tracksChanged.connect(self._on_mic_tracks_changed)
+        self.mic_player.mediaStatusChanged.connect(self._on_mic_player_status_changed)
         
         self.timeline_overlay = TimelineOverlay()
         self.timeline_overlay.seekRequested.connect(self.set_position)
@@ -132,43 +132,46 @@ class PlayerVideoPage(QWidget):
             self.load_recording(self.current_json_filename)
 
     def on_sys_volume_changed(self, volume):
-        vol_float = float(volume)
-        if vol_float > 1.0:
-            vol_float /= 100.0
+        vol_float = float(volume) / 100.0
         self.current_sys_volume = vol_float
-        self.audio_output.setVolume(vol_float)
+        # 再生プレイヤーの上限は1.0(100%)に制限しつつ、保存値は200%を許容
+        self.audio_output.setVolume(min(vol_float, 1.0))
         self._save_volume_settings()
 
     def on_mic_volume_changed(self, volume):
-        vol_float = float(volume)
-        if vol_float > 1.0:
-            vol_float /= 100.0
+        vol_float = float(volume) / 100.0
         self.current_mic_volume = vol_float
-        self.mic_audio_output.setVolume(vol_float)
+        self.mic_audio_output.setVolume(min(vol_float, 1.0))
         self._save_volume_settings()
 
-    def _on_media_tracks_changed(self):
-        tracks = self.media_player.audioTracks()
-        if len(tracks) >= 3:
-            # 3トラック構成(ミックス, システム, マイク)の場合、システム音(インデックス1)を選択
-            self.media_player.setActiveAudioTrack(1)
-        elif len(tracks) > 0:
-            # 2トラック以下の場合、デフォルト(インデックス0)を選択
-            self.media_player.setActiveAudioTrack(0)
+    def _on_media_player_status_changed(self, status):
+        if status == QMediaPlayer.MediaStatus.LoadedMedia:
+            tracks = self.media_player.audioTracks()
+            if len(tracks) >= 3:
+                self.media_player.setActiveAudioTrack(1)
+            elif len(tracks) > 0:
+                self.media_player.setActiveAudioTrack(0)
+            self._check_both_loaded_and_play()
 
-    def _on_mic_tracks_changed(self):
-        tracks = self.mic_player.audioTracks()
-        if len(tracks) >= 3:
-            # 3トラック構成の場合、マイク音(インデックス2)を選択
-            self.mic_player.setActiveAudioTrack(2)
-            self.mic_audio_output.setVolume(self.current_mic_volume)
-        elif len(tracks) == 2:
-            # 2トラック構成の場合、マイク音(インデックス1)を選択
-            self.mic_player.setActiveAudioTrack(1)
-            self.mic_audio_output.setVolume(self.current_mic_volume)
-        elif len(tracks) == 1:
-            # 1トラックのみ(過去のミックス済み動画)の場合は二重再生を防ぐためミュート
-            self.mic_audio_output.setVolume(0)
+    def _on_mic_player_status_changed(self, status):
+        if status == QMediaPlayer.MediaStatus.LoadedMedia:
+            tracks = self.mic_player.audioTracks()
+            if len(tracks) >= 3:
+                self.mic_player.setActiveAudioTrack(2)
+                self.mic_audio_output.setVolume(min(self.current_mic_volume, 1.0))
+            elif len(tracks) == 2:
+                self.mic_player.setActiveAudioTrack(1)
+                self.mic_audio_output.setVolume(min(self.current_mic_volume, 1.0))
+            else:
+                self.mic_audio_output.setVolume(0)
+            self._check_both_loaded_and_play()
+
+    def _check_both_loaded_and_play(self):
+        # 両方のプレイヤーの読み込みが完了したタイミングで同時に再生を開始する
+        if self.media_player.mediaStatus() == QMediaPlayer.MediaStatus.LoadedMedia and \
+           self.mic_player.mediaStatus() == QMediaPlayer.MediaStatus.LoadedMedia:
+            self.media_player.play()
+            self.mic_player.play()
 
     def _save_volume_settings(self):
         if hasattr(self, 'current_json_filename') and self.current_match_data:
@@ -204,8 +207,7 @@ class PlayerVideoPage(QWidget):
                 url = QUrl.fromLocalFile(abs_path)
                 self.media_player.setSource(url)
                 self.mic_player.setSource(url)
-                self.media_player.play()
-                self.mic_player.play()
+                # ここではplay()を呼ばず、_check_both_loaded_and_playに任せる
             else:
                 self.media_player.setSource(QUrl())
                 self.mic_player.setSource(QUrl())
