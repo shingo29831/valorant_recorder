@@ -7,7 +7,7 @@ import signal
 import numpy as np
 from datetime import datetime
 from core.config import Config
-from recorder.ffmpeg_downloader import ensure_ffmpeg_downloaded
+from recorder.ffmpeg_downloader import ensure_ffmpeg_downloaded, ensure_rnnoise_model_downloaded
 
 warnings.filterwarnings("ignore", message=".*data discontinuity.*")
 warnings.filterwarnings("ignore", module=".*soundcard.*")
@@ -25,6 +25,7 @@ class FFmpegRecorder:
         
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         self.ffmpeg_path = ensure_ffmpeg_downloaded(project_root)
+        self.rnnoise_model_path = ensure_rnnoise_model_downloaded(project_root)
         self.actual_encoder = self._determine_encoder()
 
     def _determine_encoder(self) -> str:
@@ -63,12 +64,18 @@ class FFmpegRecorder:
             
             mic_device = None
             if self.config.RECORD_AUDIO_MIC and self.config.RECORD_AUDIO_MIC != "None":
+                # 完全一致を優先
                 for m in sc.all_microphones(include_loopback=False):
-                    if self.config.RECORD_AUDIO_MIC in m.name:
+                    if self.config.RECORD_AUDIO_MIC == m.name:
                         mic_device = m
                         break
+                # 見つからなければ部分一致
                 if mic_device is None:
-                    mic_device = sc.default_microphone()
+                    for m in sc.all_microphones(include_loopback=False):
+                        if self.config.RECORD_AUDIO_MIC in m.name:
+                            mic_device = m
+                            break
+                # フォールバックを廃止し、見つからない場合は None のままにする
 
             with ExitStack() as stack:
                 spk_rec = stack.enter_context(spk_mic.recorder(samplerate=samplerate, channels=2))
@@ -248,14 +255,18 @@ class FFmpegRecorder:
             cmd.extend(["-video_size", self.config.RECORD_RESOLUTION])
             
         gate_level = float(getattr(self.config, 'RECORD_AUDIO_MIC_NOISE_GATE', '0')) / 100.0
-        denoise = getattr(self.config, 'RECORD_AUDIO_MIC_DENOISE', 'False') == 'True'
+        denoise_mode = getattr(self.config, 'RECORD_AUDIO_MIC_DENOISE', 'None')
+        if denoise_mode in ('True', 'Standard (FFmpeg)'):
+            denoise_mode = 'AI (RNNoise)'
 
         # a_resをasplit=2で2つのストリームに複製してから、それぞれをpanフィルタに渡す
         filter_complex = "[1:a]asplit=2[a_res1][a_res2];[a_res1]pan=stereo|c0=c0|c1=c1[a0];[a_res2]pan=stereo|c0=c2|c1=c3[a1]"
         
         mic_filters = []
-        if denoise:
-            mic_filters.append("afftdn=nf=-25")
+        if denoise_mode == 'AI (RNNoise)':
+            # Windowsのパス区切り文字とドライブレターのコロンをFFmpegフィルタ用にエスケープ
+            model_path_str = self.rnnoise_model_path.replace('\\', '/').replace(':', '\\:')
+            mic_filters.append(f"arnndn=m='{model_path_str}'")
             
         if gate_level > 0:
             # UI上のレベル(平方根スケール)を実際の振幅閾値に戻す

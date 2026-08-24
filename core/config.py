@@ -17,7 +17,7 @@ class Config:
         self.RECORD_AUDIO_MIC = os.environ.get("RECORD_AUDIO_MIC", "")
         self.RECORD_AUDIO_MIC_GAIN = os.environ.get("RECORD_AUDIO_MIC_GAIN", "1.0")
         self.RECORD_AUDIO_MIC_NOISE_GATE = os.environ.get("RECORD_AUDIO_MIC_NOISE_GATE", "0")
-        self.RECORD_AUDIO_MIC_DENOISE = os.environ.get("RECORD_AUDIO_MIC_DENOISE", "False")
+        self.RECORD_AUDIO_MIC_DENOISE = os.environ.get("RECORD_AUDIO_MIC_DENOISE", "None")
         self.RECORD_ENCODER = os.environ.get("RECORD_ENCODER", "h264_nvenc")
         self.RECORD_FPS = os.environ.get("RECORD_FPS", "60")
         self.RECORD_RESOLUTION = os.environ.get("RECORD_RESOLUTION", "1920x1080")

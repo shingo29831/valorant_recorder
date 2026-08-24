@@ -6,6 +6,7 @@ import tempfile
 import shutil
 
 FFMPEG_DOWNLOAD_URL = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip"
+RNNOISE_MODEL_URL = "https://raw.githubusercontent.com/GregorR/rnnoise-models/master/somnolent-hogwash-2018-09-01/sh.rnnn"
 
 def _progress_hook(count, block_size, total_size):
     if total_size > 0:
@@ -42,3 +43,22 @@ def ensure_ffmpeg_downloaded(base_dir: str) -> str:
         
     print("[Downloader] FFmpeg setup complete.")
     return ffmpeg_exe_path
+
+def ensure_rnnoise_model_downloaded(base_dir: str) -> str:
+    bin_dir = os.path.join(base_dir, "bin")
+    model_path = os.path.join(bin_dir, "sh.rnnn")
+
+    if os.path.exists(model_path):
+        return model_path
+
+    os.makedirs(bin_dir, exist_ok=True)
+    
+    print("[Downloader] RNNoise model not found. Starting download...")
+    try:
+        urllib.request.urlretrieve(RNNOISE_MODEL_URL, model_path)
+        print("[Downloader] RNNoise model setup complete.")
+    except Exception as e:
+        print(f"[Downloader] Failed to download RNNoise model: {e}")
+        raise RuntimeError(f"Failed to download RNNoise model: {e}")
+    
+    return model_path

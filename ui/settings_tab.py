@@ -58,13 +58,16 @@ class VolumeMeter(QWidget):
 class MicMonitorThread(QThread):
     level_ready = pyqtSignal(float)
 
-    def __init__(self, mic_name, gain, denoise=False):
+    def __init__(self, mic_name, gain, denoise=False, gate_threshold=0.0):
         super().__init__()
         self.mic_name = mic_name
         self.gain = gain
         self.denoise = denoise
+        self.gate_threshold = gate_threshold
+        self.monitor_audio = False
         self.running = True
         self.noise_floor = 0.01
+        self.gate_open = False
 
     def set_gain(self, gain):
         self.gain = gain
@@ -72,10 +75,14 @@ class MicMonitorThread(QThread):
     def set_denoise(self, denoise):
         self.denoise = denoise
 
-    def audio_callback(self, indata, frames, time, status):
-        if not self.running:
-            return
-        data = indata * self.gain
+    def set_gate_threshold(self, threshold):
+        self.gate_threshold = threshold
+
+    def set_monitor_audio(self, monitor):
+        self.monitor_audio = monitor
+
+    def process_audio(self, data):
+        data = data * self.gain
 
         if self.denoise:
             # ブロック全体のエネルギー(RMS)を計算
@@ -91,14 +98,29 @@ class MicMonitorThread(QThread):
             snr = rms / self.noise_floor
             
             # SNRが低い（定常ノイズのみ）場合は、信号全体を強く減衰させる
-            # FFmpegの afftdn=-25dB (約0.05倍) に近い挙動をシミュレート
+            # FFmpegの arnndn に近い挙動をシミュレート
             if snr < 3.0:
                 reduction = max(0.05, (snr - 1.0) / 2.0)
                 data = data * reduction
 
+        # メーター表示用のレベル計算（ゲート適用前）
         peak = np.max(np.abs(data))
         level = min(1.0, peak ** 0.5)
         self.level_ready.emit(float(level))
+
+        # 再生用のノイズゲート適用
+        if self.gate_threshold > 0:
+            amp_threshold = (self.gate_threshold / 2.0) ** 2
+            rms = np.sqrt(np.mean(data**2) + 1e-8)
+            if rms > amp_threshold:
+                self.gate_open = True
+            elif rms < amp_threshold * 0.5: # ヒステリシス
+                self.gate_open = False
+            
+            if not self.gate_open:
+                data = data * 0.01
+
+        return data
 
     def run(self):
         try:
@@ -106,12 +128,18 @@ class MicMonitorThread(QThread):
             
             mic_device = None
             if self.mic_name and self.mic_name != "None":
+                # 完全一致を優先
                 for m in sc.all_microphones(include_loopback=False):
-                    if self.mic_name in m.name:
+                    if self.mic_name == m.name:
                         mic_device = m
                         break
+                # 見つからなければ部分一致
                 if mic_device is None:
-                    mic_device = sc.default_microphone()
+                    for m in sc.all_microphones(include_loopback=False):
+                        if self.mic_name in m.name:
+                            mic_device = m
+                            break
+                # フォールバックを廃止し、見つからない場合は None のままにする
 
             if mic_device is not None:
                 try:
@@ -126,15 +154,33 @@ class MicMonitorThread(QThread):
                         print(f"Failed to initialize recorder:")
                         traceback.print_exc()
                         recorder = None
+                
+                try:
+                    speaker = sc.default_speaker()
+                    player = speaker.player(samplerate=48000, channels=2)
+                except Exception:
+                    player = None
                     
                 if recorder is not None:
                     with recorder:
-                        while self.running:
-                            data = recorder.record(numframes=2400)
-                            if channels == 2:
-                                # ステレオの場合は平均をとってモノラルにダウンミックス
-                                data = data.mean(axis=1, keepdims=True)
-                            self.audio_callback(data, 2400, None, None)
+                        if player is not None:
+                            with player:
+                                while self.running:
+                                    data = recorder.record(numframes=2400)
+                                    if channels == 2:
+                                        # ステレオの場合は平均をとってモノラルにダウンミックス
+                                        data = data.mean(axis=1, keepdims=True)
+                                    processed = self.process_audio(data)
+                                    if self.monitor_audio:
+                                        # モノラルをステレオに複製して再生
+                                        stereo = np.repeat(processed, 2, axis=1)
+                                        player.play(stereo)
+                        else:
+                            while self.running:
+                                data = recorder.record(numframes=2400)
+                                if channels == 2:
+                                    data = data.mean(axis=1, keepdims=True)
+                                self.process_audio(data)
                 else:
                     while self.running:
                         self.level_ready.emit(0.0)
@@ -240,8 +286,18 @@ class SettingsTab(QWidget):
         gain_layout.addWidget(self.mic_gain_slider)
         gain_layout.addWidget(self.mic_gain_label)
         
-        self.mic_denoise_cb = QCheckBox("Enable Noise Cancellation (AI/FFT based)")
-        self.mic_denoise_cb.setChecked(getattr(self.config, 'RECORD_AUDIO_MIC_DENOISE', 'False') == 'True')
+        self.mic_denoise_combo = QComboBox()
+        self.mic_denoise_combo.addItems(["None", "AI (RNNoise)", "NVIDIA Broadcast"])
+        
+        denoise_val = getattr(self.config, 'RECORD_AUDIO_MIC_DENOISE', 'None')
+        if denoise_val in ('True', 'Standard (FFmpeg)'):
+            denoise_val = 'AI (RNNoise)'
+        elif denoise_val == 'False':
+            denoise_val = 'None'
+            
+        idx = self.mic_denoise_combo.findText(denoise_val)
+        if idx >= 0:
+            self.mic_denoise_combo.setCurrentIndex(idx)
 
         self.mic_gate_slider = QSlider(Qt.Orientation.Horizontal)
         self.mic_gate_slider.setRange(0, 100)
@@ -258,18 +314,32 @@ class SettingsTab(QWidget):
         self.volume_meter = VolumeMeter()
         self.volume_meter.set_gate_threshold(gate_val / 100.0)
         
+        self.mic_monitor_cb = QCheckBox("Listen to Microphone (Monitor)")
+        self.mic_monitor_cb.setChecked(False)
+        
+        self.monitor_warning_label = QLabel("Note: AI (RNNoise) effect is applied only in actual recordings, not in this monitor.")
+        self.monitor_warning_label.setStyleSheet("color: #AAAAAA; font-size: 11px; font-style: italic;")
+        self.monitor_warning_label.setVisible(False)
+        
+        monitor_layout = QVBoxLayout()
+        monitor_layout.addWidget(self.mic_monitor_cb)
+        monitor_layout.addWidget(self.monitor_warning_label)
+        monitor_layout.setSpacing(2)
+        
         form_layout.addRow("Microphone:", self.mic_input)
         form_layout.addRow("Mic Gain:", gain_layout)
-        form_layout.addRow("Noise Cancel:", self.mic_denoise_cb)
+        form_layout.addRow("Noise Cancel:", self.mic_denoise_combo)
         form_layout.addRow("Noise Gate:", gate_layout)
         form_layout.addRow("Mic Level:", self.volume_meter)
+        form_layout.addRow("", monitor_layout)
         
         main_layout.addLayout(form_layout)
         
         self.mic_gain_slider.valueChanged.connect(self._on_gain_changed)
         self.mic_gate_slider.valueChanged.connect(self._on_gate_changed)
-        self.mic_denoise_cb.stateChanged.connect(self._on_denoise_changed)
+        self.mic_denoise_combo.currentIndexChanged.connect(self._on_denoise_changed)
         self.mic_input.currentIndexChanged.connect(self._on_mic_changed)
+        self.mic_monitor_cb.stateChanged.connect(self._on_monitor_changed)
         self.monitor_thread = None
         
         save_btn = QPushButton("SAVE SETTINGS")
@@ -290,10 +360,40 @@ class SettingsTab(QWidget):
     def _on_gate_changed(self, value):
         self.mic_gate_label.setText(f"{value}%")
         self.volume_meter.set_gate_threshold(value / 100.0)
-
-    def _on_denoise_changed(self, state):
         if self.monitor_thread:
-            self.monitor_thread.set_denoise(self.mic_denoise_cb.isChecked())
+            self.monitor_thread.set_gate_threshold(value / 100.0)
+
+    def _on_monitor_changed(self, state):
+        if self.monitor_thread:
+            self.monitor_thread.set_monitor_audio(self.mic_monitor_cb.isChecked())
+
+    def _on_denoise_changed(self, index):
+        mode = self.mic_denoise_combo.currentText()
+        
+        if hasattr(self, 'monitor_warning_label'):
+            self.monitor_warning_label.setVisible(mode == "AI (RNNoise)")
+            
+        if mode == "NVIDIA Broadcast":
+            found = False
+            for i in range(self.mic_input.count()):
+                if "NVIDIA Broadcast" in self.mic_input.itemText(i):
+                    self.mic_input.setCurrentIndex(i)
+                    found = True
+                    break
+            if not found:
+                QMessageBox.warning(self, "NVIDIA Broadcast Not Found", 
+                                    "NVIDIA Broadcast microphone was not found in the device list.\n\n"
+                                    "Please ensure the NVIDIA Broadcast app is installed, running, and the microphone effect is turned on.")
+                # 見つからなかった場合はAI (RNNoise)に戻す
+                idx = self.mic_denoise_combo.findText("AI (RNNoise)")
+                if idx >= 0:
+                    self.mic_denoise_combo.blockSignals(True)
+                    self.mic_denoise_combo.setCurrentIndex(idx)
+                    self.mic_denoise_combo.blockSignals(False)
+                mode = "AI (RNNoise)"
+        
+        if self.monitor_thread:
+            self.monitor_thread.set_denoise(mode == "AI (RNNoise)")
 
     def _on_mic_changed(self):
         self._stop_mic_monitor()
@@ -305,8 +405,10 @@ class SettingsTab(QWidget):
             return
         mic_name = self.mic_input.currentText()
         gain = self.mic_gain_slider.value() / 100.0
-        denoise = self.mic_denoise_cb.isChecked()
-        self.monitor_thread = MicMonitorThread(mic_name, gain, denoise)
+        denoise = self.mic_denoise_combo.currentText() == "AI (RNNoise)"
+        gate = self.mic_gate_slider.value() / 100.0
+        self.monitor_thread = MicMonitorThread(mic_name, gain, denoise, gate)
+        self.monitor_thread.set_monitor_audio(self.mic_monitor_cb.isChecked())
         self.monitor_thread.level_ready.connect(self.volume_meter.set_level)
         self.monitor_thread.start()
 
@@ -336,7 +438,7 @@ class SettingsTab(QWidget):
         self.config.RECORD_AUDIO_MIC = "" if mic_val == "None" else mic_val
         self.config.RECORD_AUDIO_MIC_GAIN = str(self.mic_gain_slider.value() / 100.0)
         self.config.RECORD_AUDIO_MIC_NOISE_GATE = str(self.mic_gate_slider.value())
-        self.config.RECORD_AUDIO_MIC_DENOISE = str(self.mic_denoise_cb.isChecked())
+        self.config.RECORD_AUDIO_MIC_DENOISE = self.mic_denoise_combo.currentText()
         
         self.config.save()
         QMessageBox.information(self, "Success", "Settings saved successfully.\nPlease restart the application to apply changes.")
