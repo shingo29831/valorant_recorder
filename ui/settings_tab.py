@@ -456,7 +456,7 @@ class SettingsTab(QWidget):
 
         write_log("--- Starting _browse_save_dir ---")
         try:
-            write_log("Stopping monitors...")
+            write_log("Stopping monitors to save resources...")
             self._stop_mic_monitor()
             self._stop_system_monitor()
             write_log("Monitors stopped.")
@@ -468,11 +468,6 @@ class SettingsTab(QWidget):
                 self.config.SAVE_DIR
             )
             write_log(f"QFileDialog closed. Selected: {selected_dir}")
-
-            write_log("Restarting monitors...")
-            self._start_mic_monitor()
-            self._start_system_monitor()
-            write_log("Monitors restarted.")
 
             if not selected_dir:
                 write_log("No directory selected. Aborting.")
@@ -492,34 +487,95 @@ class SettingsTab(QWidget):
                 return
 
             if os.path.exists(old_save_dir):
-                write_log("Old directory exists. Starting copy process.")
-                os.makedirs(new_save_dir, exist_ok=True)
                 files_to_copy = [f for f in os.listdir(old_save_dir) if os.path.isfile(os.path.join(old_save_dir, f))]
                 
                 if files_to_copy:
-                    from PyQt6.QtWidgets import QProgressDialog, QApplication
+                    reply_move = QMessageBox.question(
+                        self,
+                        "Move Files?",
+                        f"Do you want to move existing recordings to the new location?\n\nFrom: {old_save_dir}\nTo: {new_save_dir}",
+                        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                    )
                     
-                    progress = QProgressDialog("Copying files...", "Cancel", 0, len(files_to_copy), self)
-                    progress.setWindowModality(Qt.WindowModality.WindowModal)
-                    progress.show()
-
-                    for i, f in enumerate(files_to_copy):
-                        if progress.wasCanceled():
-                            write_log("Copy process canceled by user.")
-                            break
-                        progress.setValue(i)
-                        QApplication.processEvents()
+                    if reply_move == QMessageBox.StandardButton.Yes:
+                        write_log("User chose to move files. Starting copy process.")
+                        os.makedirs(new_save_dir, exist_ok=True)
                         
-                        src = os.path.join(old_save_dir, f)
-                        dst = os.path.join(new_save_dir, f)
-                        try:
-                            shutil.copy2(src, dst)
-                        except Exception as e:
-                            write_log(f"Failed to copy {f}: {e}")
-                    
-                    progress.setValue(len(files_to_copy))
-                    
-                    if not progress.wasCanceled():
+                        from PyQt6.QtWidgets import QProgressDialog, QApplication
+                        
+                        total_bytes = sum(os.path.getsize(os.path.join(old_save_dir, f)) for f in files_to_copy)
+                        copied_bytes = 0
+                        
+                        progress = QProgressDialog("Copying files...", "Cancel", 0, 100, self)
+                        progress.setWindowModality(Qt.WindowModality.WindowModal)
+                        progress.setMinimumDuration(0)
+                        progress.show()
+
+                        cancel_copy = False
+                        copied_files = []
+                        for f in files_to_copy:
+                            if cancel_copy:
+                                break
+                                
+                            src = os.path.join(old_save_dir, f)
+                            dst = os.path.join(new_save_dir, f)
+                            
+                            try:
+                                progress.setLabelText(f"Copying: {f}")
+                                QApplication.processEvents()
+                                
+                                length = 16 * 1024 * 1024 # 16MB chunks
+                                with open(src, 'rb') as fsrc, open(dst, 'wb') as fdst:
+                                    while True:
+                                        if progress.wasCanceled():
+                                            write_log("Copy process canceled by user.")
+                                            cancel_copy = True
+                                            break
+                                            
+                                        buf = fsrc.read(length)
+                                        if not buf:
+                                            break
+                                        fdst.write(buf)
+                                        copied_bytes += len(buf)
+                                        
+                                        if total_bytes > 0:
+                                            percent = int((copied_bytes / total_bytes) * 100)
+                                            progress.setValue(percent)
+                                        QApplication.processEvents()
+                                        
+                                if not cancel_copy:
+                                    shutil.copystat(src, dst)
+                                    copied_files.append(dst)
+                                    
+                            except Exception as e:
+                                write_log(f"Failed to copy {f}: {e}")
+                        
+                        if cancel_copy:
+                            write_log("Cleaning up copied files due to cancellation.")
+                            for dst_file in copied_files:
+                                try:
+                                    if os.path.exists(dst_file):
+                                        os.remove(dst_file)
+                                except Exception as e:
+                                    write_log(f"Failed to remove {dst_file}: {e}")
+                            
+                            # 途中でキャンセルされたファイルも削除
+                            if 'dst' in locals() and os.path.exists(dst):
+                                try:
+                                    os.remove(dst)
+                                except Exception:
+                                    pass
+                                    
+                            try:
+                                if not os.listdir(new_save_dir):
+                                    os.rmdir(new_save_dir)
+                            except Exception:
+                                pass
+                            
+                            write_log("Cancellation cleanup finished. Aborting directory change.")
+                            return
+
+                        progress.setValue(100)
                         write_log("Copy finished. Prompting for deletion.")
                         reply1 = QMessageBox.question(
                             self, 
@@ -548,6 +604,12 @@ class SettingsTab(QWidget):
                                         write_log("Old directory removed.")
                                 except Exception as e:
                                     write_log(f"Failed to remove old directory: {e}")
+                    else:
+                        write_log("User chose not to move files.")
+                        os.makedirs(new_save_dir, exist_ok=True)
+                else:
+                    write_log("No files to copy. Creating new directory.")
+                    os.makedirs(new_save_dir, exist_ok=True)
             else:
                 write_log("Old directory does not exist. Creating new directory.")
                 os.makedirs(new_save_dir, exist_ok=True)
@@ -559,6 +621,11 @@ class SettingsTab(QWidget):
 
         except Exception as e:
             write_log(f"Exception in _browse_save_dir: {e}\n{traceback.format_exc()}")
+        finally:
+            write_log("Restarting monitors...")
+            self._start_mic_monitor()
+            self._start_system_monitor()
+            write_log("Monitors restarted.")
 
     def _on_system_gain_changed(self, value):
         gain = value / 100.0
