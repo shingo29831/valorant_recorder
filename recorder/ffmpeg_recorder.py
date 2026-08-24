@@ -255,18 +255,23 @@ class FFmpegRecorder:
             cmd.extend(["-video_size", self.config.RECORD_RESOLUTION])
             
         gate_level = float(getattr(self.config, 'RECORD_AUDIO_MIC_NOISE_GATE', '0')) / 100.0
-        denoise_mode = getattr(self.config, 'RECORD_AUDIO_MIC_DENOISE', 'None')
-        if denoise_mode in ('True', 'Standard (FFmpeg)'):
-            denoise_mode = 'AI (RNNoise)'
+        denoise_mode = str(getattr(self.config, 'RECORD_AUDIO_MIC_DENOISE', 'None'))
 
         # a_resをasplit=2で2つのストリームに複製してから、それぞれをpanフィルタに渡す
         filter_complex = "[1:a]asplit=2[a_res1][a_res2];[a_res1]pan=stereo|c0=c0|c1=c1[a0];[a_res2]pan=stereo|c0=c2|c1=c3[a1]"
         
         mic_filters = []
-        if denoise_mode == 'AI (RNNoise)':
-            # Windowsのパス区切り文字とドライブレターのコロンをFFmpegフィルタ用にエスケープ
-            model_path_str = self.rnnoise_model_path.replace('\\', '/').replace(':', '\\:')
-            mic_filters.append(f"arnndn=m='{model_path_str}'")
+        if denoise_mode in ('True', 'Standard (FFmpeg)', 'AI (RNNoise)'):
+            try:
+                # FFmpegの実行ディレクトリからの相対パスを取得し、ドライブレターのコロンを排除する
+                rel_model_path = os.path.relpath(self.rnnoise_model_path, start=os.getcwd())
+                model_path_str = rel_model_path.replace('\\', '/')
+                # 相対パスであればコロンが含まれないため、スペース対策としてシングルクォートで囲むだけで安全に渡せる
+                mic_filters.append(f"arnndn=m='{model_path_str}'")
+            except ValueError:
+                # ドライブが異なる場合は絶対パスを使用し、コロンとスペースをエスケープ（クォートなし）
+                model_path_str = self.rnnoise_model_path.replace('\\', '/').replace(':', '\\:').replace(' ', '\\ ')
+                mic_filters.append(f"arnndn=m={model_path_str}")
             
         if gate_level > 0:
             # UI上のレベル(平方根スケール)を実際の振幅閾値に戻す
