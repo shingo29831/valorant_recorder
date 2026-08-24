@@ -88,7 +88,7 @@ class PlayerListPage(QWidget):
             except Exception as e:
                 print(f"[PlayerListPage] Error saving custom name: {e}")
 
-    def refresh_list(self):
+    def clear_list(self):
         while self.scroll_layout.count():
             item = self.scroll_layout.takeAt(0)
             widget = item.widget()
@@ -96,6 +96,9 @@ class PlayerListPage(QWidget):
                 widget.deleteLater()
             elif item.layout():
                 self._clear_layout(item.layout())
+
+    def refresh_list(self):
+        self.clear_list()
                 
         if not os.path.exists(self.config.SAVE_DIR):
             return

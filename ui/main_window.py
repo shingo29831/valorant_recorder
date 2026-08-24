@@ -98,6 +98,16 @@ class MainWindow(QMainWindow):
             2000
         )
 
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        if hasattr(self, 'player_tab'):
+            self.player_tab.on_hidden()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if hasattr(self, 'player_tab'):
+            self.player_tab.on_shown()
+
     def quit_app(self):
         # トレイメニューからQuitが選択された時に完全に終了する
         self.watcher_thread.stop()

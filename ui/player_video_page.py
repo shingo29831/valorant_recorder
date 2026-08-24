@@ -163,7 +163,19 @@ class PlayerVideoPage(QWidget):
 
     def request_back(self):
         self.media_player.stop()
+        self.media_player.setSource(QUrl())
         self.backRequested.emit()
+
+    def cleanup_media(self):
+        # メモリ解放のため、再生を停止しソースをクリアする
+        if self.media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+            self.media_player.pause()
+        self.media_player.setSource(QUrl())
+
+    def restore_media(self):
+        # 再表示時に元の動画を再ロードする
+        if hasattr(self, 'current_json_filename') and self.current_json_filename:
+            self.load_recording(self.current_json_filename)
 
     def on_mic_volume_changed(self, volume):
         self.current_mic_volume = volume

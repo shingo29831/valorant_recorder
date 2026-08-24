@@ -35,3 +35,15 @@ class PlayerTab(QWidget):
 
     def refresh_list(self):
         self.list_page.refresh_list()
+
+    def on_hidden(self):
+        # メモリ解放のため、非表示時に各ページのクリーンアップ処理を呼ぶ
+        self.list_page.clear_list()
+        self.video_page.cleanup_media()
+
+    def on_shown(self):
+        # 再表示時に必要なUIを再構築する
+        if self.stacked_widget.currentWidget() == self.list_page:
+            self.list_page.refresh_list()
+        elif self.stacked_widget.currentWidget() == self.video_page:
+            self.video_page.restore_media()
