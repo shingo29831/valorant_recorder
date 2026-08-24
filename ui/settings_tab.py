@@ -1,10 +1,12 @@
 from PyQt6.QtWidgets import (QWidget, QFormLayout, QLineEdit, QComboBox, 
                              QPushButton, QMessageBox, QVBoxLayout, QLabel, 
-                             QHBoxLayout, QSlider, QCheckBox)
+                             QHBoxLayout, QSlider, QCheckBox, QFileDialog)
 from PyQt6.QtCore import pyqtSignal, Qt, QThread
 from PyQt6.QtGui import QPainter, QColor
 from core.config import Config
 import numpy as np
+import os
+import shutil
 
 class VolumeMeter(QWidget):
     def __init__(self, parent=None):
@@ -102,7 +104,11 @@ class SystemAudioMonitorThread(QThread):
 
     def stop(self):
         self.running = False
-        self.wait()
+        if not self.wait(2000):
+            import os, datetime
+            log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "thread_error.log")
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(f"[{datetime.datetime.now()}] SystemAudioMonitorThread wait timed out.\n")
 
 class MicMonitorThread(QThread):
     level_ready = pyqtSignal(float)
@@ -256,7 +262,11 @@ class MicMonitorThread(QThread):
 
     def stop(self):
         self.running = False
-        self.wait()
+        if not self.wait(2000):
+            import os, datetime
+            log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "thread_error.log")
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(f"[{datetime.datetime.now()}] MicMonitorThread wait timed out.\n")
 
 class SettingsTab(QWidget):
     backRequested = pyqtSignal()
@@ -312,10 +322,20 @@ class SettingsTab(QWidget):
         
         self.system_volume_meter = VolumeMeter()
         
+        self.save_dir_input = QLineEdit(self.config.SAVE_DIR)
+        self.save_dir_input.setReadOnly(True)
+        self.save_dir_btn = QPushButton("Browse")
+        self.save_dir_btn.clicked.connect(self._browse_save_dir)
+        
+        save_dir_layout = QHBoxLayout()
+        save_dir_layout.addWidget(self.save_dir_input)
+        save_dir_layout.addWidget(self.save_dir_btn)
+
         self.riot_id_input = QLineEdit(self.config.RIOT_ID)
         self.tag_line_input = QLineEdit(self.config.TAG_LINE)
         self.api_key_input = QLineEdit(self.config.API_KEY)
         
+        form_layout.addRow("Save Directory:", save_dir_layout)
         form_layout.addRow("Riot ID:", self.riot_id_input)
         form_layout.addRow("Tag Line:", self.tag_line_input)
         form_layout.addRow("Henrik API Key:", self.api_key_input)
@@ -425,6 +445,121 @@ class SettingsTab(QWidget):
         main_layout.addStretch()
         self.setLayout(main_layout)
 
+    def _browse_save_dir(self):
+        import datetime
+        import traceback
+        log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dialog_debug.log")
+        
+        def write_log(msg):
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(f"[{datetime.datetime.now()}] {msg}\n")
+
+        write_log("--- Starting _browse_save_dir ---")
+        try:
+            write_log("Stopping monitors...")
+            self._stop_mic_monitor()
+            self._stop_system_monitor()
+            write_log("Monitors stopped.")
+
+            write_log("Opening native QFileDialog...")
+            selected_dir = QFileDialog.getExistingDirectory(
+                self, 
+                "Select Directory",
+                self.config.SAVE_DIR
+            )
+            write_log(f"QFileDialog closed. Selected: {selected_dir}")
+
+            write_log("Restarting monitors...")
+            self._start_mic_monitor()
+            self._start_system_monitor()
+            write_log("Monitors restarted.")
+
+            if not selected_dir:
+                write_log("No directory selected. Aborting.")
+                return
+            
+            selected_dir = selected_dir.replace('\\', '/')
+            if not selected_dir.endswith('/valorant_records'):
+                new_save_dir = f"{selected_dir}/valorant_records"
+            else:
+                new_save_dir = selected_dir
+
+            old_save_dir = self.config.SAVE_DIR.replace('\\', '/')
+            write_log(f"Old dir: {old_save_dir}, New dir: {new_save_dir}")
+
+            if new_save_dir == old_save_dir:
+                write_log("New directory is the same as old directory. Aborting.")
+                return
+
+            if os.path.exists(old_save_dir):
+                write_log("Old directory exists. Starting copy process.")
+                os.makedirs(new_save_dir, exist_ok=True)
+                files_to_copy = [f for f in os.listdir(old_save_dir) if os.path.isfile(os.path.join(old_save_dir, f))]
+                
+                if files_to_copy:
+                    from PyQt6.QtWidgets import QProgressDialog, QApplication
+                    
+                    progress = QProgressDialog("Copying files...", "Cancel", 0, len(files_to_copy), self)
+                    progress.setWindowModality(Qt.WindowModality.WindowModal)
+                    progress.show()
+
+                    for i, f in enumerate(files_to_copy):
+                        if progress.wasCanceled():
+                            write_log("Copy process canceled by user.")
+                            break
+                        progress.setValue(i)
+                        QApplication.processEvents()
+                        
+                        src = os.path.join(old_save_dir, f)
+                        dst = os.path.join(new_save_dir, f)
+                        try:
+                            shutil.copy2(src, dst)
+                        except Exception as e:
+                            write_log(f"Failed to copy {f}: {e}")
+                    
+                    progress.setValue(len(files_to_copy))
+                    
+                    if not progress.wasCanceled():
+                        write_log("Copy finished. Prompting for deletion.")
+                        reply1 = QMessageBox.question(
+                            self, 
+                            "Delete Original Files?", 
+                            f"Videos have been copied to the new location.\nDo you want to delete the original files in:\n{old_save_dir}?",
+                            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                        )
+                        
+                        if reply1 == QMessageBox.StandardButton.Yes:
+                            reply2 = QMessageBox.question(
+                                self,
+                                "Confirm Deletion",
+                                "Are you absolutely sure you want to delete the original files? This action cannot be undone.",
+                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                            )
+                            if reply2 == QMessageBox.StandardButton.Yes:
+                                write_log("Deletion confirmed. Deleting files.")
+                                for f in files_to_copy:
+                                    try:
+                                        os.remove(os.path.join(old_save_dir, f))
+                                    except Exception as e:
+                                        write_log(f"Failed to delete {f}: {e}")
+                                try:
+                                    if not os.listdir(old_save_dir):
+                                        os.rmdir(old_save_dir)
+                                        write_log("Old directory removed.")
+                                except Exception as e:
+                                    write_log(f"Failed to remove old directory: {e}")
+            else:
+                write_log("Old directory does not exist. Creating new directory.")
+                os.makedirs(new_save_dir, exist_ok=True)
+
+            self.save_dir_input.setText(new_save_dir)
+            self.config.SAVE_DIR = new_save_dir
+            self.config.save()
+            write_log("--- _browse_save_dir completed successfully ---")
+
+        except Exception as e:
+            write_log(f"Exception in _browse_save_dir: {e}\n{traceback.format_exc()}")
+
     def _on_system_gain_changed(self, value):
         gain = value / 100.0
         self.system_gain_label.setText(f"{gain:.2f}x")
@@ -528,6 +663,7 @@ class SettingsTab(QWidget):
         self._stop_system_monitor()
 
     def _save_settings(self, *args):
+        self.config.SAVE_DIR = self.save_dir_input.text()
         self.config.RIOT_ID = self.riot_id_input.text()
         self.config.TAG_LINE = self.tag_line_input.text()
         self.config.API_KEY = self.api_key_input.text()
