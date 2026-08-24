@@ -123,8 +123,14 @@ class MicMonitorThread(QThread):
         return data
 
     def run(self):
+        import warnings
+        warnings.filterwarnings("ignore", message=".*data discontinuity.*")
+        warnings.filterwarnings("ignore", module=".*soundcard.*")
         try:
             import soundcard as sc
+            
+            # sc.SoundcardRuntimeWarning も明示的に無視する
+            warnings.simplefilter("ignore", category=sc.SoundcardRuntimeWarning)
             
             mic_device = None
             if self.mic_name and self.mic_name != "None":

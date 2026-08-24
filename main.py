@@ -1,4 +1,10 @@
 import sys
+import warnings
+
+# soundcardライブラリから発生する不連続性の警告をグローバルに無視する
+warnings.filterwarnings("ignore", message=".*data discontinuity.*")
+warnings.filterwarnings("ignore", module=".*soundcard.*")
+
 from core.patcher import patch_soundcard_lib
 
 # UIや他のモジュールが読み込まれる前にsoundcardライブラリのバグを修正する
