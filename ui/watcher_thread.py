@@ -223,9 +223,43 @@ class WatcherThread(QThread):
         self.store.save_match_metadata(match_data, 0)
         self.match_saved_signal.emit()
 
+    def _cleanup_old_records(self):
+        if self.config.AUTO_DELETE_DAYS <= 0:
+            return
+            
+        save_dir = self.config.SAVE_DIR
+        if not os.path.exists(save_dir):
+            return
+            
+        now = time.time()
+        cutoff = now - (self.config.AUTO_DELETE_DAYS * 86400)
+        
+        deleted_count = 0
+        for f in os.listdir(save_dir):
+            if f.endswith(('.mp4', '.json', '.jpg')):
+                filepath = os.path.join(save_dir, f)
+                try:
+                    if os.path.getmtime(filepath) < cutoff:
+                        os.remove(filepath)
+                        deleted_count += 1
+                except Exception as e:
+                    self.log_signal.emit(f"[Background] Failed to delete old file {f}: {e}")
+                    
+        if deleted_count > 0:
+            self.log_signal.emit(f"[Background] Auto-deleted {deleted_count} old file(s).")
+            self.match_saved_signal.emit()
+
     def _background_worker(self):
+        self._cleanup_old_records()
+        last_cleanup_time = time.time()
+        
         while self._is_running:
             time.sleep(60)
+            
+            now = time.time()
+            if now - last_cleanup_time > 3600:
+                self._cleanup_old_records()
+                last_cleanup_time = now
             
             if self.watcher.is_in_match:
                 continue

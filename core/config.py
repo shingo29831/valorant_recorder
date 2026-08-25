@@ -22,6 +22,7 @@ class Config:
         self.RECORD_ENCODER = os.environ.get("RECORD_ENCODER", "h264_nvenc")
         self.RECORD_FPS = os.environ.get("RECORD_FPS", "60")
         self.RECORD_RESOLUTION = os.environ.get("RECORD_RESOLUTION", "1920x1080")
+        self.AUTO_DELETE_DAYS = int(os.environ.get("AUTO_DELETE_DAYS", "0"))
 
     def save(self):
         if not os.path.exists(self.env_file):
@@ -43,3 +44,4 @@ class Config:
         set_key(self.env_file, "RECORD_ENCODER", self.RECORD_ENCODER)
         set_key(self.env_file, "RECORD_FPS", self.RECORD_FPS)
         set_key(self.env_file, "RECORD_RESOLUTION", self.RECORD_RESOLUTION)
+        set_key(self.env_file, "AUTO_DELETE_DAYS", str(self.AUTO_DELETE_DAYS))

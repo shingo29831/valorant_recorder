@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (QWidget, QFormLayout, QLineEdit, QComboBox, 
                              QPushButton, QMessageBox, QVBoxLayout, QLabel, 
-                             QHBoxLayout, QSlider, QCheckBox, QFileDialog)
+                             QHBoxLayout, QSlider, QCheckBox, QFileDialog, QSpinBox)
 from PyQt6.QtCore import pyqtSignal, Qt, QThread
 from PyQt6.QtGui import QPainter, QColor
 from core.config import Config
@@ -308,6 +308,18 @@ class SettingsTab(QWidget):
         self.res_input.addItems(["1920x1080", "2560x1440", "1280x720"])
         self.res_input.setCurrentText(self.config.RECORD_RESOLUTION)
         
+        self.auto_delete_spin = QSpinBox()
+        self.auto_delete_spin.setRange(0, 3650)
+        self.auto_delete_spin.setValue(self.config.AUTO_DELETE_DAYS)
+        self.auto_delete_spin.setSpecialValueText("Never")
+        
+        self.auto_delete_btn = QPushButton("Apply")
+        self.auto_delete_btn.clicked.connect(self._apply_auto_delete)
+        
+        auto_delete_layout = QHBoxLayout()
+        auto_delete_layout.addWidget(self.auto_delete_spin)
+        auto_delete_layout.addWidget(self.auto_delete_btn)
+        
         self.system_gain_slider = QSlider(Qt.Orientation.Horizontal)
         self.system_gain_slider.setRange(0, 300)
         sys_gain_val = float(getattr(self.config, 'RECORD_AUDIO_SYSTEM_GAIN', '1.0'))
@@ -342,6 +354,7 @@ class SettingsTab(QWidget):
         form_layout.addRow("Recording FPS:", self.fps_input)
         form_layout.addRow("Encoder:", self.encoder_input)
         form_layout.addRow("Resolution:", self.res_input)
+        form_layout.addRow("Auto Delete After (days):", auto_delete_layout)
         
         self.mic_input = QComboBox()
         self.mic_input.addItem("None")
@@ -444,6 +457,37 @@ class SettingsTab(QWidget):
         
         main_layout.addStretch()
         self.setLayout(main_layout)
+
+    def _apply_auto_delete(self):
+        new_days = self.auto_delete_spin.value()
+        if new_days == self.config.AUTO_DELETE_DAYS:
+            return
+            
+        msg = f"Are you sure you want to change the auto-delete period to {new_days} days?"
+        if new_days == 0:
+            msg = "Are you sure you want to disable auto-delete?"
+            
+        from PyQt6.QtWidgets import QDialog
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Confirm Auto-Delete Change")
+        dialog.setModal(True)
+        layout = QVBoxLayout(dialog)
+        layout.addWidget(QLabel(msg))
+        
+        btn_layout = QHBoxLayout()
+        yes_btn = QPushButton("Yes")
+        no_btn = QPushButton("No")
+        yes_btn.clicked.connect(dialog.accept)
+        no_btn.clicked.connect(dialog.reject)
+        btn_layout.addWidget(yes_btn)
+        btn_layout.addWidget(no_btn)
+        layout.addLayout(btn_layout)
+        
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.config.AUTO_DELETE_DAYS = new_days
+            self.config.save()
+        else:
+            self.auto_delete_spin.setValue(self.config.AUTO_DELETE_DAYS)
 
     def _browse_save_dir(self):
         import datetime
