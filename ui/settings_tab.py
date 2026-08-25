@@ -349,6 +349,10 @@ class SettingsTab(QWidget):
         save_dir_layout.addWidget(self.save_dir_input)
         save_dir_layout.addWidget(self.save_dir_btn)
 
+        self.region_input = QComboBox()
+        self.region_input.addItems(["ap", "na", "eu", "kr", "latam", "br"])
+        self.region_input.setCurrentText(self.config.REGION)
+
         self.riot_id_input = QLineEdit(self.config.RIOT_ID)
         self.tag_line_input = QLineEdit(self.config.TAG_LINE)
         
@@ -361,6 +365,7 @@ class SettingsTab(QWidget):
         
         form_layout.addRow(self.t.language, self.language_input)
         form_layout.addRow(self.t.save_directory, save_dir_layout)
+        form_layout.addRow(getattr(self.t, 'region', 'Region'), self.region_input)
         form_layout.addRow(self.t.riot_id, riot_id_layout)
         form_layout.addRow(self.t.tag_line, self.tag_line_input)
         form_layout.addRow(self.t.recording_fps, self.fps_input)
@@ -461,6 +466,7 @@ class SettingsTab(QWidget):
         self.monitor_thread = None
         self.sys_monitor_thread = None
         
+        self.region_input.currentTextChanged.connect(self._save_settings)
         self.riot_id_input.textChanged.connect(self._save_settings)
         self.tag_line_input.textChanged.connect(self._save_settings)
         self.fps_input.currentTextChanged.connect(self._save_settings)
@@ -836,6 +842,7 @@ class SettingsTab(QWidget):
 
     def _save_settings(self, *args):
         self.config.SAVE_DIR = self.save_dir_input.text()
+        self.config.REGION = self.region_input.currentText()
         self.config.RIOT_ID = self.riot_id_input.text()
         self.config.TAG_LINE = self.tag_line_input.text()
         self.config.RECORD_FPS = self.fps_input.currentText()
