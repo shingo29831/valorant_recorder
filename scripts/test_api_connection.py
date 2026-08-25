@@ -17,9 +17,11 @@ def main():
     
     print(f"対象: {name}#{tag} (Region: {region})")
     
-    # auth.keyの存在確認
-    if not os.path.exists("auth.key"):
-        print("\n❌ エラー: 'auth.key' が見つかりません。")
+    # auth.keyの存在確認 (絶対パスで判定)
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    key_path = os.path.join(project_root, "auth.key")
+    if not os.path.exists(key_path):
+        print(f"\n❌ エラー: '{key_path}' が見つかりません。")
         print("先に 'python scripts/generate_keys.py' を実行して鍵を生成してください。")
         return
 

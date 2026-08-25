@@ -2,21 +2,26 @@ import urllib.request
 import json
 import urllib.error
 import urllib.parse
+import sys
+import os
+
+# プロジェクトルートをPythonのパスに追加
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from api.henrik_api import HenrikAPI
 
 def fetch_recent_match_timeline(region: str, name: str, tag: str, size: int = 3):
     print(f"[{name}#{tag}] の直近 {size} 試合のデータを取得中...\n")
     
-    # HenrikDev API v3 を使用して直近の試合を取得
-    safe_name = urllib.parse.quote(name)
-    safe_tag = urllib.parse.quote(tag)
-    url = f"https://api.henrikdev.xyz/valorant/v3/matches/{region}/{safe_name}/{safe_tag}?size={size}"
+    try:
+        api = HenrikAPI(region, name, tag)
+    except FileNotFoundError as e:
+        print(f"エラー: {e}")
+        return
+
+    # プロキシサーバーを経由して直近の試合を取得
+    url = f"https://valo-reco-api.meld-task.com/valorant/v3/matches/{region}/{api.name}/{api.tag}?size={size}"
     
-    # APIキーをヘッダーにセット
-    headers = {
-        'User-Agent': 'Mozilla/5.0',
-        'Authorization': API_KEY
-    }
-    req = urllib.request.Request(url, headers=headers)
+    req = urllib.request.Request(url, headers=api._get_headers())
     
     try:
         with urllib.request.urlopen(req) as response:
@@ -138,11 +143,5 @@ if __name__ == "__main__":
     RIOT_ID = "shingo"
     TAG_LINE = "7445"
     
-    # 取得したHenrikDev APIキーをここに貼り付けます
-    API_KEY = "HDEV-2cc41137-127c-41e1-a60e-7dcc90ab0739"
-    
-    if API_KEY.startswith("HDEV-xxx"):
-        print("スクリプト内の API_KEY を取得したものに変更してから実行してください。")
-    else:
-        # 取得したい試合数を指定して実行 (例: 3試合)
-        fetch_recent_match_timeline(REGION, RIOT_ID, TAG_LINE, size=4)
+    # 取得したい試合数を指定して実行 (例: 4試合)
+    fetch_recent_match_timeline(REGION, RIOT_ID, TAG_LINE, size=4)

@@ -16,25 +16,27 @@ class HenrikAPI:
             'User-Agent': 'ValorantRecorder/1.0'
         }
         
-        # 秘密鍵の読み込み
-        self.private_key = None
-        key_path = "auth.key"
-        if os.path.exists(key_path):
-            with open(key_path, "rb") as f:
-                self.private_key = f.read()
+        # 秘密鍵の読み込み (プロジェクトルートの auth.key を絶対パスで参照)
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        key_path = os.path.join(project_root, "auth.key")
+        
+        if not os.path.exists(key_path):
+            raise FileNotFoundError(f"Authentication key not found at {key_path}. Please run 'python scripts/generate_keys.py' first.")
+            
+        with open(key_path, "rb") as f:
+            self.private_key = f.read()
 
     def _get_headers(self):
         headers = self.base_headers.copy()
         
-        if self.private_key:
-            # JWTの生成 (有効期限1分)
-            payload = {
-                "iat": datetime.datetime.utcnow(),
-                "exp": datetime.datetime.utcnow() + datetime.timedelta(minutes=1)
-            }
-            token = jwt.encode(payload, self.private_key, algorithm="RS256")
-            headers['Authorization'] = f"Bearer {token}"
-            
+        # JWTの生成 (有効期限1分)
+        payload = {
+            "iat": datetime.datetime.utcnow(),
+            "exp": datetime.datetime.utcnow() + datetime.timedelta(minutes=1)
+        }
+        token = jwt.encode(payload, self.private_key, algorithm="RS256")
+        headers['Authorization'] = f"Bearer {token}"
+        
         return headers
 
     def fetch_latest_match(self, retries: int = 3, delay: int = 10) -> dict:
