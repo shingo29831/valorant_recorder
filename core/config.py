@@ -5,10 +5,10 @@ class Config:
     def __init__(self):
         self.env_file = ".env"
         load_dotenv(self.env_file)
+        self.LANGUAGE = os.environ.get("LANGUAGE", "en")
         self.REGION = os.environ.get("VALORANT_REGION", "ap")
         self.RIOT_ID = os.environ.get("VALORANT_RIOT_ID", "shingo")
         self.TAG_LINE = os.environ.get("VALORANT_TAG_LINE", "7445")
-        self.API_KEY = os.environ.get("HENRIK_API_KEY", "HDEV-2cc41137-127c-41e1-a60e-7dcc90ab0739")
         self.SAVE_DIR = os.environ.get("RECORD_SAVE_DIR", "./records")
         
         self.RECORD_VIDEO_FORMAT = os.environ.get("RECORD_VIDEO_FORMAT", "ddagrab")
@@ -28,10 +28,10 @@ class Config:
         if not os.path.exists(self.env_file):
             open(self.env_file, 'w').close()
             
+        set_key(self.env_file, "LANGUAGE", self.LANGUAGE)
         set_key(self.env_file, "VALORANT_REGION", self.REGION)
         set_key(self.env_file, "VALORANT_RIOT_ID", self.RIOT_ID)
         set_key(self.env_file, "VALORANT_TAG_LINE", self.TAG_LINE)
-        set_key(self.env_file, "HENRIK_API_KEY", self.API_KEY)
         set_key(self.env_file, "RECORD_SAVE_DIR", self.SAVE_DIR)
         set_key(self.env_file, "RECORD_VIDEO_FORMAT", self.RECORD_VIDEO_FORMAT)
         set_key(self.env_file, "RECORD_INPUT_SOURCE", self.RECORD_INPUT_SOURCE)

@@ -3,22 +3,29 @@ import urllib.parse
 import urllib.error
 import json
 import time
+from scripts.get_local_api_info import get_riot_access_token
 
 class HenrikAPI:
-    def __init__(self, api_key: str, region: str, name: str, tag: str):
+    def __init__(self, region: str, name: str, tag: str):
         self.region = region
         self.name = urllib.parse.quote(name)
         self.tag = urllib.parse.quote(tag)
-        self.headers = {
-            'User-Agent': 'Mozilla/5.0',
-            'Authorization': api_key
+        self.base_headers = {
+            'User-Agent': 'ValorantRecorder/1.0'
         }
 
+    def _get_headers(self):
+        headers = self.base_headers.copy()
+        token = get_riot_access_token()
+        if token:
+            headers['Authorization'] = f"Bearer {token}"
+        return headers
+
     def fetch_latest_match(self, retries: int = 3, delay: int = 10) -> dict:
-        url = f"https://api.henrikdev.xyz/valorant/v3/matches/{self.region}/{self.name}/{self.tag}?size=1"
-        req = urllib.request.Request(url, headers=self.headers)
+        url = f"https://valo-api.meld-task.pages.dev/valorant/v3/matches/{self.region}/{self.name}/{self.tag}?size=1"
         
         for attempt in range(retries):
+            req = urllib.request.Request(url, headers=self._get_headers())
             try:
                 with urllib.request.urlopen(req, timeout=15) as response:
                     data = json.loads(response.read().decode('utf-8'))
@@ -36,10 +43,10 @@ class HenrikAPI:
         raise RuntimeError("Failed to fetch match data after retries.")
 
     def fetch_mmr_change(self, match_id: str, retries: int = 3, delay: int = 10) -> int:
-        url = f"https://api.henrikdev.xyz/valorant/v1/mmr-history/{self.region}/{self.name}/{self.tag}"
-        req = urllib.request.Request(url, headers=self.headers)
+        url = f"https://valo-api.meld-task.pages.dev/valorant/v1/mmr-history/{self.region}/{self.name}/{self.tag}"
         
         for attempt in range(retries):
+            req = urllib.request.Request(url, headers=self._get_headers())
             try:
                 with urllib.request.urlopen(req, timeout=15) as response:
                     data = json.loads(response.read().decode('utf-8'))

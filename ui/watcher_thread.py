@@ -20,7 +20,6 @@ class WatcherThread(QThread):
         super().__init__()
         self.config = config
         self.api = HenrikAPI(
-            api_key=self.config.API_KEY,
             region=self.config.REGION,
             name=self.config.RIOT_ID,
             tag=self.config.TAG_LINE

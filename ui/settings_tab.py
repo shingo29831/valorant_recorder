@@ -274,15 +274,17 @@ class SettingsTab(QWidget):
     def __init__(self, config: Config):
         super().__init__()
         self.config = config
+        from core.i18n import get_trans
+        self.t = get_trans(self.config.LANGUAGE)
         
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(40, 40, 40, 40)
         
         header_layout = QHBoxLayout()
-        title = QLabel("APPLICATION SETTINGS")
+        title = QLabel(self.t.settings_title)
         title.setStyleSheet("font-size: 24px; font-weight: bold; color: #FF4655;")
         
-        back_btn = QPushButton("← BACK TO RECORDINGS")
+        back_btn = QPushButton(self.t.back_to_recordings)
         back_btn.setFixedWidth(200)
         back_btn.clicked.connect(self.backRequested.emit)
         
@@ -295,6 +297,10 @@ class SettingsTab(QWidget):
         
         form_layout = QFormLayout()
         form_layout.setSpacing(15)
+        
+        self.language_input = QComboBox()
+        self.language_input.addItems(["en", "ja"])
+        self.language_input.setCurrentText(self.config.LANGUAGE)
         
         self.fps_input = QComboBox()
         self.fps_input.addItems(["30", "60", "120", "144"])
@@ -311,9 +317,9 @@ class SettingsTab(QWidget):
         self.auto_delete_spin = QSpinBox()
         self.auto_delete_spin.setRange(0, 3650)
         self.auto_delete_spin.setValue(self.config.AUTO_DELETE_DAYS)
-        self.auto_delete_spin.setSpecialValueText("Never")
+        self.auto_delete_spin.setSpecialValueText(self.t.never)
         
-        self.auto_delete_btn = QPushButton("Apply")
+        self.auto_delete_btn = QPushButton(self.t.apply)
         self.auto_delete_btn.clicked.connect(self._apply_auto_delete)
         
         auto_delete_layout = QHBoxLayout()
@@ -336,7 +342,7 @@ class SettingsTab(QWidget):
         
         self.save_dir_input = QLineEdit(self.config.SAVE_DIR)
         self.save_dir_input.setReadOnly(True)
-        self.save_dir_btn = QPushButton("Browse")
+        self.save_dir_btn = QPushButton(self.t.browse)
         self.save_dir_btn.clicked.connect(self._browse_save_dir)
         
         save_dir_layout = QHBoxLayout()
@@ -345,16 +351,22 @@ class SettingsTab(QWidget):
 
         self.riot_id_input = QLineEdit(self.config.RIOT_ID)
         self.tag_line_input = QLineEdit(self.config.TAG_LINE)
-        self.api_key_input = QLineEdit(self.config.API_KEY)
         
-        form_layout.addRow("Save Directory:", save_dir_layout)
-        form_layout.addRow("Riot ID:", self.riot_id_input)
-        form_layout.addRow("Tag Line:", self.tag_line_input)
-        form_layout.addRow("Henrik API Key:", self.api_key_input)
-        form_layout.addRow("Recording FPS:", self.fps_input)
-        form_layout.addRow("Encoder:", self.encoder_input)
-        form_layout.addRow("Resolution:", self.res_input)
-        form_layout.addRow("Auto Delete After (days):", auto_delete_layout)
+        self.fetch_btn = QPushButton(self.t.fetch_from_valorant)
+        self.fetch_btn.clicked.connect(self._fetch_from_valorant)
+        
+        riot_id_layout = QHBoxLayout()
+        riot_id_layout.addWidget(self.riot_id_input)
+        riot_id_layout.addWidget(self.fetch_btn)
+        
+        form_layout.addRow(self.t.language, self.language_input)
+        form_layout.addRow(self.t.save_directory, save_dir_layout)
+        form_layout.addRow(self.t.riot_id, riot_id_layout)
+        form_layout.addRow(self.t.tag_line, self.tag_line_input)
+        form_layout.addRow(self.t.recording_fps, self.fps_input)
+        form_layout.addRow(self.t.encoder, self.encoder_input)
+        form_layout.addRow(self.t.resolution, self.res_input)
+        form_layout.addRow(self.t.auto_delete_after_days, auto_delete_layout)
         
         self.mic_input = QComboBox()
         self.mic_input.addItem("None")
@@ -416,10 +428,10 @@ class SettingsTab(QWidget):
         self.volume_meter = VolumeMeter()
         self.volume_meter.set_gate_threshold(gate_val / 100.0)
         
-        self.mic_monitor_cb = QCheckBox("Listen to Microphone (Monitor)")
+        self.mic_monitor_cb = QCheckBox(self.t.listen_to_mic)
         self.mic_monitor_cb.setChecked(False)
         
-        self.monitor_warning_label = QLabel("Note: AI (RNNoise) effect is applied only in actual recordings, not in this monitor.")
+        self.monitor_warning_label = QLabel(self.t.monitor_warning)
         self.monitor_warning_label.setStyleSheet("color: #AAAAAA; font-size: 11px; font-style: italic;")
         self.monitor_warning_label.setVisible(False)
         
@@ -428,17 +440,18 @@ class SettingsTab(QWidget):
         monitor_layout.addWidget(self.monitor_warning_label)
         monitor_layout.setSpacing(2)
         
-        form_layout.addRow("System Gain:", sys_gain_layout)
-        form_layout.addRow("System Level:", self.system_volume_meter)
-        form_layout.addRow("Microphone:", self.mic_input)
-        form_layout.addRow("Mic Gain:", gain_layout)
-        form_layout.addRow("Noise Cancel:", self.mic_denoise_combo)
-        form_layout.addRow("Noise Gate:", gate_layout)
-        form_layout.addRow("Mic Level:", self.volume_meter)
+        form_layout.addRow(self.t.system_gain, sys_gain_layout)
+        form_layout.addRow(self.t.system_level, self.system_volume_meter)
+        form_layout.addRow(self.t.microphone, self.mic_input)
+        form_layout.addRow(self.t.mic_gain, gain_layout)
+        form_layout.addRow(self.t.noise_cancel, self.mic_denoise_combo)
+        form_layout.addRow(self.t.noise_gate, gate_layout)
+        form_layout.addRow(self.t.mic_level, self.volume_meter)
         form_layout.addRow("", monitor_layout)
         
         main_layout.addLayout(form_layout)
         
+        self.language_input.currentTextChanged.connect(self._on_language_changed)
         self.system_gain_slider.valueChanged.connect(self._on_system_gain_changed)
         self.mic_gain_slider.valueChanged.connect(self._on_gain_changed)
         self.mic_gate_slider.valueChanged.connect(self._on_gate_changed)
@@ -450,7 +463,6 @@ class SettingsTab(QWidget):
         
         self.riot_id_input.textChanged.connect(self._save_settings)
         self.tag_line_input.textChanged.connect(self._save_settings)
-        self.api_key_input.textChanged.connect(self._save_settings)
         self.fps_input.currentTextChanged.connect(self._save_settings)
         self.encoder_input.currentTextChanged.connect(self._save_settings)
         self.res_input.currentTextChanged.connect(self._save_settings)
@@ -458,25 +470,74 @@ class SettingsTab(QWidget):
         main_layout.addStretch()
         self.setLayout(main_layout)
 
+    def _fetch_from_valorant(self):
+        from scripts.get_local_api_info import get_current_player
+        name, tag = get_current_player()
+        if name and tag:
+            self.riot_id_input.setText(name)
+            self.tag_line_input.setText(tag)
+            self._save_settings()
+            
+            from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Success")
+            dialog.setModal(True)
+            layout = QVBoxLayout(dialog)
+            layout.addWidget(QLabel(self.t.fetch_success))
+            btn = QPushButton("OK")
+            btn.clicked.connect(dialog.accept)
+            layout.addWidget(btn)
+            dialog.exec()
+        else:
+            from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Error")
+            dialog.setModal(True)
+            layout = QVBoxLayout(dialog)
+            layout.addWidget(QLabel(self.t.fetch_failed))
+            btn = QPushButton("OK")
+            btn.clicked.connect(dialog.accept)
+            layout.addWidget(btn)
+            dialog.exec()
+
+    def _on_language_changed(self, lang):
+        if lang == self.config.LANGUAGE:
+            return
+        self.config.LANGUAGE = lang
+        self.config.save()
+        
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QHBoxLayout
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Language Changed")
+        dialog.setModal(True)
+        layout = QVBoxLayout(dialog)
+        msg = "Please restart the application to apply the language change.\n言語の変更を適用するにはアプリケーションを再起動してください。"
+        layout.addWidget(QLabel(msg))
+        btn = QPushButton("OK")
+        btn.clicked.connect(dialog.accept)
+        layout.addWidget(btn)
+        dialog.exec()
+
     def _apply_auto_delete(self):
         new_days = self.auto_delete_spin.value()
         if new_days == self.config.AUTO_DELETE_DAYS:
             return
             
-        msg = f"Are you sure you want to change the auto-delete period to {new_days} days?"
         if new_days == 0:
-            msg = "Are you sure you want to disable auto-delete?"
+            msg = self.t.confirm_auto_delete_disable_msg
+        else:
+            msg = self.t.confirm_auto_delete_change_msg.format(days=new_days)
             
-        from PyQt6.QtWidgets import QDialog
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QHBoxLayout
         dialog = QDialog(self)
-        dialog.setWindowTitle("Confirm Auto-Delete Change")
+        dialog.setWindowTitle(self.t.confirm_auto_delete_change)
         dialog.setModal(True)
         layout = QVBoxLayout(dialog)
         layout.addWidget(QLabel(msg))
         
         btn_layout = QHBoxLayout()
-        yes_btn = QPushButton("Yes")
-        no_btn = QPushButton("No")
+        yes_btn = QPushButton(self.t.yes)
+        no_btn = QPushButton(self.t.no)
         yes_btn.clicked.connect(dialog.accept)
         no_btn.clicked.connect(dialog.reject)
         btn_layout.addWidget(yes_btn)
@@ -508,7 +569,7 @@ class SettingsTab(QWidget):
             write_log("Opening native QFileDialog...")
             selected_dir = QFileDialog.getExistingDirectory(
                 self, 
-                "Select Directory",
+                self.t.select_directory,
                 self.config.SAVE_DIR
             )
             write_log(f"QFileDialog closed. Selected: {selected_dir}")
@@ -536,8 +597,8 @@ class SettingsTab(QWidget):
                 if files_to_copy:
                     reply_move = QMessageBox.question(
                         self,
-                        "Move Files?",
-                        f"Do you want to move existing recordings to the new location?\n\nFrom: {old_save_dir}\nTo: {new_save_dir}",
+                        self.t.move_files_title,
+                        self.t.move_files_msg.format(old_dir=old_save_dir, new_dir=new_save_dir),
                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
                     )
                     
@@ -550,7 +611,7 @@ class SettingsTab(QWidget):
                         total_bytes = sum(os.path.getsize(os.path.join(old_save_dir, f)) for f in files_to_copy)
                         copied_bytes = 0
                         
-                        progress = QProgressDialog("Copying files...", "Cancel", 0, 100, self)
+                        progress = QProgressDialog(self.t.copying_files, self.t.cancel, 0, 100, self)
                         progress.setWindowModality(Qt.WindowModality.WindowModal)
                         progress.setMinimumDuration(0)
                         progress.show()
@@ -623,16 +684,16 @@ class SettingsTab(QWidget):
                         write_log("Copy finished. Prompting for deletion.")
                         reply1 = QMessageBox.question(
                             self, 
-                            "Delete Original Files?", 
-                            f"Videos have been copied to the new location.\nDo you want to delete the original files in:\n{old_save_dir}?",
+                            self.t.delete_original_title, 
+                            self.t.delete_original_msg.format(old_dir=old_save_dir),
                             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
                         )
                         
                         if reply1 == QMessageBox.StandardButton.Yes:
                             reply2 = QMessageBox.question(
                                 self,
-                                "Confirm Deletion",
-                                "Are you absolutely sure you want to delete the original files? This action cannot be undone.",
+                                self.t.confirm_deletion_title,
+                                self.t.confirm_deletion_msg,
                                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
                             )
                             if reply2 == QMessageBox.StandardButton.Yes:
@@ -777,7 +838,6 @@ class SettingsTab(QWidget):
         self.config.SAVE_DIR = self.save_dir_input.text()
         self.config.RIOT_ID = self.riot_id_input.text()
         self.config.TAG_LINE = self.tag_line_input.text()
-        self.config.API_KEY = self.api_key_input.text()
         self.config.RECORD_FPS = self.fps_input.currentText()
         self.config.RECORD_ENCODER = self.encoder_input.currentText()
         self.config.RECORD_RESOLUTION = self.res_input.currentText()
