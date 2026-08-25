@@ -38,7 +38,7 @@ class HenrikAPI:
         return headers
 
     def fetch_latest_match(self, retries: int = 3, delay: int = 10) -> dict:
-        url = f"https://valo-api.meld-task.pages.dev/valorant/v3/matches/{self.region}/{self.name}/{self.tag}?size=1"
+        url = f"https://valo-reco-api.meld-task.com/valorant/v3/matches/{self.region}/{self.name}/{self.tag}?size=1"
         
         for attempt in range(retries):
             req = urllib.request.Request(url, headers=self._get_headers())
@@ -59,7 +59,7 @@ class HenrikAPI:
         raise RuntimeError("Failed to fetch match data after retries.")
 
     def fetch_mmr_change(self, match_id: str, retries: int = 3, delay: int = 10) -> int:
-        url = f"https://valo-api.meld-task.pages.dev/valorant/v1/mmr-history/{self.region}/{self.name}/{self.tag}"
+        url = f"https://valo-reco-api.meld-task.com/valorant/v1/mmr-history/{self.region}/{self.name}/{self.tag}"
         
         for attempt in range(retries):
             req = urllib.request.Request(url, headers=self._get_headers())
