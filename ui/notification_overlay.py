@@ -3,8 +3,8 @@ from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QGuiApplication
 
 class NotificationOverlay(QWidget):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, parent=None):
+        super().__init__(parent)
         # 最前面表示、フレームなし、タスクバー非表示、クリック透過を設定
         self.setWindowFlags(
             Qt.WindowType.WindowStaysOnTopHint |
