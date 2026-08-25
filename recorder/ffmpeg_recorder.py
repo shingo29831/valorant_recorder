@@ -17,16 +17,19 @@ def test_encoder(ffmpeg_path: str, encoder: str) -> tuple[bool, str]:
     cmd = [
         ffmpeg_path,
         "-v", "error",
-        "-f", "lavfi", "-i", "color=black:s=128x128:r=1",
+        # NVENCの最小解像度制限(144x144等)を回避するため、256x256でテストする
+        "-f", "lavfi", "-i", "color=black:s=256x256:r=1",
         "-pix_fmt", "yuv420p",
         "-c:v", encoder,
         "-frames:v", "1",
         "-f", "null", "-"
     ]
     try:
-        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        # text=Trueによるエンコーディングエラー(UnicodeDecodeError等)を防ぐためバイナリで取得
+        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
         if res.returncode != 0:
-            return False, res.stderr.strip()
+            err_msg = res.stderr.decode('utf-8', errors='replace') if res.stderr else ""
+            return False, err_msg.strip()
         return True, ""
     except Exception as e:
         return False, str(e)
@@ -44,15 +47,32 @@ def get_available_encoders(ffmpeg_path: str) -> tuple[list, list]:
     available = []
     warning_keys = []
     
-    for enc in hw_encoders:
-        success, err_msg = test_encoder(ffmpeg_path, enc)
-        if success:
-            available.append(enc)
-        else:
-            # NVIDIAドライバが古い場合のエラーを検知
-            if "nvenc" in enc and "minimum required Nvidia driver" in err_msg:
-                if "nvenc_driver_old" not in warning_keys:
-                    warning_keys.append("nvenc_driver_old")
+    # 失敗原因特定のため、プロジェクトルートにログを出力する
+    log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "encoder_test.log")
+    
+    try:
+        with open(log_path, "w", encoding="utf-8") as f:
+            f.write(f"--- Encoder Test Log ({datetime.now()}) ---\n")
+            
+            for enc in hw_encoders:
+                success, err_msg = test_encoder(ffmpeg_path, enc)
+                if success:
+                    available.append(enc)
+                    f.write(f"[{enc}] Success\n")
+                else:
+                    f.write(f"[{enc}] Failed:\n{err_msg}\n\n")
+                    # NVIDIAドライバが古い場合のエラーを検知
+                    if "nvenc" in enc and "minimum required Nvidia driver" in err_msg:
+                        if "nvenc_driver_old" not in warning_keys:
+                            warning_keys.append("nvenc_driver_old")
+    except Exception as e:
+        print(f"Failed to write encoder_test.log: {e}")
+        # ログ書き込みに失敗してもテスト自体は続行する
+        for enc in hw_encoders:
+            if enc not in available:
+                success, err_msg = test_encoder(ffmpeg_path, enc)
+                if success:
+                    available.append(enc)
             
     if available:
         return available, warning_keys
