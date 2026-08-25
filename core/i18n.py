@@ -41,6 +41,8 @@ class Translations:
     delete_original_msg: str
     confirm_deletion_title: str
     confirm_deletion_msg: str
+    region: str
+    nvenc_driver_old: str
 
 EN = Translations(
     settings_title="APPLICATION SETTINGS",
@@ -81,7 +83,9 @@ EN = Translations(
     delete_original_title="Delete Original Files?",
     delete_original_msg="Videos have been copied to the new location.\nDo you want to delete the original files in:\n{old_dir}?",
     confirm_deletion_title="Confirm Deletion",
-    confirm_deletion_msg="Are you absolutely sure you want to delete the original files? This action cannot be undone."
+    confirm_deletion_msg="Are you absolutely sure you want to delete the original files? This action cannot be undone.",
+    region="Region:",
+    nvenc_driver_old="⚠️ NVIDIA Driver is too old for NVENC.\nPlease update to 610.00 or newer."
 )
 
 JA = Translations(
@@ -123,7 +127,9 @@ JA = Translations(
     delete_original_title="元のファイルを削除しますか？",
     delete_original_msg="動画が新しい場所にコピーされました。\n元のファイルを削除しますか？\n{old_dir}",
     confirm_deletion_title="削除の確認",
-    confirm_deletion_msg="本当に元のファイルを削除してもよろしいですか？この操作は取り消せません。"
+    confirm_deletion_msg="本当に元のファイルを削除してもよろしいですか？この操作は取り消せません。",
+    region="リージョン:",
+    nvenc_driver_old="⚠️ NVIDIAドライバが古いためNVENCが使用できません。\nバージョン 610.00 以降にアップデートしてください。"
 )
 
 def get_trans(lang_code: str) -> Translations:

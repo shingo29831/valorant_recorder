@@ -12,6 +12,53 @@ from recorder.ffmpeg_downloader import ensure_ffmpeg_downloaded, ensure_rnnoise_
 warnings.filterwarnings("ignore", message=".*data discontinuity.*")
 warnings.filterwarnings("ignore", module=".*soundcard.*")
 
+def test_encoder(ffmpeg_path: str, encoder: str) -> tuple[bool, str]:
+    """指定されたエンコーダが現在の環境で利用可能かテストし、結果とエラーメッセージを返す"""
+    cmd = [
+        ffmpeg_path,
+        "-v", "error",
+        "-f", "lavfi", "-i", "color=black:s=128x128:r=1",
+        "-pix_fmt", "yuv420p",
+        "-c:v", encoder,
+        "-frames:v", "1",
+        "-f", "null", "-"
+    ]
+    try:
+        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
+        if res.returncode != 0:
+            return False, res.stderr.strip()
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+def get_available_encoders(ffmpeg_path: str) -> tuple[list, list]:
+    """
+    利用可能なハードウェアエンコーダと、発生した警告メッセージキーのリストを返す。
+    """
+    hw_encoders = [
+        "hevc_nvenc", "h264_nvenc",  # NVIDIA
+        "hevc_amf", "h264_amf",      # AMD
+        "hevc_qsv", "h264_qsv"       # Intel
+    ]
+    
+    available = []
+    warning_keys = []
+    
+    for enc in hw_encoders:
+        success, err_msg = test_encoder(ffmpeg_path, enc)
+        if success:
+            available.append(enc)
+        else:
+            # NVIDIAドライバが古い場合のエラーを検知
+            if "nvenc" in enc and "minimum required Nvidia driver" in err_msg:
+                if "nvenc_driver_old" not in warning_keys:
+                    warning_keys.append("nvenc_driver_old")
+            
+    if available:
+        return available, warning_keys
+        
+    return ["libx264"], warning_keys
+
 class FFmpegRecorder:
     def __init__(self, config: Config):
         self.config = config
@@ -30,21 +77,13 @@ class FFmpegRecorder:
 
     def _determine_encoder(self) -> str:
         encoder = self.config.RECORD_ENCODER
-        if "nvenc" in encoder:
-            try:
-                test_cmd = [
-                    self.ffmpeg_path,
-                    "-f", "lavfi", "-i", "color=black:s=128x128:r=1",
-                    "-c:v", encoder,
-                    "-frames:v", "1",
-                    "-f", "null", "-"
-                ]
-                res = subprocess.run(test_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
-                if res.returncode != 0:
-                    return "libx264"
-            except Exception:
-                return "libx264"
-        return encoder
+        success, _ = test_encoder(self.ffmpeg_path, encoder)
+        if success:
+            return encoder
+        
+        # 設定されたエンコーダが使えない場合（グラボ変更など）、利用可能な最適なものを返す
+        available, _ = get_available_encoders(self.ffmpeg_path)
+        return available[0]
 
     def _audio_capture_loop(self):
         # COM競合を防ぐため、別スレッド内でインポートを遅延させる

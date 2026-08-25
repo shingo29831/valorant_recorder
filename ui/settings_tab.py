@@ -306,9 +306,35 @@ class SettingsTab(QWidget):
         self.fps_input.addItems(["30", "60", "120", "144"])
         self.fps_input.setCurrentText(self.config.RECORD_FPS)
         
+        # エンコーダの動的検出と最適化
+        from recorder.ffmpeg_downloader import ensure_ffmpeg_downloaded
+        from recorder.ffmpeg_recorder import get_available_encoders
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        ffmpeg_path = ensure_ffmpeg_downloaded(project_root)
+        
+        # get_available_encoders は (利用可能なエンコーダのリスト, 警告メッセージキーのリスト) を返す
+        available_encoders, encoder_warning_keys = get_available_encoders(ffmpeg_path)
+        
         self.encoder_input = QComboBox()
-        self.encoder_input.addItems(["h264_nvenc", "libx264", "hevc_nvenc"])
-        self.encoder_input.setCurrentText(self.config.RECORD_ENCODER)
+        self.encoder_input.addItems(available_encoders)
+        
+        current_enc = self.config.RECORD_ENCODER
+        if current_enc in available_encoders:
+            self.encoder_input.setCurrentText(current_enc)
+        else:
+            # 現在の設定が利用不可（またはソフトウェアエンコーダが除外された）場合、最適なものをデフォルトに設定
+            self.encoder_input.setCurrentText(available_encoders[0])
+            self.config.RECORD_ENCODER = available_encoders[0]
+            self.config.save()
+            
+        encoder_layout = QVBoxLayout()
+        encoder_layout.addWidget(self.encoder_input)
+        if encoder_warning_keys:
+            warning_texts = [getattr(self.t, key, key) for key in encoder_warning_keys]
+            warning_label = QLabel("\n".join(warning_texts))
+            warning_label.setStyleSheet("color: #FFaa00; font-size: 11px; font-weight: bold;")
+            encoder_layout.addWidget(warning_label)
+        encoder_layout.setSpacing(2)
         
         self.res_input = QComboBox()
         self.res_input.addItems(["1920x1080", "2560x1440", "1280x720"])
@@ -365,11 +391,11 @@ class SettingsTab(QWidget):
         
         form_layout.addRow(self.t.language, self.language_input)
         form_layout.addRow(self.t.save_directory, save_dir_layout)
-        form_layout.addRow(getattr(self.t, 'region', 'Region'), self.region_input)
+        form_layout.addRow(self.t.region, self.region_input)
         form_layout.addRow(self.t.riot_id, riot_id_layout)
         form_layout.addRow(self.t.tag_line, self.tag_line_input)
         form_layout.addRow(self.t.recording_fps, self.fps_input)
-        form_layout.addRow(self.t.encoder, self.encoder_input)
+        form_layout.addRow(self.t.encoder, encoder_layout)
         form_layout.addRow(self.t.resolution, self.res_input)
         form_layout.addRow(self.t.auto_delete_after_days, auto_delete_layout)
         
