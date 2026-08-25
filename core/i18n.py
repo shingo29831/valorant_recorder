@@ -43,6 +43,13 @@ class Translations:
     confirm_deletion_msg: str
     region: str
     nvenc_driver_old: str
+    create_clip: str
+    set_start: str
+    set_end: str
+    generate: str
+    generating_clip: str
+    clip_success: str
+    clip_failed: str
 
 EN = Translations(
     settings_title="APPLICATION SETTINGS",
@@ -85,7 +92,14 @@ EN = Translations(
     confirm_deletion_title="Confirm Deletion",
     confirm_deletion_msg="Are you absolutely sure you want to delete the original files? This action cannot be undone.",
     region="Region:",
-    nvenc_driver_old="⚠️ NVIDIA Driver is too old for NVENC.\nPlease update to 610.00 or newer."
+    nvenc_driver_old="⚠️ NVIDIA Driver is too old for NVENC.\nPlease update to 610.00 or newer.",
+    create_clip="Create Clip",
+    set_start="Set Start",
+    set_end="Set End",
+    generate="Generate",
+    generating_clip="Generating clip...",
+    clip_success="Clip generated successfully:\n{path}",
+    clip_failed="Failed to generate clip:\n{error}"
 )
 
 JA = Translations(
@@ -129,7 +143,14 @@ JA = Translations(
     confirm_deletion_title="削除の確認",
     confirm_deletion_msg="本当に元のファイルを削除してもよろしいですか？この操作は取り消せません。",
     region="リージョン:",
-    nvenc_driver_old="⚠️ NVIDIAドライバが古いためNVENCが使用できません。\nバージョン 610.00 以降にアップデートしてください。"
+    nvenc_driver_old="⚠️ NVIDIAドライバが古いためNVENCが使用できません。\nバージョン 610.00 以降にアップデートしてください。",
+    create_clip="クリップ作成",
+    set_start="開始位置",
+    set_end="終了位置",
+    generate="生成",
+    generating_clip="クリップを生成中...",
+    clip_success="クリップを生成しました:\n{path}",
+    clip_failed="クリップの生成に失敗しました:\n{error}"
 )
 
 def get_trans(lang_code: str) -> Translations:

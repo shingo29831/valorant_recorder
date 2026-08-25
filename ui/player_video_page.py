@@ -1,13 +1,15 @@
 import os
 import json
 import re
+import subprocess
 from datetime import datetime
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel
-from PyQt6.QtCore import Qt, QUrl, QSize, pyqtSignal, QByteArray, QTimer
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QMessageBox
+from PyQt6.QtCore import Qt, QUrl, QSize, pyqtSignal, QByteArray, QTimer, QThread
 from PyQt6.QtGui import QIcon, QPixmap, QPainter
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtSvg import QSvgRenderer
 from core.config import Config
+from core.i18n import get_trans
 from ui.player_components import ClickableVideoWidget, VolumeWidget, MicVolumeWidget, TimelineOverlay, PlayerContainer
 from ui.player_utils import find_video_for_json, guess_player_name
 from ui.event_toggle_widget import EventToggleWidget
@@ -16,12 +18,64 @@ BACK_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill=
   <path d="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z" />
 </svg>"""
 
+SCISSORS_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white">
+  <path d="M9.64,7.64C9.87,7.14 10,6.59 10,6C10,3.79 8.21,2 6,2C3.79,2 2,3.79 2,6C2,8.21 3.79,10 6,10C6.59,10 7.14,9.87 7.64,9.64L10,12L7.64,14.36C7.14,14.13 6.59,14 6,14C3.79,14 2,15.79 2,18C2,20.21 3.79,22 6,22C8.21,22 10,20.21 10,18C10,17.41 9.87,16.86 9.64,16.36L12,14L19,21H22V20L9.64,7.64M6,8C4.9,8 4,7.1 4,6C4,4.9 4.9,4 6,4C7.1,4 8,4.9 8,6C8,7.1 7.1,8 6,8M6,20C4.9,20 4,19.1 4,18C4,16.9 4.9,16 6,16C7.1,16 8,16.9 8,18C8,19.1 7.1,20 6,20M12,12.5C11.72,12.5 11.5,12.28 11.5,12C11.5,11.72 11.72,11.5 12,11.5C12.28,11.5 12.5,11.72 12.5,12C12.5,12.28 12.28,12.5 12,12.5M19,3H22V4L14,12L11.64,9.64L19,3Z" />
+</svg>"""
+
+class ClipGeneratorThread(QThread):
+    finished = pyqtSignal(bool, str)
+    
+    def __init__(self, ffmpeg_path, input_path, output_path, start_ms, end_ms, encoder):
+        super().__init__()
+        self.ffmpeg_path = ffmpeg_path
+        self.input_path = input_path
+        self.output_path = output_path
+        self.start_ms = start_ms
+        self.end_ms = end_ms
+        self.encoder = encoder
+        
+    def run(self):
+        try:
+            start_sec = self.start_ms / 1000.0
+            end_sec = self.end_ms / 1000.0
+            duration = end_sec - start_sec
+            
+            preset = "p4" if "nvenc" in self.encoder else "veryfast"
+            
+            cmd = [
+                self.ffmpeg_path,
+                "-y",
+                "-ss", f"{start_sec:.3f}",
+                "-i", self.input_path,
+                "-t", f"{duration:.3f}",
+                "-map", "0:v:0",
+                "-map", "0:a:0", # 最初の音声トラック（ミックス済み）のみ抽出
+                "-c:v", self.encoder,
+                "-preset", preset,
+                "-b:v", "10M",
+                "-c:a", "aac",
+                "-b:a", "192k",
+                self.output_path
+            ]
+            
+            creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            
+            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=creationflags)
+            
+            if res.returncode == 0:
+                self.finished.emit(True, self.output_path)
+            else:
+                self.finished.emit(False, res.stderr)
+        except Exception as e:
+            self.finished.emit(False, str(e))
+
 class PlayerVideoPage(QWidget):
     backRequested = pyqtSignal()
 
     def __init__(self, config: Config, parent=None):
         super().__init__(parent)
         self.config = config
+        self.t = get_trans(self.config.LANGUAGE)
         self.current_match_data = None
         
         page_layout = QVBoxLayout(self)
@@ -102,12 +156,63 @@ class PlayerVideoPage(QWidget):
         self.time_label.setFixedWidth(100)
         self.time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
+        self.edit_mode_btn = QPushButton()
+        self.edit_mode_btn.setFixedSize(30, 30)
+        self.edit_mode_btn.setStyleSheet("border: none; background: transparent;")
+        self.edit_mode_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        
+        pixmap_edit = QPixmap(20, 20)
+        pixmap_edit.fill(Qt.GlobalColor.transparent)
+        painter_edit = QPainter(pixmap_edit)
+        renderer_edit = QSvgRenderer(QByteArray(SCISSORS_SVG))
+        renderer_edit.render(painter_edit)
+        painter_edit.end()
+        
+        self.edit_mode_btn.setIcon(QIcon(pixmap_edit))
+        self.edit_mode_btn.setIconSize(QSize(20, 20))
+        self.edit_mode_btn.setToolTip(self.t.create_clip)
+        self.edit_mode_btn.clicked.connect(self._toggle_edit_mode)
+
         controls_layout.addWidget(self.volume_widget)
         controls_layout.addWidget(self.mic_volume_widget)
         controls_layout.addWidget(self.time_label)
         controls_layout.addWidget(self.timeline_overlay)
+        controls_layout.addWidget(self.edit_mode_btn)
         
         self.player_container = PlayerContainer(self.video_widget)
+        
+        # クリップ編集パネル
+        self.edit_panel = QWidget()
+        self.edit_panel.setStyleSheet("background-color: #222222; border-radius: 5px;")
+        edit_layout = QHBoxLayout(self.edit_panel)
+        
+        self.start_btn = QPushButton(self.t.set_start)
+        self.start_btn.clicked.connect(self._set_clip_start)
+        self.start_label = QLabel("00:00")
+        
+        self.end_btn = QPushButton(self.t.set_end)
+        self.end_btn.clicked.connect(self._set_clip_end)
+        self.end_label = QLabel("00:00")
+        
+        self.generate_btn = QPushButton(self.t.generate)
+        self.generate_btn.setStyleSheet("background-color: #FF4655; font-weight: bold;")
+        self.generate_btn.clicked.connect(self._generate_clip)
+        
+        self.cancel_edit_btn = QPushButton(self.t.cancel)
+        self.cancel_edit_btn.clicked.connect(self._toggle_edit_mode)
+        
+        edit_layout.addWidget(self.start_btn)
+        edit_layout.addWidget(self.start_label)
+        edit_layout.addSpacing(20)
+        edit_layout.addWidget(self.end_btn)
+        edit_layout.addWidget(self.end_label)
+        edit_layout.addStretch()
+        edit_layout.addWidget(self.cancel_edit_btn)
+        edit_layout.addWidget(self.generate_btn)
+        
+        self.edit_panel.setVisible(False)
+        self.clip_start_ms = 0
+        self.clip_end_ms = 0
         
         self.event_toggle_widget = EventToggleWidget()
         self.event_toggle_widget.filterChanged.connect(self.timeline_overlay.set_filters)
@@ -118,6 +223,83 @@ class PlayerVideoPage(QWidget):
         
         page_layout.addLayout(top_layout, stretch=1)
         page_layout.addWidget(controls_widget)
+        page_layout.addWidget(self.edit_panel)
+
+    def _toggle_edit_mode(self):
+        is_visible = self.edit_panel.isVisible()
+        self.edit_panel.setVisible(not is_visible)
+        if not is_visible:
+            self.clip_start_ms = self.media_player.position()
+            self.clip_end_ms = min(self.media_player.duration(), self.clip_start_ms + 30000)
+            self._update_clip_labels()
+
+    def _set_clip_start(self):
+        self.clip_start_ms = self.media_player.position()
+        if self.clip_start_ms > self.clip_end_ms:
+            self.clip_end_ms = self.media_player.duration()
+        self._update_clip_labels()
+
+    def _set_clip_end(self):
+        self.clip_end_ms = self.media_player.position()
+        if self.clip_end_ms < self.clip_start_ms:
+            self.clip_start_ms = 0
+        self._update_clip_labels()
+
+    def _update_clip_labels(self):
+        self.start_label.setText(self.format_time(self.clip_start_ms))
+        self.end_label.setText(self.format_time(self.clip_end_ms))
+
+    def _generate_clip(self):
+        if not self.current_match_data:
+            return
+            
+        video_path = find_video_for_json(self.config.SAVE_DIR, self.current_json_filename, self.current_match_data)
+        if not video_path or not os.path.exists(video_path):
+            return
+            
+        if self.clip_start_ms >= self.clip_end_ms:
+            QMessageBox.warning(self, "Error", "Start time must be before end time.")
+            return
+            
+        clip_dir = getattr(self.config, 'CLIP_SAVE_DIR', os.path.join(self.config.SAVE_DIR, "clips"))
+        os.makedirs(clip_dir, exist_ok=True)
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_filename = f"clip_{timestamp}.mp4"
+        output_path = os.path.join(clip_dir, output_filename)
+        
+        from recorder.ffmpeg_recorder import get_available_encoders
+        from recorder.ffmpeg_downloader import ensure_ffmpeg_downloaded
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        ffmpeg_path = ensure_ffmpeg_downloaded(project_root)
+        
+        available, _ = get_available_encoders(ffmpeg_path)
+        h264_encoders = [enc for enc in available if "h264" in enc]
+        encoder = h264_encoders[0] if h264_encoders else "libx264"
+        
+        self.generate_btn.setEnabled(False)
+        self.generate_btn.setText(self.t.generating_clip)
+        
+        self.clip_thread = ClipGeneratorThread(
+            ffmpeg_path=ffmpeg_path,
+            input_path=video_path,
+            output_path=output_path,
+            start_ms=self.clip_start_ms,
+            end_ms=self.clip_end_ms,
+            encoder=encoder
+        )
+        self.clip_thread.finished.connect(self._on_clip_finished)
+        self.clip_thread.start()
+
+    def _on_clip_finished(self, success, result):
+        self.generate_btn.setEnabled(True)
+        self.generate_btn.setText(self.t.generate)
+        
+        if success:
+            QMessageBox.information(self, "Success", self.t.clip_success.format(path=result))
+            self.edit_panel.setVisible(False)
+        else:
+            QMessageBox.critical(self, "Error", self.t.clip_failed.format(error=result))
 
     def request_back(self):
         self.media_player.stop()
