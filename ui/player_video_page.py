@@ -13,6 +13,7 @@ from core.i18n import get_trans
 from ui.player_components import ClickableVideoWidget, VolumeWidget, MicVolumeWidget, TimelineOverlay, PlayerContainer
 from ui.player_utils import find_video_for_json, guess_player_name
 from ui.event_toggle_widget import EventToggleWidget
+from ui.notification_overlay import NotificationOverlay
 
 BACK_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white">
   <path d="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z" />
@@ -25,7 +26,7 @@ SCISSORS_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" f
 class ClipGeneratorThread(QThread):
     finished = pyqtSignal(bool, str)
     
-    def __init__(self, ffmpeg_path, input_path, output_path, start_ms, end_ms, encoder):
+    def __init__(self, ffmpeg_path, input_path, output_path, start_ms, end_ms, encoder, sys_volume, mic_volume, audio_track_count):
         super().__init__()
         self.ffmpeg_path = ffmpeg_path
         self.input_path = input_path
@@ -33,6 +34,9 @@ class ClipGeneratorThread(QThread):
         self.start_ms = start_ms
         self.end_ms = end_ms
         self.encoder = encoder
+        self.sys_volume = sys_volume
+        self.mic_volume = mic_volume
+        self.audio_track_count = audio_track_count
         
     def run(self):
         try:
@@ -49,14 +53,27 @@ class ClipGeneratorThread(QThread):
                 "-i", self.input_path,
                 "-t", f"{duration:.3f}",
                 "-map", "0:v:0",
-                "-map", "0:a:0", # 最初の音声トラック（ミックス済み）のみ抽出
                 "-c:v", self.encoder,
                 "-preset", preset,
                 "-b:v", "10M",
                 "-c:a", "aac",
-                "-b:a", "192k",
-                self.output_path
+                "-b:a", "192k"
             ]
+            
+            if self.audio_track_count >= 3:
+                # トラック2(システム音)とトラック3(マイク音)をミックス
+                filter_complex = f"[0:a:1]volume={self.sys_volume}[a0];[0:a:2]volume={self.mic_volume}[a1];[a0][a1]amix=inputs=2:duration=longest[aout]"
+                cmd.extend(["-filter_complex", filter_complex, "-map", "[aout]"])
+            elif self.audio_track_count == 2:
+                # トラック1(システム音)とトラック2(マイク音)をミックス
+                filter_complex = f"[0:a:0]volume={self.sys_volume}[a0];[0:a:1]volume={self.mic_volume}[a1];[a0][a1]amix=inputs=2:duration=longest[aout]"
+                cmd.extend(["-filter_complex", filter_complex, "-map", "[aout]"])
+            else:
+                # トラック1のみ
+                filter_complex = f"[0:a:0]volume={self.sys_volume}[aout]"
+                cmd.extend(["-filter_complex", filter_complex, "-map", "[aout]"])
+                
+            cmd.append(self.output_path)
             
             creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
             
@@ -136,6 +153,7 @@ class PlayerVideoPage(QWidget):
         
         self.timeline_overlay = TimelineOverlay()
         self.timeline_overlay.seekRequested.connect(self.set_position)
+        self.timeline_overlay.clipRangeChanged.connect(self._on_clip_range_changed)
         self.media_player.positionChanged.connect(self.position_changed)
         self.media_player.durationChanged.connect(self.duration_changed)
         self.media_player.errorOccurred.connect(self.handle_media_error)
@@ -156,28 +174,10 @@ class PlayerVideoPage(QWidget):
         self.time_label.setFixedWidth(100)
         self.time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
-        self.edit_mode_btn = QPushButton()
-        self.edit_mode_btn.setFixedSize(30, 30)
-        self.edit_mode_btn.setStyleSheet("border: none; background: transparent;")
-        self.edit_mode_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        
-        pixmap_edit = QPixmap(20, 20)
-        pixmap_edit.fill(Qt.GlobalColor.transparent)
-        painter_edit = QPainter(pixmap_edit)
-        renderer_edit = QSvgRenderer(QByteArray(SCISSORS_SVG))
-        renderer_edit.render(painter_edit)
-        painter_edit.end()
-        
-        self.edit_mode_btn.setIcon(QIcon(pixmap_edit))
-        self.edit_mode_btn.setIconSize(QSize(20, 20))
-        self.edit_mode_btn.setToolTip(self.t.create_clip)
-        self.edit_mode_btn.clicked.connect(self._toggle_edit_mode)
-
         controls_layout.addWidget(self.volume_widget)
         controls_layout.addWidget(self.mic_volume_widget)
         controls_layout.addWidget(self.time_label)
         controls_layout.addWidget(self.timeline_overlay)
-        controls_layout.addWidget(self.edit_mode_btn)
         
         self.player_container = PlayerContainer(self.video_widget)
         
@@ -214,16 +214,45 @@ class PlayerVideoPage(QWidget):
         self.clip_start_ms = 0
         self.clip_end_ms = 0
         
+        right_container = QWidget()
+        right_container.setFixedWidth(50)
+        right_layout = QVBoxLayout(right_container)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(10)
+        
+        self.edit_mode_btn = QPushButton()
+        self.edit_mode_btn.setFixedSize(40, 40)
+        self.edit_mode_btn.setStyleSheet("border-radius: 20px; background-color: #333333;")
+        self.edit_mode_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        
+        pixmap_edit = QPixmap(24, 24)
+        pixmap_edit.fill(Qt.GlobalColor.transparent)
+        painter_edit = QPainter(pixmap_edit)
+        renderer_edit = QSvgRenderer(QByteArray(SCISSORS_SVG))
+        renderer_edit.render(painter_edit)
+        painter_edit.end()
+        
+        self.edit_mode_btn.setIcon(QIcon(pixmap_edit))
+        self.edit_mode_btn.setIconSize(QSize(24, 24))
+        self.edit_mode_btn.setToolTip(self.t.create_clip)
+        self.edit_mode_btn.clicked.connect(self._toggle_edit_mode)
+        
         self.event_toggle_widget = EventToggleWidget()
         self.event_toggle_widget.filterChanged.connect(self.timeline_overlay.set_filters)
         
+        right_layout.addWidget(self.edit_mode_btn, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        right_layout.addWidget(self.event_toggle_widget, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        right_layout.addStretch()
+        
         top_layout.addWidget(left_container)
         top_layout.addWidget(self.player_container, stretch=1)
-        top_layout.addWidget(self.event_toggle_widget)
+        top_layout.addWidget(right_container)
         
         page_layout.addLayout(top_layout, stretch=1)
         page_layout.addWidget(controls_widget)
         page_layout.addWidget(self.edit_panel)
+        
+        self.notification = NotificationOverlay(self)
 
     def _toggle_edit_mode(self):
         is_visible = self.edit_panel.isVisible()
@@ -232,22 +261,34 @@ class PlayerVideoPage(QWidget):
             self.clip_start_ms = self.media_player.position()
             self.clip_end_ms = min(self.media_player.duration(), self.clip_start_ms + 30000)
             self._update_clip_labels()
+            self.timeline_overlay.set_edit_mode(True, self.clip_start_ms, self.clip_end_ms)
+            self.edit_mode_btn.setStyleSheet("border-radius: 20px; background-color: #FF4655;")
+        else:
+            self.timeline_overlay.set_edit_mode(False)
+            self.edit_mode_btn.setStyleSheet("border-radius: 20px; background-color: #333333;")
 
     def _set_clip_start(self):
         self.clip_start_ms = self.media_player.position()
         if self.clip_start_ms > self.clip_end_ms:
             self.clip_end_ms = self.media_player.duration()
         self._update_clip_labels()
+        self.timeline_overlay.set_clip_range(self.clip_start_ms, self.clip_end_ms)
 
     def _set_clip_end(self):
         self.clip_end_ms = self.media_player.position()
         if self.clip_end_ms < self.clip_start_ms:
             self.clip_start_ms = 0
         self._update_clip_labels()
+        self.timeline_overlay.set_clip_range(self.clip_start_ms, self.clip_end_ms)
 
     def _update_clip_labels(self):
         self.start_label.setText(self.format_time(self.clip_start_ms))
         self.end_label.setText(self.format_time(self.clip_end_ms))
+
+    def _on_clip_range_changed(self, start_ms, end_ms):
+        self.clip_start_ms = start_ms
+        self.clip_end_ms = end_ms
+        self._update_clip_labels()
 
     def _generate_clip(self):
         if not self.current_match_data:
@@ -258,7 +299,7 @@ class PlayerVideoPage(QWidget):
             return
             
         if self.clip_start_ms >= self.clip_end_ms:
-            QMessageBox.warning(self, "Error", "Start time must be before end time.")
+            self.notification.show_message("Start time must be before end time.")
             return
             
         clip_dir = getattr(self.config, 'CLIP_SAVE_DIR', os.path.join(self.config.SAVE_DIR, "clips"))
@@ -280,13 +321,18 @@ class PlayerVideoPage(QWidget):
         self.generate_btn.setEnabled(False)
         self.generate_btn.setText(self.t.generating_clip)
         
+        audio_track_count = len(self.media_player.audioTracks())
+        
         self.clip_thread = ClipGeneratorThread(
             ffmpeg_path=ffmpeg_path,
             input_path=video_path,
             output_path=output_path,
             start_ms=self.clip_start_ms,
             end_ms=self.clip_end_ms,
-            encoder=encoder
+            encoder=encoder,
+            sys_volume=self.current_sys_volume,
+            mic_volume=self.current_mic_volume,
+            audio_track_count=audio_track_count
         )
         self.clip_thread.finished.connect(self._on_clip_finished)
         self.clip_thread.start()
@@ -296,10 +342,10 @@ class PlayerVideoPage(QWidget):
         self.generate_btn.setText(self.t.generate)
         
         if success:
-            QMessageBox.information(self, "Success", self.t.clip_success.format(path=result))
+            self.notification.show_message(self.t.clip_success.format(path=result))
             self.edit_panel.setVisible(False)
         else:
-            QMessageBox.critical(self, "Error", self.t.clip_failed.format(error=result))
+            self.notification.show_message(self.t.clip_failed.format(error=result))
 
     def request_back(self):
         self.media_player.stop()

@@ -362,6 +362,8 @@ class PlayerContainer(QWidget):
 class TimelineOverlay(QWidget):
     seekRequested = pyqtSignal(int)
 
+    clipRangeChanged = pyqtSignal(int, int)
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.rounds = []
@@ -378,6 +380,23 @@ class TimelineOverlay(QWidget):
         self.kill_renderer = QSvgRenderer(QByteArray(KILL_SVG))
         self.death_renderer = QSvgRenderer(QByteArray(DEATH_SVG))
         self.assist_renderer = QSvgRenderer(QByteArray(ASSIST_SVG))
+        
+        self.edit_mode = False
+        self.clip_start = 0
+        self.clip_end = 0
+        self.dragging_handle = None
+        self.hover_handle = None
+
+    def set_edit_mode(self, enabled, start=0, end=0):
+        self.edit_mode = enabled
+        self.clip_start = start
+        self.clip_end = end
+        self.update()
+
+    def set_clip_range(self, start, end):
+        self.clip_start = start
+        self.clip_end = end
+        self.update()
 
     def set_filters(self, filters):
         self.filters = filters
@@ -409,30 +428,62 @@ class TimelineOverlay(QWidget):
         height = self.height()
         round_y = height - 12
         
-        if self.is_dragging and self.duration > 0:
-            x = max(0, min(self.hover_x, self.width()))
-            pos_ms = int((x / self.width()) * self.duration)
-            self.seekRequested.emit(pos_ms)
-        else:
-            is_hovering_icon = False
-            if self.duration > 0:
-                for ev in self.events:
-                    if not self.filters.get(ev['type'], True):
-                        continue
-                    ev_x = (ev['time'] / self.duration) * width
-                    if (ev_x - 12) <= self.hover_x <= (ev_x + 12) and (round_y - 34) <= y <= (round_y - 10):
-                        is_hovering_icon = True
-                        break
-            if is_hovering_icon:
-                self.setCursor(Qt.CursorShape.PointingHandCursor)
+        if self.edit_mode and self.duration > 0:
+            x = max(0, min(self.hover_x, width))
+            pos_ms = int((x / width) * self.duration)
+            
+            if self.dragging_handle == 'start':
+                self.clip_start = min(pos_ms, self.clip_end - 1000)
+                self.clipRangeChanged.emit(self.clip_start, self.clip_end)
+                self.update()
+                return
+            elif self.dragging_handle == 'end':
+                self.clip_end = max(pos_ms, self.clip_start + 1000)
+                self.clipRangeChanged.emit(self.clip_start, self.clip_end)
+                self.update()
+                return
             else:
-                self.setCursor(Qt.CursorShape.ArrowCursor)
+                start_x = (self.clip_start / self.duration) * width
+                end_x = (self.clip_end / self.duration) * width
+                if abs(x - start_x) <= 5 and (round_y - 4) <= y <= (round_y + 12 + 4):
+                    self.hover_handle = 'start'
+                    self.setCursor(Qt.CursorShape.SizeHorCursor)
+                elif abs(x - end_x) <= 5 and (round_y - 4) <= y <= (round_y + 12 + 4):
+                    self.hover_handle = 'end'
+                    self.setCursor(Qt.CursorShape.SizeHorCursor)
+                else:
+                    self.hover_handle = None
+                    self.setCursor(Qt.CursorShape.ArrowCursor)
+                    
+        if not self.edit_mode or (self.edit_mode and not self.hover_handle and not self.dragging_handle):
+            if self.is_dragging and self.duration > 0:
+                x = max(0, min(self.hover_x, self.width()))
+                pos_ms = int((x / self.width()) * self.duration)
+                self.seekRequested.emit(pos_ms)
+            else:
+                is_hovering_icon = False
+                if self.duration > 0:
+                    for ev in self.events:
+                        if not self.filters.get(ev['type'], True):
+                            continue
+                        ev_x = (ev['time'] / self.duration) * width
+                        if (ev_x - 12) <= self.hover_x <= (ev_x + 12) and (round_y - 34) <= y <= (round_y - 10):
+                            is_hovering_icon = True
+                            break
+                if is_hovering_icon:
+                    self.setCursor(Qt.CursorShape.PointingHandCursor)
+                elif not getattr(self, 'hover_handle', None):
+                    self.setCursor(Qt.CursorShape.ArrowCursor)
                 
         self.update()
         super().mouseMoveEvent(event)
 
     def mousePressEvent(self, event):
         if self.duration <= 0 or event.button() != Qt.MouseButton.LeftButton:
+            return
+            
+        if self.edit_mode and self.hover_handle:
+            self.dragging_handle = self.hover_handle
             return
             
         x = event.position().x()
@@ -463,6 +514,7 @@ class TimelineOverlay(QWidget):
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.is_dragging = False
+            self.dragging_handle = None
         super().mouseReleaseEvent(event)
 
     def paintEvent(self, event):
@@ -550,6 +602,21 @@ class TimelineOverlay(QWidget):
             
             painter.setPen(QColor("#FFFFFF"))
             painter.drawText(int(self.hover_x) - 15, round_y - 38, time_str)
+            
+        if self.edit_mode and self.duration > 0:
+            start_x = (self.clip_start / self.duration) * width
+            end_x = (self.clip_end / self.duration) * width
+            
+            painter.fillRect(0, round_y, int(start_x), round_h, QColor(0, 0, 0, 150))
+            painter.fillRect(int(end_x), round_y, int(width - end_x), round_h, QColor(0, 0, 0, 150))
+            
+            painter.setPen(QPen(QColor("#00A2FF"), 2))
+            painter.drawRect(int(start_x), round_y, int(end_x - start_x), round_h)
+            
+            painter.setBrush(QColor("#00A2FF"))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawRect(int(start_x) - 2, round_y - 4, 4, round_h + 8)
+            painter.drawRect(int(end_x) - 2, round_y - 4, 4, round_h + 8)
 
 class MicVolumePopup(QWidget):
     def __init__(self, parent=None):
