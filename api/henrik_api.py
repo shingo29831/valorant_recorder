@@ -3,7 +3,9 @@ import urllib.parse
 import urllib.error
 import json
 import time
-from scripts.get_local_api_info import get_riot_access_token
+import jwt
+import datetime
+import os
 
 class HenrikAPI:
     def __init__(self, region: str, name: str, tag: str):
@@ -13,12 +15,26 @@ class HenrikAPI:
         self.base_headers = {
             'User-Agent': 'ValorantRecorder/1.0'
         }
+        
+        # 秘密鍵の読み込み
+        self.private_key = None
+        key_path = "auth.key"
+        if os.path.exists(key_path):
+            with open(key_path, "rb") as f:
+                self.private_key = f.read()
 
     def _get_headers(self):
         headers = self.base_headers.copy()
-        token = get_riot_access_token()
-        if token:
+        
+        if self.private_key:
+            # JWTの生成 (有効期限1分)
+            payload = {
+                "iat": datetime.datetime.utcnow(),
+                "exp": datetime.datetime.utcnow() + datetime.timedelta(minutes=1)
+            }
+            token = jwt.encode(payload, self.private_key, algorithm="RS256")
             headers['Authorization'] = f"Bearer {token}"
+            
         return headers
 
     def fetch_latest_match(self, retries: int = 3, delay: int = 10) -> dict:

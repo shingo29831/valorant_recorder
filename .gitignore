@@ -41,3 +41,6 @@ Thumbs.db
 
 # aiskel output directory
 ai_meta/
+
+auth.key
+auth.pub
