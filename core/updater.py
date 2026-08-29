@@ -21,6 +21,9 @@ class UpdateCheckerThread(QThread):
         self.api_url = api_url
 
     def run(self):
+        if not self.api_url:
+            print("Update check skipped: API URL is not set.")
+            return
         try:
             req = urllib.request.Request(self.api_url, headers={"User-Agent": "ValorantRecorder/1.0"})
             with urllib.request.urlopen(req, timeout=5) as response:

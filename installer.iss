@@ -19,6 +19,10 @@ PrivilegesRequired=lowest
 ; アンインストーラの設定
 UninstallDisplayIcon={app}\main.exe
 
+[Languages]
+Name: "japanese"; MessagesFile: "compiler:Languages\Japanese.isl"
+Name: "english"; MessagesFile: "compiler:Default.isl"
+
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
