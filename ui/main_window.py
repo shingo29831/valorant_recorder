@@ -15,7 +15,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("ValoReco ヴァロレコ")
         self.resize(1280, 720)
         
-        self._apply_custom_titlebar_color()
+        self._titlebar_color_applied = False
         
         self.config = Config()
         
@@ -136,6 +136,11 @@ class MainWindow(QMainWindow):
 
     def showEvent(self, event):
         super().showEvent(event)
+        
+        if not self._titlebar_color_applied:
+            self._apply_custom_titlebar_color()
+            self._titlebar_color_applied = True
+            
         if hasattr(self, 'player_tab'):
             self.player_tab.on_shown()
 

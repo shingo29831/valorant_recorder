@@ -109,13 +109,12 @@ export default {
         return new Response("Internal Server Error: GITHUB_PAT not configured", { status: 500 });
       }
 
-      const version = env.APP_VERSION || "1.0.0";
       const owner = "shingo29831";
       const repo = "valorant-recorder-release";
       const assetName = url.pathname === "/download/installer" ? "ValorantRecorder_Setup.exe" : "update.zip";
 
-      // GitHub API でリリース情報を取得
-      const releaseUrl = `https://api.github.com/repos/${owner}/${repo}/releases/tags/v${version}`;
+      // GitHub API で最新のリリース情報を取得 (APP_VERSIONに依存しない)
+      const releaseUrl = `https://api.github.com/repos/${owner}/${repo}/releases/latest`;
       const releaseRes = await fetch(releaseUrl, {
         headers: {
           "User-Agent": "Cloudflare-Worker",
@@ -123,7 +122,10 @@ export default {
         }
       });
       
-      if (!releaseRes.ok) return new Response("Release not found on GitHub", { status: 404 });
+      if (!releaseRes.ok) {
+        const errorText = await releaseRes.text();
+        return new Response(`GitHub API Error: ${releaseRes.status} ${releaseRes.statusText}\n${errorText}`, { status: releaseRes.status });
+      }
       const releaseData = await releaseRes.json();
       const asset = releaseData.assets.find(a => a.name === assetName);
       if (!asset) return new Response("Asset not found in the release", { status: 404 });

@@ -446,7 +446,8 @@ class PlayerListPage(QWidget):
                                 "-ss", "00:00:01", "-vframes", "1",
                                 "-vf", "scale=240:-1", thumb_path
                             ]
-                            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                            creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=creationflags)
                             
                     if date_key not in records_by_date:
                         records_by_date[date_key] = []

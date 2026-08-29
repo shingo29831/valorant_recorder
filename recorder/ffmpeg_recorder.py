@@ -25,8 +25,9 @@ def test_encoder(ffmpeg_path: str, encoder: str) -> tuple[bool, str]:
         "-f", "null", "-"
     ]
     try:
+        creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
         # text=Trueによるエンコーディングエラー(UnicodeDecodeError等)を防ぐためバイナリで取得
-        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, creationflags=creationflags)
         if res.returncode != 0:
             err_msg = res.stderr.decode('utf-8', errors='replace') if res.stderr else ""
             return False, err_msg.strip()
@@ -398,7 +399,7 @@ class FFmpegRecorder:
         
         self.audio_ready_event.wait(timeout=5.0)
         
-        creationflags = subprocess.CREATE_NEW_PROCESS_GROUP if os.name == 'nt' else 0
+        creationflags = (subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW) if os.name == 'nt' else 0
         
         self.process = subprocess.Popen(
             cmd,

@@ -5,14 +5,16 @@ from PyQt6.QtGui import QGuiApplication
 class NotificationOverlay(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        # 最前面表示、フレームなし、タスクバー非表示、クリック透過を設定
+        # 最前面表示、フレームなし、タスクバー非表示、クリック透過、フォーカス拒否を設定
         self.setWindowFlags(
             Qt.WindowType.WindowStaysOnTopHint |
             Qt.WindowType.FramelessWindowHint |
             Qt.WindowType.Tool |
-            Qt.WindowType.WindowTransparentForInput
+            Qt.WindowType.WindowTransparentForInput |
+            Qt.WindowType.WindowDoesNotAcceptFocus
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
