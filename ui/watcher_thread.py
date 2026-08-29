@@ -233,17 +233,45 @@ class WatcherThread(QThread):
         now = time.time()
         cutoff = now - (self.config.AUTO_DELETE_DAYS * 86400)
         
-        deleted_count = 0
+        bases_to_delete = set()
+        bases_to_keep = set()
+        
         for f in os.listdir(save_dir):
-            if f.endswith(('.mp4', '.json', '.jpg')):
+            if f.endswith('.json'):
                 filepath = os.path.join(save_dir, f)
                 try:
+                    with open(filepath, 'r', encoding='utf-8') as jf:
+                        data = json.load(jf)
+                    if data.get("is_favorite", False):
+                        bases_to_keep.add(f[:-5])
+                    elif os.path.getmtime(filepath) < cutoff:
+                        bases_to_delete.add(f[:-5])
+                except Exception:
                     if os.path.getmtime(filepath) < cutoff:
+                        bases_to_delete.add(f[:-5])
+                        
+        for f in os.listdir(save_dir):
+            if f.endswith(('.mp4', '.jpg')):
+                base = os.path.splitext(f)[0]
+                if base not in bases_to_keep and base not in bases_to_delete:
+                    filepath = os.path.join(save_dir, f)
+                    try:
+                        if os.path.getmtime(filepath) < cutoff:
+                            bases_to_delete.add(base)
+                    except Exception:
+                        pass
+
+        deleted_count = 0
+        for base in bases_to_delete:
+            for ext in ['.json', '.mp4', '.jpg']:
+                filepath = os.path.join(save_dir, base + ext)
+                if os.path.exists(filepath):
+                    try:
                         os.remove(filepath)
                         deleted_count += 1
-                except Exception as e:
-                    self.log_signal.emit(f"[Background] Failed to delete old file {f}: {e}")
-                    
+                    except Exception as e:
+                        self.log_signal.emit(f"[Background] Failed to delete old file {filepath}: {e}")
+                        
         if deleted_count > 0:
             self.log_signal.emit(f"[Background] Auto-deleted {deleted_count} old file(s).")
             self.match_saved_signal.emit()

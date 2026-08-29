@@ -27,6 +27,10 @@ ASSIST_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
   <path d="M21,8h-4.5l1.2-3.6c0.2-0.6-0.3-1.2-0.9-1.2c-0.3,0-0.6,0.1-0.8,0.3L10,9.5V20h8.5c0.8,0,1.5-0.5,1.7-1.2l1.9-6.8 C22.3,11.1,21.8,10.2,21,8z M8,10H4v10h4V10z" fill="#00FF00" stroke="#000000" stroke-width="0.5"/>
 </svg>"""
 
+STAR_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="gold" stroke="black" stroke-width="1">
+  <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+</svg>"""
+
 class ClickableVideoWidget(QVideoWidget):
     clicked = pyqtSignal()
     
@@ -120,10 +124,11 @@ class RecordItemWidget(QWidget):
     renameRequested = pyqtSignal(str, str)
     deleteRequested = pyqtSignal(str)
 
-    def __init__(self, json_filename, display_name, thumb_path, result, parent=None):
+    def __init__(self, json_filename, display_name, thumb_path, result, is_favorite=False, parent=None):
         super().__init__(parent)
         self.json_filename = json_filename
         self.display_name = display_name
+        self.is_favorite = is_favorite
         self.setFixedSize(260, 180)
         
         layout = QVBoxLayout(self)
@@ -143,6 +148,18 @@ class RecordItemWidget(QWidget):
             self.thumb_label.setText("No Thumbnail")
             self.thumb_label.setStyleSheet("background-color: black; color: white;")
             
+        self.fav_icon = QLabel(self.thumb_label)
+        self.fav_icon.setFixedSize(24, 24)
+        fav_pixmap = QPixmap(24, 24)
+        fav_pixmap.fill(Qt.GlobalColor.transparent)
+        fav_painter = QPainter(fav_pixmap)
+        fav_renderer = QSvgRenderer(QByteArray(STAR_SVG))
+        fav_renderer.render(fav_painter)
+        fav_painter.end()
+        self.fav_icon.setPixmap(fav_pixmap)
+        self.fav_icon.move(5, 5)
+        self.fav_icon.setVisible(self.is_favorite)
+
         self.name_label = QLabel(display_name)
         self.name_label.setWordWrap(True)
         self.name_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -176,6 +193,7 @@ class RecordItemWidget(QWidget):
             }}
         """)
         
+        self.checkbox_mode = "delete"
         self.checkbox = QPushButton(self)
         self.checkbox.setCheckable(True)
         self.checkbox.setFixedSize(24, 24)
@@ -194,14 +212,16 @@ class RecordItemWidget(QWidget):
     def _on_checkbox_toggled(self, checked):
         if checked:
             self.checkbox.setText("✓")
-            self.checkbox.setStyleSheet("""
-                QPushButton {
-                    background-color: #FF4655;
-                    color: white;
+            color = "#FF4655" if self.checkbox_mode == "delete" else "#FFD700"
+            text_color = "white" if self.checkbox_mode == "delete" else "black"
+            self.checkbox.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {color};
+                    color: {text_color};
                     font-weight: bold;
                     border: 2px solid #FFFFFF;
                     border-radius: 4px;
-                }
+                }}
             """)
         else:
             self.checkbox.setText("")
@@ -213,10 +233,13 @@ class RecordItemWidget(QWidget):
                 }
             """)
 
-    def set_delete_mode(self, enabled):
+    def set_selection_mode(self, enabled, mode="delete"):
+        self.checkbox_mode = mode
         self.checkbox.setVisible(enabled)
         if not enabled:
             self.checkbox.setChecked(False)
+        else:
+            self._on_checkbox_toggled(self.checkbox.isChecked())
 
     def set_checked(self, checked):
         self.checkbox.setChecked(checked)
