@@ -46,3 +46,4 @@ auth.key
 auth.pub
 main.dist/
 main.build/
+Output/
