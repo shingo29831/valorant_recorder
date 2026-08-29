@@ -62,7 +62,23 @@ async function verifyJwt(token, pemPublicKey) {
 
 export default {
   async fetch(request, env, ctx) {
-    // 1. ボット対策: User-Agentの検証
+    const url = new URL(request.url);
+
+    // 1. バージョン確認API (認証不要)
+    if (url.pathname === "/api/version") {
+      return new Response(JSON.stringify({
+        version: env.APP_VERSION || "1.0.0",
+        download_url: env.APP_DOWNLOAD_URL || ""
+      }), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "Access-Control-Allow-Origin": "*"
+        }
+      });
+    }
+
+    // 2. ボット対策: User-Agentの検証
     const userAgent = request.headers.get("User-Agent") || "";
     const isBot = /bot|crawler|spider|crawling|curl|wget|postman/i.test(userAgent);
     if (!userAgent || isBot || !userAgent.includes("ValorantRecorder")) {
@@ -90,7 +106,6 @@ export default {
     }
 
     // 3. Henrik API へのプロキシ
-    const url = new URL(request.url);
     const targetUrl = new URL(url.pathname + url.search, "https://api.henrikdev.xyz");
     
     const headers = new Headers(request.headers);

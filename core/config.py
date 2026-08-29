@@ -24,6 +24,7 @@ class Config:
         self.RECORD_RESOLUTION = os.environ.get("RECORD_RESOLUTION", "1920x1080")
         self.AUTO_DELETE_DAYS = int(os.environ.get("AUTO_DELETE_DAYS", "0"))
         self.CLIP_SAVE_DIR = os.environ.get("CLIP_SAVE_DIR", os.path.join(self.SAVE_DIR, "clips"))
+        self.UPDATE_API_URL = os.environ.get("UPDATE_API_URL", "https://your-worker-url.workers.dev/api/version")
 
     def save(self):
         if not os.path.exists(self.env_file):
@@ -47,3 +48,4 @@ class Config:
         set_key(self.env_file, "RECORD_RESOLUTION", self.RECORD_RESOLUTION)
         set_key(self.env_file, "AUTO_DELETE_DAYS", str(self.AUTO_DELETE_DAYS))
         set_key(self.env_file, "CLIP_SAVE_DIR", self.CLIP_SAVE_DIR)
+        set_key(self.env_file, "UPDATE_API_URL", self.UPDATE_API_URL)
