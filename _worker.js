@@ -64,20 +64,6 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
 
-    // 1. バージョン確認API (認証不要)
-    if (url.pathname === "/api/version") {
-      return new Response(JSON.stringify({
-        version: env.APP_VERSION || "1.0.0",
-        download_url: env.APP_DOWNLOAD_URL || ""
-      }), {
-        status: 200,
-        headers: {
-          "Content-Type": "application/json",
-          "Access-Control-Allow-Origin": "*"
-        }
-      });
-    }
-
     // JWTの取得 (ヘッダー または クエリパラメータ)
     const authHeader = request.headers.get("Authorization");
     let token = null;
@@ -87,24 +73,79 @@ export default {
       token = url.searchParams.get("token");
     }
 
-    // 2. インストーラーのダウンロード (ブラウザからのアクセスを想定)
-    if (url.pathname === "/download/installer") {
-      if (!token) {
-        return new Response("Unauthorized: Missing Token", { status: 401 });
-      }
+    // 認証処理の共通化
+    const authenticate = async () => {
+      if (!token) throw new Error("Missing Token");
+      if (!env.PUBLIC_KEY) throw new Error("PUBLIC_KEY not configured");
+      await verifyJwt(token, env.PUBLIC_KEY);
+    };
+
+    // 1. バージョン確認API (認証必須)
+    if (url.pathname === "/api/version") {
       try {
-        if (!env.PUBLIC_KEY) {
-          return new Response("Internal Server Error: PUBLIC_KEY not configured", { status: 500 });
-        }
-        await verifyJwt(token, env.PUBLIC_KEY);
-      } catch (error) {
-        return new Response("Unauthorized: Invalid Signature or Token Expired", { status: 401 });
+        await authenticate();
+      } catch (e) {
+        return new Response("Unauthorized: Invalid or Missing Token", { status: 401 });
+      }
+      return new Response(JSON.stringify({
+        version: env.APP_VERSION || "1.0.0",
+        // ダウンロードURLをWorker自身のエンドポイントに向ける
+        download_url: `${url.origin}/download/update`
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" }
+      });
+    }
+
+    // 2. GitHub Private リポジトリからのダウンロードプロキシ (インストーラー & アップデート)
+    if (url.pathname === "/download/installer" || url.pathname === "/download/update") {
+      try {
+        await authenticate();
+      } catch (e) {
+        return new Response("Unauthorized: Invalid or Missing Token", { status: 401 });
       }
 
-      // 認証成功時、GitHub Releases のインストーラーURLへリダイレクト
+      if (!env.GITHUB_PAT) {
+        return new Response("Internal Server Error: GITHUB_PAT not configured", { status: 500 });
+      }
+
       const version = env.APP_VERSION || "1.0.0";
-      const installerUrl = `https://github.com/shingo29831/valorant-recorder-release/releases/download/v${version}/ValorantRecorder_Setup.exe`;
-      return Response.redirect(installerUrl, 302);
+      const owner = "shingo29831";
+      const repo = "valorant-recorder-release";
+      const assetName = url.pathname === "/download/installer" ? "ValorantRecorder_Setup.exe" : "update.zip";
+
+      // GitHub API でリリース情報を取得
+      const releaseUrl = `https://api.github.com/repos/${owner}/${repo}/releases/tags/v${version}`;
+      const releaseRes = await fetch(releaseUrl, {
+        headers: {
+          "User-Agent": "Cloudflare-Worker",
+          "Authorization": `Bearer ${env.GITHUB_PAT}`
+        }
+      });
+      
+      if (!releaseRes.ok) return new Response("Release not found on GitHub", { status: 404 });
+      const releaseData = await releaseRes.json();
+      const asset = releaseData.assets.find(a => a.name === assetName);
+      if (!asset) return new Response("Asset not found in the release", { status: 404 });
+
+      // アセットのダウンロード用URLを取得 (リダイレクト先を取得)
+      const assetRes = await fetch(asset.url, {
+        method: "GET",
+        headers: {
+          "User-Agent": "Cloudflare-Worker",
+          "Authorization": `Bearer ${env.GITHUB_PAT}`,
+          "Accept": "application/octet-stream"
+        },
+        redirect: "manual" // リダイレクトを自動で追従しない
+      });
+
+      if (assetRes.status === 302 || assetRes.status === 301) {
+        // GitHub が返す S3 の一時的な署名付き URL にリダイレクトさせる
+        const s3Url = assetRes.headers.get("Location");
+        return Response.redirect(s3Url, 302);
+      }
+
+      return new Response("Failed to get download URL from GitHub", { status: 500 });
     }
 
     // 3. ボット対策 & アプリケーション制限 (APIプロキシ用)
@@ -119,22 +160,14 @@ export default {
     }
 
     // 4. APIプロキシ用の認証
-    if (!token) {
-      return new Response("Unauthorized: Missing Token", { status: 401 });
-    }
-
     try {
-      if (!env.PUBLIC_KEY) {
-        return new Response("Internal Server Error: PUBLIC_KEY not configured", { status: 500 });
-      }
-      await verifyJwt(token, env.PUBLIC_KEY);
-    } catch (error) {
-      return new Response("Unauthorized: Invalid Signature or Token Expired", { status: 401 });
+      await authenticate();
+    } catch (e) {
+      return new Response("Unauthorized: Invalid or Missing Token", { status: 401 });
     }
 
-    // 3. Henrik API へのプロキシ
+    // 5. Henrik API へのプロキシ
     const targetUrl = new URL(url.pathname + url.search, "https://api.henrikdev.xyz");
-    
     const headers = new Headers(request.headers);
     headers.delete("Authorization");
     if (env.HENRIK_API_KEY) {

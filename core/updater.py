@@ -9,8 +9,30 @@ import urllib.request
 import zipfile
 import subprocess
 import tempfile
+import jwt
+import datetime
 from PyQt6.QtCore import QThread, pyqtSignal
 from core.version import APP_VERSION
+
+def _get_auth_headers():
+    """auth.keyを読み込んでJWTを生成し、ヘッダーを返す"""
+    headers = {"User-Agent": "ValorantRecorder/1.0"}
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    key_path = os.path.join(project_root, "auth.key")
+    
+    if os.path.exists(key_path):
+        try:
+            with open(key_path, "rb") as f:
+                private_key = f.read()
+            payload = {
+                "iat": datetime.datetime.utcnow(),
+                "exp": datetime.datetime.utcnow() + datetime.timedelta(minutes=5)
+            }
+            token = jwt.encode(payload, private_key, algorithm="RS256")
+            headers["Authorization"] = f"Bearer {token}"
+        except Exception as e:
+            print(f"Failed to generate JWT for updater: {e}")
+    return headers
 
 class UpdateCheckerThread(QThread):
     """バックグラウンドでアップデートを確認するスレッド"""
@@ -25,7 +47,7 @@ class UpdateCheckerThread(QThread):
             print("Update check skipped: API URL is not set.")
             return
         try:
-            req = urllib.request.Request(self.api_url, headers={"User-Agent": "ValorantRecorder/1.0"})
+            req = urllib.request.Request(self.api_url, headers=_get_auth_headers())
             with urllib.request.urlopen(req, timeout=5) as response:
                 data = json.loads(response.read().decode())
                 latest_version = data.get("version")
@@ -42,7 +64,7 @@ def download_and_apply_update(download_url: str):
     zip_path = os.path.join(temp_dir, "update.zip")
     
     # 1. ZIPのダウンロード
-    req = urllib.request.Request(download_url, headers={"User-Agent": "ValorantRecorder/1.0"})
+    req = urllib.request.Request(download_url, headers=_get_auth_headers())
     with urllib.request.urlopen(req) as response, open(zip_path, 'wb') as out_file:
         out_file.write(response.read())
         
