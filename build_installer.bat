@@ -9,8 +9,8 @@ echo ==========================================
 echo 2. Building executable with Nuitka...
 echo ==========================================
 :: Nuitkaを使用してCコンパイルし、単一の実行ファイルを生成します。
-:: ※原因特定のため、一時的にコンソールを表示する設定(--windows-console-mode=force)に変更しています。
-python -m nuitka --standalone --onefile --enable-plugin=pyqt6 --windows-console-mode=force main.py
+:: QtMultimediaプラグイン、soundcardの依存ファイル(.h)、および認証キーをバイナリに含めます。
+python -m nuitka --standalone --onefile --enable-plugin=pyqt6 --include-qt-plugins=multimedia --include-package-data=soundcard --include-data-file=auth.key=auth.key --windows-console-mode=disable main.py
 
 :: Nuitkaの出力ファイル名はデフォルトで main.exe になります。
 if not exist "main.exe" (
