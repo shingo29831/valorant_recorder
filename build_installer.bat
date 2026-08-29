@@ -9,7 +9,8 @@ echo ==========================================
 echo 2. Building executable with Nuitka...
 echo ==========================================
 :: Nuitkaを使用してCコンパイルし、単一の実行ファイルを生成します。
-python -m nuitka --standalone --onefile --enable-plugin=pyqt6 --windows-console-mode=disable main.py
+:: ※原因特定のため、一時的にコンソールを表示する設定(--windows-console-mode=force)に変更しています。
+python -m nuitka --standalone --onefile --enable-plugin=pyqt6 --windows-console-mode=force main.py
 
 :: Nuitkaの出力ファイル名はデフォルトで main.exe になります。
 if not exist "main.exe" (
@@ -22,11 +23,14 @@ echo.
 echo ==========================================
 echo 3. Creating Installer with Inno Setup...
 echo ==========================================
-:: Inno Setupのコンパイラパス (デフォルトのインストール先)
-set ISCC="C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+:: Inno Setupのコンパイラパス (ユーザーインストールとシステムインストールの両方をチェック)
+set ISCC="%LOCALAPPDATA%\Programs\Inno Setup 7\ISCC.exe"
+if not exist %ISCC% (
+    set ISCC="C:\Program Files\Inno Setup 7\ISCC.exe"
+)
 
 if not exist %ISCC% (
-    echo [Warning] Inno Setup not found at %ISCC%.
+    echo [Warning] Inno Setup not found.
     echo Please install Inno Setup from https://jrsoftware.org/isinfo.php to create the installer.
     echo The standalone main.exe is ready to use.
     pause
