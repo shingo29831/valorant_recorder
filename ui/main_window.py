@@ -1,3 +1,5 @@
+import sys
+import ctypes
 from PyQt6.QtWidgets import QMainWindow, QStackedWidget, QPushButton, QSystemTrayIcon, QMenu
 from PyQt6.QtGui import QAction
 from PyQt6.QtCore import QCoreApplication
@@ -10,8 +12,10 @@ from ui.notification_overlay import NotificationOverlay
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Valorant Recorder")
+        self.setWindowTitle("ValoReco ヴァロレコ")
         self.resize(1280, 720)
+        
+        self._apply_custom_titlebar_color()
         
         self.config = Config()
         
@@ -45,11 +49,33 @@ class MainWindow(QMainWindow):
         self.watcher_thread.recording_state_changed.connect(self.show_recording_notification)
         self.watcher_thread.start()
 
+    def _apply_custom_titlebar_color(self):
+        """WindowsのDWM APIを使用してタイトルバーの色をアプリの背景色(#0F1923)に合わせる"""
+        if sys.platform != "win32":
+            return
+            
+        try:
+            hwnd = int(self.winId())
+            dwmapi = ctypes.windll.dwmapi
+            
+            # Windows 10/11 ダークモードの適用 (DWMWA_USE_IMMERSIVE_DARK_MODE = 20)
+            DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+            value = ctypes.c_int(1)
+            dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_USE_IMMERSIVE_DARK_MODE, ctypes.byref(value), ctypes.sizeof(value))
+            
+            # Windows 11 タイトルバーの背景色変更 (DWMWA_CAPTION_COLOR = 35)
+            # アプリの背景色 #0F1923 に合わせる。COLORREF形式は 0x00bbggrr (R=0x0F, G=0x19, B=0x23)
+            DWMWA_CAPTION_COLOR = 35
+            color = ctypes.c_int(0x0023190F)
+            dwmapi.DwmSetWindowAttribute(hwnd, DWMWA_CAPTION_COLOR, ctypes.byref(color), ctypes.sizeof(color))
+        except Exception as e:
+            print(f"Failed to set titlebar color: {e}")
+
     def setup_tray_icon(self):
         self.tray_icon = QSystemTrayIcon(self)
         icon = self.style().standardIcon(self.style().StandardPixmap.SP_ComputerIcon)
         self.tray_icon.setIcon(icon)
-        self.tray_icon.setToolTip("Valorant Recorder")
+        self.tray_icon.setToolTip("ValoReco ヴァロレコ")
         
         tray_menu = QMenu()
         show_action = QAction("Show", self)

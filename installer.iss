@@ -2,15 +2,15 @@
 ; このスクリプトはNuitkaでビルドされた main.exe をインストーラ化します。
 
 [Setup]
-AppName=Valorant Recorder
+AppName=ValoReco ヴァロレコ
 AppVersion=1.0.0
 AppPublisher=Your Name
 AppPublisherURL=https://your-website.com/
 ; 自動アップデート時の権限エラーを防ぐため、LocalAppDataにインストールします
-DefaultDirName={localappdata}\ValorantRecorder
-DefaultGroupName=Valorant Recorder
+DefaultDirName={localappdata}\ValoReco
+DefaultGroupName=ValoReco ヴァロレコ
 ; 出力されるインストーラのファイル名
-OutputBaseFilename=ValorantRecorder_Setup
+OutputBaseFilename=ValoReco_Setup
 ; 圧縮設定
 Compression=lzma2/ultra64
 SolidCompression=yes
@@ -32,10 +32,10 @@ Source: "main.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 ; スタートメニューとデスクトップのショートカット作成
-Name: "{group}\Valorant Recorder"; Filename: "{app}\main.exe"
-Name: "{group}\{cm:UninstallProgram,Valorant Recorder}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\Valorant Recorder"; Filename: "{app}\main.exe"; Tasks: desktopicon
+Name: "{group}\ValoReco ヴァロレコ"; Filename: "{app}\main.exe"
+Name: "{group}\{cm:UninstallProgram,ValoReco ヴァロレコ}"; Filename: "{uninstallexe}"
+Name: "{autodesktop}\ValoReco ヴァロレコ"; Filename: "{app}\main.exe"; Tasks: desktopicon
 
 [Run]
 ; インストール完了後にアプリを起動するオプション
-Filename: "{app}\main.exe"; Description: "{cm:LaunchProgram,Valorant Recorder}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\main.exe"; Description: "{cm:LaunchProgram,ValoReco ヴァロレコ}"; Flags: nowait postinstall skipifsilent

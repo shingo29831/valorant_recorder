@@ -7,8 +7,6 @@ class Config:
         load_dotenv(self.env_file)
         self.LANGUAGE = os.environ.get("LANGUAGE", "en")
         self.REGION = os.environ.get("VALORANT_REGION", "ap")
-        self.RIOT_ID = os.environ.get("VALORANT_RIOT_ID", "shingo")
-        self.TAG_LINE = os.environ.get("VALORANT_TAG_LINE", "7445")
         self.SAVE_DIR = os.environ.get("RECORD_SAVE_DIR", "./records")
         
         self.RECORD_VIDEO_FORMAT = os.environ.get("RECORD_VIDEO_FORMAT", "ddagrab")
@@ -24,7 +22,7 @@ class Config:
         self.RECORD_RESOLUTION = os.environ.get("RECORD_RESOLUTION", "1920x1080")
         self.AUTO_DELETE_DAYS = int(os.environ.get("AUTO_DELETE_DAYS", "0"))
         self.CLIP_SAVE_DIR = os.environ.get("CLIP_SAVE_DIR", os.path.join(self.SAVE_DIR, "clips"))
-        self.UPDATE_API_URL = os.environ.get("UPDATE_API_URL", "https://your-worker-url.workers.dev/api/version")
+        self.UPDATE_API_URL = os.environ.get("UPDATE_API_URL", "")
 
     def save(self):
         if not os.path.exists(self.env_file):
@@ -32,8 +30,6 @@ class Config:
             
         set_key(self.env_file, "LANGUAGE", self.LANGUAGE)
         set_key(self.env_file, "VALORANT_REGION", self.REGION)
-        set_key(self.env_file, "VALORANT_RIOT_ID", self.RIOT_ID)
-        set_key(self.env_file, "VALORANT_TAG_LINE", self.TAG_LINE)
         set_key(self.env_file, "RECORD_SAVE_DIR", self.SAVE_DIR)
         set_key(self.env_file, "RECORD_VIDEO_FORMAT", self.RECORD_VIDEO_FORMAT)
         set_key(self.env_file, "RECORD_INPUT_SOURCE", self.RECORD_INPUT_SOURCE)

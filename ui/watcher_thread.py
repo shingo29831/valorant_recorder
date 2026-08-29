@@ -19,11 +19,6 @@ class WatcherThread(QThread):
     def __init__(self, config: Config):
         super().__init__()
         self.config = config
-        self.api = HenrikAPI(
-            region=self.config.REGION,
-            name=self.config.RIOT_ID,
-            tag=self.config.TAG_LINE
-        )
         self.store = MetadataStore(save_dir=self.config.SAVE_DIR)
         self.recorder = FFmpegRecorder(config=self.config)
         self.watcher = LogWatcher(
@@ -37,6 +32,18 @@ class WatcherThread(QThread):
         self.recording_start_time = 0
         self.real_start_time = 0
         self._is_running = True
+        self.current_riot_id = None
+        self.current_tag_line = None
+
+    def _update_current_player(self):
+        from scripts.get_local_api_info import get_current_player
+        name, tag = get_current_player()
+        if name and tag:
+            self.current_riot_id = name
+            self.current_tag_line = tag
+            self.log_signal.emit(f"[Watcher] Player detected: {name}#{tag}")
+        else:
+            self.log_signal.emit("[Watcher] Failed to detect player from local API.")
 
     def start_manual_recording(self):
         if self.current_video_path is not None:
@@ -44,6 +51,7 @@ class WatcherThread(QThread):
             return
         self.recording_start_time = time.time()
         self.local_round_events = []
+        self._update_current_player()
         self.log_signal.emit("[Manual] Starting manual recording...")
         try:
             self.current_video_path = self.recorder.start_recording()
@@ -75,6 +83,7 @@ class WatcherThread(QThread):
 
         self.recording_start_time = time.time()
         self.local_round_events = []
+        self._update_current_player()
         self.log_signal.emit("[Recorder] Match started. Starting FFmpeg recording...")
         try:
             self.current_video_path = self.recorder.start_recording()
@@ -123,20 +132,28 @@ class WatcherThread(QThread):
     def _fetch_api_and_save(self, video_path, start_time, end_time, events):
         self.log_signal.emit("[API] Checking for match data...")
         
+        if not self.current_riot_id or not self.current_tag_line:
+            self.log_signal.emit("[API] No player ID detected. Saving as local-only match.")
+            self._create_dummy_metadata(video_path, start_time)
+            return
+            
+        self.log_signal.emit(f"[API] Fetching match data for {self.current_riot_id}#{self.current_tag_line}...")
+        api = HenrikAPI(self.config.REGION, self.current_riot_id, self.current_tag_line)
+        
         match_data = None
         mmr_change = 0
 
         for attempt in range(3):
             time.sleep(20)
             try:
-                api_match_data = self.api.fetch_latest_match()
+                api_match_data = api.fetch_latest_match()
                 game_start = api_match_data.get('metadata', {}).get('game_start', 0)
                 
                 if abs(game_start - start_time) < 3600:
                     match_data = api_match_data
                     match_id = match_data['metadata']['matchid']
                     try:
-                        mmr_change = self.api.fetch_mmr_change(match_id)
+                        mmr_change = api.fetch_mmr_change(match_id)
                     except Exception as e:
                         self.log_signal.emit(f"[API] MMR fetch skipped (likely not competitive): {e}")
                         mmr_change = 0
@@ -298,7 +315,19 @@ class WatcherThread(QThread):
             self.log_signal.emit(f"[Background] Found {len(pending_videos)} pending video(s). Checking API...")
             
             try:
-                api_match_data = self.api.fetch_latest_match(retries=1, delay=2)
+                if not self.current_riot_id or not self.current_tag_line:
+                    from scripts.get_local_api_info import get_current_player
+                    name, tag = get_current_player()
+                    if name and tag:
+                        self.current_riot_id = name
+                        self.current_tag_line = tag
+                        self.log_signal.emit(f"[Background] Player detected: {name}#{tag}")
+                    else:
+                        continue
+                        
+                self.log_signal.emit(f"[Background] Fetching match data for {self.current_riot_id}#{self.current_tag_line}...")
+                api = HenrikAPI(self.config.REGION, self.current_riot_id, self.current_tag_line)
+                api_match_data = api.fetch_latest_match(retries=1, delay=2)
                 if not api_match_data:
                     continue
                     
@@ -311,7 +340,7 @@ class WatcherThread(QThread):
                         self.log_signal.emit(f"[Background] Match found for {os.path.basename(video_path)}.")
                         match_id = api_match_data['metadata']['matchid']
                         try:
-                            mmr_change = self.api.fetch_mmr_change(match_id, retries=1, delay=2)
+                            mmr_change = api.fetch_mmr_change(match_id, retries=1, delay=2)
                         except Exception as e:
                             self.log_signal.emit(f"[Background] MMR fetch skipped (likely not competitive): {e}")
                             mmr_change = 0
