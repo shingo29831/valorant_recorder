@@ -1,14 +1,51 @@
 import sys
+import traceback
 import warnings
+
+# --- グローバルエラーハンドラ ---
+# アプリがクラッシュした際に原因のログをダイアログで表示する
+def global_exception_handler(exctype, value, tb):
+    error_msg = "".join(traceback.format_exception(exctype, value, tb))
+    
+    # コンソール非表示環境で sys.stderr が存在しない場合のクラッシュを防ぐ
+    if sys.stderr is not None:
+        try:
+            print(error_msg, file=sys.stderr)
+        except Exception:
+            pass
+    
+    # 既にQApplicationが存在するかチェックし、なければ作成
+    from PyQt6.QtWidgets import QApplication, QMessageBox
+    app = QApplication.instance()
+    if not app:
+        app = QApplication(sys.argv)
+        
+    msg_box = QMessageBox()
+    msg_box.setIcon(QMessageBox.Icon.Critical)
+    msg_box.setWindowTitle("Critical Error")
+    msg_box.setText("An unexpected error occurred during startup:")
+    msg_box.setDetailedText(error_msg)
+    msg_box.exec()
+    sys.exit(1)
+
+sys.excepthook = global_exception_handler
+# ------------------------------
 
 # soundcardライブラリから発生する不連続性の警告をグローバルに無視する
 warnings.filterwarnings("ignore", message=".*data discontinuity.*")
 warnings.filterwarnings("ignore", module=".*soundcard.*")
 
-from core.patcher import patch_soundcard_lib
-
 # UIや他のモジュールが読み込まれる前にsoundcardライブラリのバグを修正する
-patch_soundcard_lib()
+try:
+    from core.patcher import patch_soundcard_lib
+    patch_soundcard_lib()
+except Exception as e:
+    # Nuitka等のコンパイル済み環境ではソースコードが存在せずパッチに失敗するため無視する
+    if sys.stderr is not None:
+        try:
+            print(f"Skipped soundcard patch: {e}", file=sys.stderr)
+        except Exception:
+            pass
 
 from PyQt6.QtWidgets import QApplication, QMessageBox
 from PyQt6.QtNetwork import QLocalSocket, QLocalServer
