@@ -9,9 +9,22 @@ import os
 
 class HenrikAPI:
     def __init__(self, region: str, name: str, tag: str):
-        self.region = region
-        self.name = urllib.parse.quote(name)
-        self.tag = urllib.parse.quote(tag)
+        # APIが受け付ける有効なシャード名に確実に変換 (jp -> apなど)
+        region_map = {
+            'jp': 'ap',
+            'kr': 'kr',
+            'na': 'na',
+            'eu': 'eu',
+            'latam': 'latam',
+            'br': 'br',
+            'ap': 'ap'
+        }
+        safe_region = str(region).lower()
+        self.region = region_map.get(safe_region, 'ap')
+        
+        # 前後の空白を除去してからURLエンコード
+        self.name = urllib.parse.quote(str(name).strip())
+        self.tag = urllib.parse.quote(str(tag).strip())
         self.base_headers = {
             'User-Agent': 'ValorantRecorder/1.0'
         }
@@ -40,7 +53,7 @@ class HenrikAPI:
         return headers
 
     def fetch_latest_match(self, retries: int = 3, delay: int = 10) -> dict:
-        url = f"https://valo-reco-api.meld-task.com/valorant/v3/matches/{self.region}/{self.name}/{self.tag}?size=1"
+        url = f"https://valoreco-api.meld-task.com/valorant/v3/matches/{self.region}/{self.name}/{self.tag}?size=1"
         
         for attempt in range(retries):
             req = urllib.request.Request(url, headers=self._get_headers())
@@ -53,15 +66,16 @@ class HenrikAPI:
                 if e.code == 429:
                     time.sleep(delay)
                     continue
-                raise
-            except Exception:
+                error_body = e.read().decode('utf-8') if e.fp else ""
+                raise RuntimeError(f"HTTP {e.code}: {e.reason} - {error_body}")
+            except Exception as e:
                 if attempt == retries - 1:
-                    raise
+                    raise RuntimeError(f"API Request failed: {e}")
             time.sleep(delay)
         raise RuntimeError("Failed to fetch match data after retries.")
 
     def fetch_mmr_change(self, match_id: str, retries: int = 3, delay: int = 10) -> int:
-        url = f"https://valo-reco-api.meld-task.com/valorant/v1/mmr-history/{self.region}/{self.name}/{self.tag}"
+        url = f"https://valoreco-api.meld-task.com/valorant/v1/mmr-history/{self.region}/{self.name}/{self.tag}"
         
         for attempt in range(retries):
             req = urllib.request.Request(url, headers=self._get_headers())
@@ -77,9 +91,10 @@ class HenrikAPI:
                 if e.code == 429:
                     time.sleep(delay)
                     continue
-                raise
-            except Exception:
+                error_body = e.read().decode('utf-8') if e.fp else ""
+                raise RuntimeError(f"HTTP {e.code}: {e.reason} - {error_body}")
+            except Exception as e:
                 if attempt == retries - 1:
-                    raise
+                    raise RuntimeError(f"API Request failed: {e}")
             time.sleep(delay)
         return 0

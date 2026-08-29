@@ -78,7 +78,36 @@ export default {
       });
     }
 
-    // 2. ボット対策: User-Agentの検証
+    // JWTの取得 (ヘッダー または クエリパラメータ)
+    const authHeader = request.headers.get("Authorization");
+    let token = null;
+    if (authHeader && authHeader.startsWith("Bearer ")) {
+      token = authHeader.split(" ")[1];
+    } else if (url.searchParams.has("token")) {
+      token = url.searchParams.get("token");
+    }
+
+    // 2. インストーラーのダウンロード (ブラウザからのアクセスを想定)
+    if (url.pathname === "/download/installer") {
+      if (!token) {
+        return new Response("Unauthorized: Missing Token", { status: 401 });
+      }
+      try {
+        if (!env.PUBLIC_KEY) {
+          return new Response("Internal Server Error: PUBLIC_KEY not configured", { status: 500 });
+        }
+        await verifyJwt(token, env.PUBLIC_KEY);
+      } catch (error) {
+        return new Response("Unauthorized: Invalid Signature or Token Expired", { status: 401 });
+      }
+
+      // 認証成功時、GitHub Releases のインストーラーURLへリダイレクト
+      const version = env.APP_VERSION || "1.0.0";
+      const installerUrl = `https://github.com/shingo29831/valorant-recorder-release/releases/download/v${version}/ValorantRecorder_Setup.exe`;
+      return Response.redirect(installerUrl, 302);
+    }
+
+    // 3. ボット対策 & アプリケーション制限 (APIプロキシ用)
     const userAgent = request.headers.get("User-Agent") || "";
     const isBot = /bot|crawler|spider|crawling|curl|wget|postman/i.test(userAgent);
     if (!userAgent || isBot || !userAgent.includes("ValorantRecorder")) {
@@ -89,14 +118,12 @@ export default {
       return new Response("Forbidden", { status: 403 });
     }
 
-    // 2. 認証: JWTの検証
-    const authHeader = request.headers.get("Authorization");
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    // 4. APIプロキシ用の認証
+    if (!token) {
       return new Response("Unauthorized: Missing Token", { status: 401 });
     }
 
     try {
-      const token = authHeader.split(" ")[1];
       if (!env.PUBLIC_KEY) {
         return new Response("Internal Server Error: PUBLIC_KEY not configured", { status: 500 });
       }

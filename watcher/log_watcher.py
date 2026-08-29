@@ -26,10 +26,22 @@ class LogWatcher:
             raise FileNotFoundError(f"Log file not found: {log_path}")
 
         try:
-            with open(log_path, 'r', encoding='utf-8', errors='replace') as f:
-                f.seek(0, os.SEEK_END)
-                
+            f = open(log_path, 'r', encoding='utf-8', errors='replace')
+            f.seek(0, os.SEEK_END)
+            
+            try:
                 while True:
+                    try:
+                        current_size = os.path.getsize(log_path)
+                        if current_size < f.tell():
+                            # ファイルがクリアされた(Valorant再起動)場合は開き直す
+                            f.close()
+                            f = open(log_path, 'r', encoding='utf-8', errors='replace')
+                            f.seek(0, os.SEEK_END)
+                            continue
+                    except OSError:
+                        pass
+
                     line = f.readline()
                     if not line:
                         time.sleep(0.1)
@@ -75,6 +87,8 @@ class LogWatcher:
                         match = self.phase_pattern_1.search(line) or self.phase_pattern_2.search(line)
                         if match:
                             self.on_round_phase_changed(match.group(1))
+            finally:
+                f.close()
                             
         except PermissionError:
             raise PermissionError("Access denied. The log file might be locked by Vanguard.")

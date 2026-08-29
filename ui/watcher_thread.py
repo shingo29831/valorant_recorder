@@ -44,6 +44,14 @@ class WatcherThread(QThread):
             self.current_riot_id = name
             self.current_tag_line = tag
             self.current_region = region if region else self.config.REGION
+            
+            # UI側が自分を特定できるようにConfigを更新して保存する
+            if self.config.RIOT_ID != name or self.config.TAG_LINE != tag or self.config.REGION != self.current_region:
+                self.config.RIOT_ID = name
+                self.config.TAG_LINE = tag
+                self.config.REGION = self.current_region
+                self.config.save()
+                
             self.log_signal.emit(f"[Watcher] Player detected: {name}#{tag} (Region: {self.current_region})")
         else:
             self.log_signal.emit("[Watcher] Failed to detect player from local API.")
@@ -330,6 +338,14 @@ class WatcherThread(QThread):
                         self.current_riot_id = name
                         self.current_tag_line = tag
                         self.current_region = region if region else self.config.REGION
+                        
+                        # UI側が自分を特定できるようにConfigを更新して保存する
+                        if self.config.RIOT_ID != name or self.config.TAG_LINE != tag or self.config.REGION != self.current_region:
+                            self.config.RIOT_ID = name
+                            self.config.TAG_LINE = tag
+                            self.config.REGION = self.current_region
+                            self.config.save()
+                            
                         self.log_signal.emit(f"[Background] Player detected: {name}#{tag} (Region: {self.current_region})")
                     else:
                         continue

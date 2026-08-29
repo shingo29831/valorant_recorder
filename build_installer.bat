@@ -8,12 +8,12 @@ echo.
 echo ==========================================
 echo 2. Building executable with Nuitka...
 echo ==========================================
-:: Nuitkaを使用してCコンパイルし、単一の実行ファイルを生成します。
-:: QtMultimediaプラグイン、soundcardの依存ファイル(.h)、および認証キーをバイナリに含めます。
-:: ※原因特定のため、一時的にコンソールを表示する設定(--windows-console-mode=force)に変更しています。
-python -m nuitka --standalone --onefile --enable-plugin=pyqt6 --include-qt-plugins=multimedia --include-package-data=soundcard --include-data-file=auth.key=auth.key --windows-console-mode=force main.py
+REM Compile to a single executable using Nuitka.
+REM Includes QtMultimedia plugin, soundcard dependencies, and auth.key.
+REM Using --windows-console-mode=disable for production.
+python -m nuitka --standalone --onefile --enable-plugin=pyqt6 --include-qt-plugins=multimedia --include-package-data=soundcard --include-data-file=auth.key=auth.key --windows-console-mode=disable main.py
 
-:: Nuitkaの出力ファイル名はデフォルトで main.exe になります。
+REM Nuitka output file defaults to main.exe
 if not exist "main.exe" (
     echo [Error] Build failed! main.exe not found.
     pause
@@ -24,7 +24,7 @@ echo.
 echo ==========================================
 echo 3. Creating Installer with Inno Setup...
 echo ==========================================
-:: Inno Setupのコンパイラパス (ユーザーインストールとシステムインストールの両方をチェック)
+REM Inno Setup compiler path
 set ISCC="%LOCALAPPDATA%\Programs\Inno Setup 7\ISCC.exe"
 if not exist %ISCC% (
     set ISCC="C:\Program Files\Inno Setup 7\ISCC.exe"
@@ -38,7 +38,7 @@ if not exist %ISCC% (
     exit /b 0
 )
 
-:: installer.iss をコンパイルして Output フォルダに Setup.exe を生成
+REM Compile installer.iss
 %ISCC% installer.iss
 
 echo.

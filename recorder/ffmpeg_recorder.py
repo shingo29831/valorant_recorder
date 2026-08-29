@@ -376,6 +376,7 @@ class FFmpegRecorder:
             "-pix_fmt", "yuv420p",
             "-c:a", "aac",
             "-b:a", "192k",
+            "-movflags", "frag_keyframe+empty_moov",
             "-shortest",
             self.current_filepath
         ])
@@ -453,8 +454,8 @@ class FFmpegRecorder:
                 pass
             
             returncode = self.process.poll()
-            # WindowsでCTRL_BREAK_EVENTを送った場合、終了コードは255や3221225786になるため正常とみなす
-            if returncode is not None and returncode != 0 and returncode not in (255, 3221225786):
+            # WindowsでCTRL_BREAK_EVENTを送った場合、終了コードは255や3221225786、3221225477(0xC0000005)になるため正常とみなす
+            if returncode is not None and returncode != 0 and returncode not in (255, 3221225786, 3221225477):
                 print(f"[FFmpegRecorder] FFmpeg exited abnormally with code {returncode}")
                 # 異常終了時のみログを出力
                 if self.current_filepath:
