@@ -34,14 +34,17 @@ class WatcherThread(QThread):
         self._is_running = True
         self.current_riot_id = None
         self.current_tag_line = None
+        self.current_region = self.config.REGION
 
     def _update_current_player(self):
-        from scripts.get_local_api_info import get_current_player
+        from scripts.get_local_api_info import get_current_player, get_client_region
         name, tag = get_current_player()
+        region = get_client_region()
         if name and tag:
             self.current_riot_id = name
             self.current_tag_line = tag
-            self.log_signal.emit(f"[Watcher] Player detected: {name}#{tag}")
+            self.current_region = region if region else self.config.REGION
+            self.log_signal.emit(f"[Watcher] Player detected: {name}#{tag} (Region: {self.current_region})")
         else:
             self.log_signal.emit("[Watcher] Failed to detect player from local API.")
 
@@ -134,11 +137,11 @@ class WatcherThread(QThread):
         
         if not self.current_riot_id or not self.current_tag_line:
             self.log_signal.emit("[API] No player ID detected. Saving as local-only match.")
-            self._create_dummy_metadata(video_path, start_time)
+            self._create_dummy_metadata(video_path, start_time, end_time, events)
             return
             
-        self.log_signal.emit(f"[API] Fetching match data for {self.current_riot_id}#{self.current_tag_line}...")
-        api = HenrikAPI(self.config.REGION, self.current_riot_id, self.current_tag_line)
+        self.log_signal.emit(f"[API] Fetching match data for {self.current_riot_id}#{self.current_tag_line} (Region: {self.current_region})...")
+        api = HenrikAPI(self.current_region, self.current_riot_id, self.current_tag_line)
         
         match_data = None
         mmr_change = 0
@@ -160,8 +163,7 @@ class WatcherThread(QThread):
                     self.log_signal.emit("[API] Successfully fetched current match data.")
                     break
             except Exception as e:
-                self.log_signal.emit(f"[API] Error fetching match data: {e}")
-                pass
+                self.log_signal.emit(f"[API] Error fetching match data (attempt {attempt+1}/3): {e}")
 
         if match_data:
             try:
@@ -177,7 +179,7 @@ class WatcherThread(QThread):
                 self.log_signal.emit(f"[Error] Failed to process match metadata: {e}")
         else:
             self.log_signal.emit("[API] Match data not found after retries. Saving as local-only match.")
-            self._create_dummy_metadata(video_path, start_time)
+            self._create_dummy_metadata(video_path, start_time, end_time, events)
 
     def _get_pending_videos(self):
         if not os.path.exists(self.config.SAVE_DIR):
@@ -222,19 +224,24 @@ class WatcherThread(QThread):
                         pass
         return pending
 
-    def _create_dummy_metadata(self, video_path, vid_time):
+    def _create_dummy_metadata(self, video_path, vid_time, end_time=0, events=None):
+        if events is None:
+            events = []
         match_data = {
             "metadata": {
                 "matchid": f"custom_{int(vid_time)}",
                 "map": "Custom / Unknown",
                 "game_start": int(vid_time),
-                "game_length": 0,
+                "game_length": int(end_time - vid_time) if end_time > vid_time else 0,
                 "mode": "Custom"
             },
             "players": {"all_players": []},
             "kills": [],
             "rounds": [],
-            "local_video_path": video_path
+            "local_video_path": video_path,
+            "local_match_start_time": vid_time,
+            "local_match_end_time": end_time,
+            "local_round_events": events
         }
         self.store.save_match_metadata(match_data, 0)
         self.match_saved_signal.emit()
@@ -316,19 +323,31 @@ class WatcherThread(QThread):
             
             try:
                 if not self.current_riot_id or not self.current_tag_line:
-                    from scripts.get_local_api_info import get_current_player
+                    from scripts.get_local_api_info import get_current_player, get_client_region
                     name, tag = get_current_player()
+                    region = get_client_region()
                     if name and tag:
                         self.current_riot_id = name
                         self.current_tag_line = tag
-                        self.log_signal.emit(f"[Background] Player detected: {name}#{tag}")
+                        self.current_region = region if region else self.config.REGION
+                        self.log_signal.emit(f"[Background] Player detected: {name}#{tag} (Region: {self.current_region})")
                     else:
                         continue
                         
-                self.log_signal.emit(f"[Background] Fetching match data for {self.current_riot_id}#{self.current_tag_line}...")
-                api = HenrikAPI(self.config.REGION, self.current_riot_id, self.current_tag_line)
-                api_match_data = api.fetch_latest_match(retries=1, delay=2)
+                self.log_signal.emit(f"[Background] Fetching match data for {self.current_riot_id}#{self.current_tag_line} (Region: {self.current_region})...")
+                api = HenrikAPI(self.current_region, self.current_riot_id, self.current_tag_line)
+                
+                try:
+                    api_match_data = api.fetch_latest_match(retries=1, delay=2)
+                except Exception as e:
+                    self.log_signal.emit(f"[Background] API fetch error: {e}")
+                    api_match_data = None
+                    
                 if not api_match_data:
+                    for video_path, vid_time in pending_videos:
+                        if time.time() - vid_time > 3600:
+                            self.log_signal.emit(f"[Background] Video {os.path.basename(video_path)} API fetch failed permanently. Saving as local-only.")
+                            self._create_dummy_metadata(video_path, vid_time)
                     continue
                     
                 game_start = api_match_data.get('metadata', {}).get('game_start', 0)
@@ -350,8 +369,8 @@ class WatcherThread(QThread):
                         self.log_signal.emit(f"[Background] Saved metadata: {filepath}")
                         self.match_saved_signal.emit()
                         
-                    elif game_start > vid_time + 3600:
-                        self.log_signal.emit(f"[Background] Video {os.path.basename(video_path)} is likely a custom match. Skipping.")
+                    elif game_start > vid_time + 3600 or time.time() - vid_time > 3600:
+                        self.log_signal.emit(f"[Background] Video {os.path.basename(video_path)} is likely a custom match or API not available. Skipping.")
                         self._create_dummy_metadata(video_path, vid_time)
                         
             except Exception as e:
