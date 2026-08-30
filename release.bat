@@ -38,7 +38,7 @@ copy /Y _worker.js "%RELEASE_DIR%\_worker.js"
 
 REM Clean up any binaries previously copied to the git repository to avoid 25MB Pages limit
 if exist "%RELEASE_DIR%\update.zip" del "%RELEASE_DIR%\update.zip"
-if exist "%RELEASE_DIR%\ValorantRecorder_Setup.exe" del "%RELEASE_DIR%\ValorantRecorder_Setup.exe"
+if exist "%RELEASE_DIR%\ValoReco_Setup.exe" del "%RELEASE_DIR%\ValoReco_Setup.exe"
 
 echo.
 echo ===================================================
@@ -62,13 +62,13 @@ if /I "%DO_PUSH%"=="Y" (
     where gh >nul 2>nul
     if %ERRORLEVEL% EQU 0 (
         echo Creating GitHub Release v%NEW_VERSION%...
-        gh release create v%NEW_VERSION% update.zip Output\ValorantRecorder_Setup.exe --repo shingo29831/valorant-recorder-release --title "v%NEW_VERSION%" --notes "Release v%NEW_VERSION%"
+        gh release create v%NEW_VERSION% update.zip Output\ValoReco_Setup.exe --repo shingo29831/valorant-recorder-release --title "v%NEW_VERSION%" --notes "Release v%NEW_VERSION%"
         echo GitHub Release created and binaries uploaded successfully!
     ) else (
         echo [Warning] GitHub CLI ^(gh^) not found.
         echo Please manually create a release named "v%NEW_VERSION%" on GitHub:
         echo https://github.com/shingo29831/valorant-recorder-release/releases/new
-        echo And upload 'update.zip' and 'Output\ValorantRecorder_Setup.exe' to it.
+        echo And upload 'update.zip' and 'Output\ValoReco_Setup.exe' to it.
     )
 ) else (
     echo.
@@ -77,7 +77,7 @@ if /I "%DO_PUSH%"=="Y" (
     echo 2. git add -A
     echo 3. git commit -m "Release version %NEW_VERSION%"
     echo 4. git push
-    echo 5. Create a GitHub Release named "v%NEW_VERSION%" and upload update.zip ^& ValorantRecorder_Setup.exe
+    echo 5. Create a GitHub Release named "v%NEW_VERSION%" and upload update.zip ^& ValoReco_Setup.exe
 )
 
 pause
