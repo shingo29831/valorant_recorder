@@ -25,6 +25,8 @@ class Config:
         self.AUTO_DELETE_DAYS = int(os.environ.get("AUTO_DELETE_DAYS", "0"))
         self.CLIP_SAVE_DIR = os.environ.get("CLIP_SAVE_DIR", os.path.join(self.SAVE_DIR, "clips"))
         self.UPDATE_API_URL = os.environ.get("UPDATE_API_URL", "")
+        self.PLAYER_SYS_VOLUME = float(os.environ.get("PLAYER_SYS_VOLUME", "1.0"))
+        self.PLAYER_MIC_VOLUME = float(os.environ.get("PLAYER_MIC_VOLUME", "1.0"))
 
     def save(self):
         if not os.path.exists(self.env_file):
@@ -49,3 +51,5 @@ class Config:
         set_key(self.env_file, "AUTO_DELETE_DAYS", str(self.AUTO_DELETE_DAYS))
         set_key(self.env_file, "CLIP_SAVE_DIR", self.CLIP_SAVE_DIR)
         set_key(self.env_file, "UPDATE_API_URL", self.UPDATE_API_URL)
+        set_key(self.env_file, "PLAYER_SYS_VOLUME", str(self.PLAYER_SYS_VOLUME))
+        set_key(self.env_file, "PLAYER_MIC_VOLUME", str(self.PLAYER_MIC_VOLUME))

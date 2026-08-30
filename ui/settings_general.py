@@ -28,48 +28,6 @@ class GeneralSettingsWidget(QWidget):
         save_dir_layout.addWidget(self.save_dir_input)
         save_dir_layout.addWidget(self.save_dir_btn)
 
-        self.region_input = QComboBox()
-        self.region_input.addItems(["ap", "na", "eu", "kr", "latam", "br"])
-        self.region_input.setCurrentText(self.config.REGION)
-        self.region_input.currentTextChanged.connect(self._save_settings)
-        
-        self.fps_input = QComboBox()
-        self.fps_input.addItems(["30", "60", "120", "144"])
-        self.fps_input.setCurrentText(self.config.RECORD_FPS)
-        self.fps_input.currentTextChanged.connect(self._save_settings)
-        
-        from recorder.ffmpeg_downloader import ensure_ffmpeg_downloaded
-        from recorder.ffmpeg_recorder import get_available_encoders
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        ffmpeg_path = ensure_ffmpeg_downloaded(project_root)
-        available_encoders, encoder_warning_keys = get_available_encoders(ffmpeg_path)
-        
-        self.encoder_input = QComboBox()
-        self.encoder_input.addItems(available_encoders)
-        current_enc = self.config.RECORD_ENCODER
-        if current_enc in available_encoders:
-            self.encoder_input.setCurrentText(current_enc)
-        else:
-            self.encoder_input.setCurrentText(available_encoders[0])
-            self.config.RECORD_ENCODER = available_encoders[0]
-            self.config.save()
-            
-        self.encoder_input.currentTextChanged.connect(self._save_settings)
-            
-        encoder_layout = QVBoxLayout()
-        encoder_layout.addWidget(self.encoder_input)
-        if encoder_warning_keys:
-            warning_texts = [getattr(self.t, key, key) for key in encoder_warning_keys]
-            warning_label = QLabel("\n".join(warning_texts))
-            warning_label.setStyleSheet("color: #FFaa00; font-size: 11px; font-weight: bold;")
-            encoder_layout.addWidget(warning_label)
-        encoder_layout.setSpacing(2)
-        
-        self.res_input = QComboBox()
-        self.res_input.addItems(["1920x1080", "2560x1440", "1280x720"])
-        self.res_input.setCurrentText(self.config.RECORD_RESOLUTION)
-        self.res_input.currentTextChanged.connect(self._save_settings)
-        
         self.auto_delete_spin = QSpinBox()
         self.auto_delete_spin.setRange(0, 3650)
         self.auto_delete_spin.setValue(self.config.AUTO_DELETE_DAYS)
@@ -84,10 +42,6 @@ class GeneralSettingsWidget(QWidget):
         
         layout.addRow(self.t.language, self.language_input)
         layout.addRow(self.t.save_directory, save_dir_layout)
-        layout.addRow(self.t.region, self.region_input)
-        layout.addRow(self.t.recording_fps, self.fps_input)
-        layout.addRow(self.t.encoder, encoder_layout)
-        layout.addRow(self.t.resolution, self.res_input)
         layout.addRow(self.t.auto_delete_after_days, auto_delete_layout)
         
         self.setLayout(layout)

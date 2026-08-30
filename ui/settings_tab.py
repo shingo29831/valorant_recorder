@@ -1,8 +1,9 @@
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTabWidget
 from PyQt6.QtCore import pyqtSignal
 from core.config import Config
 from ui.settings_general import GeneralSettingsWidget
-from ui.settings_audio import AudioSettingsWidget
+from ui.settings_record import RecordSettingsWidget
+from ui.settings_playback import PlaybackSettingsWidget
 
 class SettingsTab(QWidget):
     backRequested = pyqtSignal()
@@ -31,19 +32,30 @@ class SettingsTab(QWidget):
         main_layout.addLayout(header_layout)
         main_layout.addSpacing(20)
         
-        self.general_widget = GeneralSettingsWidget(self.config, self.t, self)
-        self.audio_widget = AudioSettingsWidget(self.config, self.t, self)
+        self.tab_widget = QTabWidget()
+        self.tab_widget.setStyleSheet("""
+            QTabWidget::pane { border: 1px solid #444444; border-radius: 5px; background: #1E1E1E; }
+            QTabBar::tab { background: #2A2A2A; color: #CCCCCC; padding: 8px 20px; border-top-left-radius: 4px; border-top-right-radius: 4px; margin-right: 2px; }
+            QTabBar::tab:selected { background: #1E1E1E; color: #FFFFFF; border: 1px solid #444444; border-bottom-color: #1E1E1E; font-weight: bold; }
+            QTabBar::tab:hover:!selected { background: #333333; }
+        """)
         
-        main_layout.addWidget(self.general_widget)
-        main_layout.addWidget(self.audio_widget)
-        main_layout.addStretch()
+        self.general_widget = GeneralSettingsWidget(self.config, self.t, self)
+        self.record_widget = RecordSettingsWidget(self.config, self.t, self)
+        self.playback_widget = PlaybackSettingsWidget(self.config, self.t, self)
+        
+        self.tab_widget.addTab(self.general_widget, getattr(self.t, 'tab_general', "General"))
+        self.tab_widget.addTab(self.record_widget, getattr(self.t, 'tab_record', "Recording"))
+        self.tab_widget.addTab(self.playback_widget, getattr(self.t, 'tab_playback', "Playback"))
+        
+        main_layout.addWidget(self.tab_widget)
         
         self.setLayout(main_layout)
 
     def showEvent(self, event):
         super().showEvent(event)
-        self.audio_widget.start_monitors()
+        self.record_widget.start_monitors()
 
     def hideEvent(self, event):
         super().hideEvent(event)
-        self.audio_widget.stop_monitors()
+        self.record_widget.stop_monitors()
