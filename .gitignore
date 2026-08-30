@@ -49,3 +49,6 @@ main.build/
 Output/
 update.zip
 *.exe
+.exe
+
+main.onefile-build/
