@@ -16,7 +16,7 @@ from core.version import APP_VERSION
 
 def _get_auth_headers():
     """auth.keyを読み込んでJWTを生成し、ヘッダーを返す"""
-    headers = {"User-Agent": "ValorantRecorder/1.0"}
+    headers = {"User-Agent": "ValoReco/1.0"}
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     key_path = os.path.join(project_root, "auth.key")
     
