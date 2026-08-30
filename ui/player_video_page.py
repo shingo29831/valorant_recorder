@@ -270,7 +270,7 @@ class PlayerVideoPage(QWidget):
         
         self.speed_label_ui = QLabel("1.0x")
         self.speed_label_ui.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.speed_label_ui.setFixedSize(100, 30)
+        self.speed_label_ui.setFixedSize(50, 30)
         self.speed_label_ui.setStyleSheet("QLabel { border-radius: 15px; background-color: transparent; font-size: 16px; font-weight: bold; color: white; margin: 0px; padding: 0px; } QLabel:hover { background-color: rgba(255, 255, 255, 0.1); }")
         self.speed_label_ui.setCursor(Qt.CursorShape.PointingHandCursor)
         self.speed_label_ui.installEventFilter(self)
