@@ -87,14 +87,28 @@ export default {
       } catch (e) {
         return new Response("Unauthorized: Invalid or Missing Token", { status: 401 });
       }
-      return new Response(JSON.stringify({
-        version: env.APP_VERSION || "1.0.0",
-        // ダウンロードURLをWorker自身のエンドポイントに向ける
-        download_url: `${url.origin}/download/update`
-      }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" }
-      });
+      
+      try {
+        // 静的アセットとしてデプロイされている version.json を読み込む
+        const versionRes = await env.ASSETS.fetch(new Request(new URL("/version.json", request.url)));
+        if (!versionRes.ok) {
+          return new Response(JSON.stringify({ error: "version.json not found" }), {
+            status: 404,
+            headers: { "Content-Type": "application/json" }
+          });
+        }
+        
+        const versionData = await versionRes.json();
+        return new Response(JSON.stringify(versionData), {
+          status: 200,
+          headers: { "Content-Type": "application/json" }
+        });
+      } catch (error) {
+        return new Response(JSON.stringify({ error: "Failed to parse version.json" }), {
+          status: 500,
+          headers: { "Content-Type": "application/json" }
+        });
+      }
     }
 
     // 2. GitHub Private リポジトリからのダウンロードプロキシ (インストーラー & アップデート)

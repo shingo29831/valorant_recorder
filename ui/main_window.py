@@ -13,10 +13,12 @@ from core.updater import UpdateCheckerThread, UpdateDownloaderThread
 from core.version import APP_VERSION
 
 def get_resource_path(relative_path):
-    """PyInstallerの実行時にもリソースパスを正しく解決する"""
+    """PyInstallerやNuitkaの実行時にもリソースパスを正しく解決する"""
     if hasattr(sys, '_MEIPASS'):
         return os.path.join(sys._MEIPASS, relative_path)
-    return os.path.join(os.path.abspath("."), relative_path)
+    # Nuitka対応: __file__ (ui/main_window.py) の場所からプロジェクトルートを計算
+    base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base_path, relative_path)
 
 class MainWindow(QMainWindow):
     def __init__(self):

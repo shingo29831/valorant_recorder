@@ -74,8 +74,19 @@ class UpdateCheckerThread(QThread):
                 latest_version = data.get("version")
                 download_url = data.get("download_url")
                 
-                if latest_version and latest_version != APP_VERSION:
-                    self.update_available.emit(latest_version, download_url)
+                print(f"[Updater] Successfully checked for updates. Current: {APP_VERSION}, Latest: {latest_version}")
+                
+                if latest_version:
+                    try:
+                        # "1.0.1" のような文字列を (1, 0, 1) のタプルに変換して大小比較
+                        latest_tuple = tuple(map(int, latest_version.lstrip('v').split('.')))
+                        current_tuple = tuple(map(int, APP_VERSION.lstrip('v').split('.')))
+                        if latest_tuple > current_tuple:
+                            self.update_available.emit(latest_version, download_url)
+                    except ValueError:
+                        # バージョン文字列のパースに失敗した場合は単純な文字列比較にフォールバック
+                        if latest_version != APP_VERSION:
+                            self.update_available.emit(latest_version, download_url)
         except urllib.error.URLError as e:
             self.error_occurred.emit(f"Network error during update check: {e.reason}")
         except json.JSONDecodeError as e:

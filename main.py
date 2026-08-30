@@ -47,6 +47,7 @@ except Exception as e:
         except Exception:
             pass
 
+import ctypes
 from PyQt6.QtWidgets import QApplication, QMessageBox
 from PyQt6.QtGui import QIcon
 from PyQt6.QtNetwork import QLocalSocket, QLocalServer
@@ -129,6 +130,14 @@ QStatusBar {
 SERVER_NAME = "ValorantRecorderSingleInstance"
 
 def main():
+    # Windowsのタスクバーアイコンを正しく表示させるためのAppUserModelID設定
+    if sys.platform == "win32":
+        try:
+            app_id = "ValoReco.App.1.0"
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
+        except Exception:
+            pass
+
     app = QApplication(sys.argv)
     app.setWindowIcon(QIcon(get_resource_path("assets/icon.ico")))
     
