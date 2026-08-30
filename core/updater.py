@@ -11,6 +11,7 @@ import subprocess
 import tempfile
 import jwt
 import datetime
+import ssl
 from PyQt6.QtCore import QThread, pyqtSignal
 from core.version import APP_VERSION
 
@@ -32,8 +33,14 @@ class UpdateDownloaderThread(QThread):
 def _get_auth_headers():
     """auth.keyを読み込んでJWTを生成し、ヘッダーを返す"""
     headers = {"User-Agent": "ValoReco/1.0"}
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    key_path = os.path.join(project_root, "auth.key")
+    
+    # Nuitkaビルド環境と開発環境の両方で正しくパスを解決する
+    if hasattr(sys, '_MEIPASS'):
+        base_path = sys._MEIPASS
+    else:
+        base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    
+    key_path = os.path.join(base_path, "auth.key")
     
     if os.path.exists(key_path):
         try:
@@ -60,11 +67,17 @@ class UpdateCheckerThread(QThread):
 
     def run(self):
         if not self.api_url:
-            self.error_occurred.emit("Update check skipped: API URL is not set.")
+            print("[Updater] Update check skipped: API URL is not set.")
             return
         try:
             req = urllib.request.Request(self.api_url, headers=_get_auth_headers())
-            with urllib.request.urlopen(req, timeout=10) as response:
+            
+            # Nuitka環境でのSSL証明書エラーを回避
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            
+            with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
                 if response.status != 200:
                     self.error_occurred.emit(f"HTTP Error: {response.status}")
                     return
@@ -101,8 +114,13 @@ def download_and_apply_update(download_url: str):
     
     # 1. ZIPのダウンロード
     req = urllib.request.Request(download_url, headers=_get_auth_headers())
+    
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    
     try:
-        with urllib.request.urlopen(req, timeout=30) as response, open(zip_path, 'wb') as out_file:
+        with urllib.request.urlopen(req, timeout=30, context=ctx) as response, open(zip_path, 'wb') as out_file:
             if response.status != 200:
                 raise RuntimeError(f"Failed to download update. HTTP Status: {response.status}")
             out_file.write(response.read())

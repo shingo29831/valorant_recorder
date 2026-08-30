@@ -65,10 +65,14 @@ class MainWindow(QMainWindow):
         self.watcher_thread.start()
 
         # アップデート確認スレッドの開始
-        self.update_checker = UpdateCheckerThread(self.config.UPDATE_API_URL)
-        self.update_checker.update_available.connect(self.show_update_dialog)
-        self.update_checker.error_occurred.connect(lambda err: print(f"[Updater] {err}"))
-        self.update_checker.start()
+        api_url = getattr(self.config, 'UPDATE_API_URL', None)
+        if api_url:
+            self.update_checker = UpdateCheckerThread(api_url)
+            self.update_checker.update_available.connect(self.show_update_dialog)
+            self.update_checker.error_occurred.connect(lambda err: self.statusBar().showMessage(f"Update Error: {err}"))
+            self.update_checker.start()
+        else:
+            print("[MainWindow] UPDATE_API_URL is not set. Update checker skipped.")
 
     def show_update_dialog(self, latest_version, download_url):
         msg_box = QMessageBox(self)
