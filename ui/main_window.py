@@ -1,19 +1,28 @@
+import os
 import sys
 import ctypes
-from PyQt6.QtWidgets import QMainWindow, QStackedWidget, QPushButton, QSystemTrayIcon, QMenu
+from PyQt6.QtWidgets import QMainWindow, QStackedWidget, QPushButton, QSystemTrayIcon, QMenu, QMessageBox, QProgressDialog
 from PyQt6.QtGui import QAction, QIcon
-from PyQt6.QtCore import QCoreApplication
+from PyQt6.QtCore import QCoreApplication, Qt
 from core.config import Config
 from ui.watcher_thread import WatcherThread
 from ui.settings_tab import SettingsTab
 from ui.player_tab import PlayerTab
 from ui.notification_overlay import NotificationOverlay
+from core.updater import UpdateCheckerThread, UpdateDownloaderThread
+from core.version import APP_VERSION
+
+def get_resource_path(relative_path):
+    """PyInstallerの実行時にもリソースパスを正しく解決する"""
+    if hasattr(sys, '_MEIPASS'):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.abspath("."), relative_path)
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("ValoReco ヴァロレコ")
-        self.setWindowIcon(QIcon("assets/icon.svg"))
+        self.setWindowIcon(QIcon(get_resource_path("assets/icon.ico")))
         self.resize(1280, 720)
         
         self._titlebar_color_applied = False
@@ -53,6 +62,40 @@ class MainWindow(QMainWindow):
         self.watcher_thread.recording_state_changed.connect(self.show_recording_notification)
         self.watcher_thread.start()
 
+        # アップデート確認スレッドの開始
+        self.update_checker = UpdateCheckerThread("https://valorant-recorder.pages.dev/api/version")
+        self.update_checker.update_available.connect(self.show_update_dialog)
+        self.update_checker.start()
+
+    def show_update_dialog(self, latest_version, download_url):
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("アップデートのお知らせ")
+        msg_box.setText(f"新しいバージョン ({latest_version}) が利用可能です。\n現在のバージョン: {APP_VERSION}\n\n今すぐアップデートしますか？")
+        msg_box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        msg_box.button(QMessageBox.StandardButton.Yes).setText("今すぐアップデート")
+        msg_box.button(QMessageBox.StandardButton.No).setText("後で")
+        
+        if msg_box.exec() == QMessageBox.StandardButton.Yes:
+            self.progress_dialog = QProgressDialog("アップデートをダウンロード中...", "キャンセル", 0, 0, self)
+            self.progress_dialog.setWindowTitle("アップデート")
+            self.progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
+            self.progress_dialog.setCancelButton(None)
+            self.progress_dialog.show()
+
+            self.update_downloader = UpdateDownloaderThread(download_url)
+            self.update_downloader.finished.connect(self._on_update_download_finished)
+            self.update_downloader.start()
+
+    def _on_update_download_finished(self, success, error_message):
+        if hasattr(self, 'progress_dialog'):
+            self.progress_dialog.close()
+            
+        if not success:
+            QMessageBox.critical(self, "アップデート失敗", f"アップデートの適用に失敗しました:\n{error_message}")
+            self.statusBar().showMessage("アップデート失敗")
+        else:
+            self.quit_app()
+
     def _on_video_page_visible(self, is_visible):
         if self.stacked_widget.currentWidget() == self.player_tab:
             self.statusBar().setVisible(not is_visible)
@@ -88,7 +131,7 @@ class MainWindow(QMainWindow):
 
     def setup_tray_icon(self):
         self.tray_icon = QSystemTrayIcon(self)
-        self.tray_icon.setIcon(QIcon("assets/icon.svg"))
+        self.tray_icon.setIcon(QIcon(get_resource_path("assets/icon.ico")))
         self.tray_icon.setToolTip("ValoReco ヴァロレコ")
         
         tray_menu = QMenu()

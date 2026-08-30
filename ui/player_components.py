@@ -225,6 +225,14 @@ class RecordItemWidget(QWidget):
     def is_checked(self):
         return self.checkbox.isChecked()
         
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            if self.checkbox.isVisible():
+                self.checkbox.setChecked(not self.checkbox.isChecked())
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.doubleClicked.emit(self.json_filename)

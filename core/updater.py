@@ -14,6 +14,21 @@ import datetime
 from PyQt6.QtCore import QThread, pyqtSignal
 from core.version import APP_VERSION
 
+class UpdateDownloaderThread(QThread):
+    """アップデートのダウンロードと適用をバックグラウンドで行うスレッド"""
+    finished = pyqtSignal(bool, str)
+
+    def __init__(self, download_url):
+        super().__init__()
+        self.download_url = download_url
+
+    def run(self):
+        try:
+            download_and_apply_update(self.download_url)
+            self.finished.emit(True, "")
+        except Exception as e:
+            self.finished.emit(False, str(e))
+
 def _get_auth_headers():
     """auth.keyを読み込んでJWTを生成し、ヘッダーを返す"""
     headers = {"User-Agent": "ValoReco/1.0"}
@@ -106,4 +121,4 @@ def download_and_apply_update(download_url: str):
         
     # 5. バッチファイルを非表示で実行してアプリを終了
     subprocess.Popen([bat_path], shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
-    sys.exit(0)
+    # スレッド内での sys.exit() は SystemExit 例外を投げるだけなので、ここでは終了させず呼び出し元に委ねる

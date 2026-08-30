@@ -113,14 +113,21 @@ class PlayerListPage(QWidget):
         
         layout.addWidget(header_widget)
         
-        subheader_widget = QWidget()
-        subheader_widget.setStyleSheet("background-color: transparent; border: none;")
-        subheader_layout = QHBoxLayout(subheader_widget)
-        # スクロールバーの幅を考慮し、右側にマージンを設けてスクロールバーの左側に配置する
-        subheader_layout.setContentsMargins(0, 0, 25, 10)
-        subheader_layout.addStretch()
+        self.scroll_area = QScrollArea()
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setStyleSheet("QScrollArea { border: none; background-color: transparent; }")
         
-        self.filter_btn = QPushButton()
+        self.scroll_content = QWidget()
+        self.scroll_content.setStyleSheet("background-color: transparent;")
+        self.scroll_layout = QVBoxLayout(self.scroll_content)
+        self.scroll_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        
+        self.scroll_area.setWidget(self.scroll_content)
+        
+        layout.addWidget(self.scroll_area)
+        
+        # フィルターボタンをスクロールエリア上のオーバーレイとして配置
+        self.filter_btn = QPushButton(self)
         self.filter_btn.setFixedSize(30, 30)
         self.filter_btn.setStyleSheet("""
             QPushButton { background-color: rgba(128, 128, 128, 0.5); border: none; border-radius: 15px; }
@@ -137,24 +144,17 @@ class PlayerListPage(QWidget):
         self.filter_btn.setIcon(QIcon(filter_pixmap))
         self.filter_btn.setIconSize(QSize(18, 18))
         self.filter_btn.clicked.connect(self.show_filter_menu)
-        
-        subheader_layout.addWidget(self.filter_btn)
-        layout.addWidget(subheader_widget)
-        
-        self.scroll_area = QScrollArea()
-        self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setStyleSheet("QScrollArea { border: none; background-color: transparent; }")
-        
-        self.scroll_content = QWidget()
-        self.scroll_content.setStyleSheet("background-color: transparent;")
-        self.scroll_layout = QVBoxLayout(self.scroll_content)
-        self.scroll_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        
-        self.scroll_area.setWidget(self.scroll_content)
-        
-        layout.addWidget(self.scroll_area)
+        self.filter_btn.raise_()
         
         self.refresh_list()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if hasattr(self, 'scroll_area') and hasattr(self, 'filter_btn'):
+            # スクロールエリアの右上に配置 (スクロールバーの幅を考慮して少し左に寄せる)
+            x = self.scroll_area.geometry().right() - self.filter_btn.width() - 25
+            y = self.scroll_area.geometry().top() + 10
+            self.filter_btn.move(x, y)
 
     def _get_selected_files(self):
         selected_files = []
