@@ -32,68 +32,8 @@ NEXT_ROUND_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"
 MINUS_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white"><path d="M19,13H5V11H19V13Z" /></svg>"""
 PLUS_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white"><path d="M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z" /></svg>"""
 
-class ClipGeneratorThread(QThread):
-    finished = pyqtSignal(bool, str)
-    
-    def __init__(self, ffmpeg_path, input_path, output_path, start_ms, end_ms, encoder, sys_volume, mic_volume, audio_track_count):
-        super().__init__()
-        self.ffmpeg_path = ffmpeg_path
-        self.input_path = input_path
-        self.output_path = output_path
-        self.start_ms = start_ms
-        self.end_ms = end_ms
-        self.encoder = encoder
-        self.sys_volume = sys_volume
-        self.mic_volume = mic_volume
-        self.audio_track_count = audio_track_count
-        
-    def run(self):
-        try:
-            start_sec = self.start_ms / 1000.0
-            end_sec = self.end_ms / 1000.0
-            duration = end_sec - start_sec
-            
-            preset = "p4" if "nvenc" in self.encoder else "veryfast"
-            
-            cmd = [
-                self.ffmpeg_path,
-                "-y",
-                "-ss", f"{start_sec:.3f}",
-                "-i", self.input_path,
-                "-t", f"{duration:.3f}",
-                "-map", "0:v:0",
-                "-c:v", self.encoder,
-                "-preset", preset,
-                "-b:v", "10M",
-                "-c:a", "aac",
-                "-b:a", "192k"
-            ]
-            
-            if self.audio_track_count >= 3:
-                # トラック2(システム音)とトラック3(マイク音)をミックス
-                filter_complex = f"[0:a:1]volume={self.sys_volume}[a0];[0:a:2]volume={self.mic_volume}[a1];[a0][a1]amix=inputs=2:duration=longest[aout]"
-                cmd.extend(["-filter_complex", filter_complex, "-map", "[aout]"])
-            elif self.audio_track_count == 2:
-                # トラック1(システム音)とトラック2(マイク音)をミックス
-                filter_complex = f"[0:a:0]volume={self.sys_volume}[a0];[0:a:1]volume={self.mic_volume}[a1];[a0][a1]amix=inputs=2:duration=longest[aout]"
-                cmd.extend(["-filter_complex", filter_complex, "-map", "[aout]"])
-            else:
-                # トラック1のみ
-                filter_complex = f"[0:a:0]volume={self.sys_volume}[aout]"
-                cmd.extend(["-filter_complex", filter_complex, "-map", "[aout]"])
-                
-            cmd.append(self.output_path)
-            
-            creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
-            
-            res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=creationflags)
-            
-            if res.returncode == 0:
-                self.finished.emit(True, self.output_path)
-            else:
-                self.finished.emit(False, res.stderr)
-        except Exception as e:
-            self.finished.emit(False, str(e))
+from ui.clip_generator_thread import ClipGeneratorThread
+from ui.timeline_builder import build_timeline_data
 
 class PlayerVideoPage(QWidget):
     backRequested = pyqtSignal()
@@ -330,8 +270,8 @@ class PlayerVideoPage(QWidget):
         
         self.speed_label_ui = QLabel("1.0x")
         self.speed_label_ui.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.speed_label_ui.setFixedSize(60, 30)
-        self.speed_label_ui.setStyleSheet("QLabel { border-radius: 15px; background-color: transparent; font-size: 16px; font-weight: bold; color: white; } QLabel:hover { background-color: rgba(255, 255, 255, 0.1); }")
+        self.speed_label_ui.setFixedSize(100, 30)
+        self.speed_label_ui.setStyleSheet("QLabel { border-radius: 15px; background-color: transparent; font-size: 16px; font-weight: bold; color: white; margin: 0px; padding: 0px; } QLabel:hover { background-color: rgba(255, 255, 255, 0.1); }")
         self.speed_label_ui.setCursor(Qt.CursorShape.PointingHandCursor)
         self.speed_label_ui.installEventFilter(self)
         
@@ -423,9 +363,9 @@ class PlayerVideoPage(QWidget):
         self.mic_player.setPlaybackRate(actual_rate)
         
         if self.target_playback_rate != 1.0 and not self.is_speed_bypassed:
-            self.speed_label_ui.setStyleSheet("QLabel { border-radius: 15px; background-color: rgba(255, 70, 85, 0.5); font-size: 16px; font-weight: bold; color: white; } QLabel:hover { background-color: rgba(255, 70, 85, 0.7); }")
+            self.speed_label_ui.setStyleSheet("QLabel { border-radius: 15px; background-color: rgba(255, 70, 85, 0.5); font-size: 16px; font-weight: bold; color: white; margin: 0px; padding: 0px; } QLabel:hover { background-color: rgba(255, 70, 85, 0.7); }")
         else:
-            self.speed_label_ui.setStyleSheet("QLabel { border-radius: 15px; background-color: transparent; font-size: 16px; font-weight: bold; color: white; } QLabel:hover { background-color: rgba(255, 255, 255, 0.1); }")
+            self.speed_label_ui.setStyleSheet("QLabel { border-radius: 15px; background-color: transparent; font-size: 16px; font-weight: bold; color: white; margin: 0px; padding: 0px; } QLabel:hover { background-color: rgba(255, 255, 255, 0.1); }")
             
         self.speed_osd_label.setText(f"{actual_rate:.1f}x")
         self.speed_osd_label.adjustSize()
@@ -642,156 +582,11 @@ class PlayerVideoPage(QWidget):
             return
             
         match_info = self.current_match_data.get("match_info", self.current_match_data)
-        
-        offset_ms = 0
-        local_round_events = match_info.get("local_round_events", [])
-        kills_data = match_info.get("kills", [])
-        
-        api_first_start = 0
-        if kills_data:
-            first_kill = kills_data[0]
-            k_match = first_kill.get("kill_time_in_match", 0)
-            k_round = first_kill.get("kill_time_in_round", 0)
-            if k_match > 0 and k_round > 0:
-                api_first_start = k_match - k_round
-
-        if local_round_events and api_first_start > 0:
-            first_local_preround = next((ev for ev in local_round_events if ev["phase"] == "PreRound"), None)
-            if first_local_preround:
-                offset_ms = api_first_start - first_local_preround["time_ms"]
-            else:
-                first_local_inprogress = next((ev for ev in local_round_events if ev["phase"] == "InProgress"), None)
-                if first_local_inprogress:
-                    offset_ms = api_first_start - first_local_inprogress["time_ms"]
-        elif "local_match_start_time" in match_info and "local_match_end_time" in match_info and duration_ms > 0:
-            game_length = match_info.get("metadata", {}).get("game_length")
-            if game_length:
-                game_length_sec = game_length / 1000.0 if game_length > 100000 else game_length
-                end_delay_sec = 6.5
-                offset_sec = game_length_sec + end_delay_sec - (duration_ms / 1000.0)
-                offset_ms = int(offset_sec * 1000)
-            else:
-                start_time = match_info["local_match_start_time"]
-                end_time = match_info["local_match_end_time"]
-                video_zero_local = end_time - (duration_ms / 1000.0)
-                offset_sec = video_zero_local - start_time
-                offset_ms = int(offset_sec * 1000)
-        else:
-            if "video_offset_ms" in match_info:
-                offset_ms = match_info["video_offset_ms"]
-            else:
-                video_path = match_info.get("local_video_path", "")
-                basename = os.path.basename(video_path)
-                date_pattern = re.compile(r"(\d{8}_\d{6})")
-                vid_match = date_pattern.search(basename)
-                if vid_match:
-                    try:
-                        vid_time = datetime.strptime(vid_match.group(1), "%Y%m%d_%H%M%S")
-                        vid_timestamp = vid_time.timestamp()
-                        game_start = match_info.get("metadata", {}).get("game_start")
-                        if game_start:
-                            offset_ms = int((vid_timestamp - game_start) * 1000)
-                    except Exception:
-                        pass
-
-        events = []
-        rounds = []
-        
-        target_puuid = None
-        target_display_name = None
-        
         riot_id = getattr(self.config, "RIOT_ID", "").lower()
         tag_line = getattr(self.config, "TAG_LINE", "").lower()
         
-        players = match_info.get("players", {}).get("all_players", [])
-        for p in players:
-            p_name = p.get("name", "").lower()
-            p_tag = p.get("tag", "").lower()
-            if p_name == riot_id and p_tag == tag_line:
-                target_puuid = p.get("puuid")
-                target_display_name = p.get("name")
-                break
+        rounds, events = build_timeline_data(match_info, duration_ms, riot_id, tag_line)
         
-        if not target_puuid and kills_data:
-            target_display_name = guess_player_name(kills_data)
-            
-        for kill in kills_data:
-            time_ms = int(kill.get("kill_time_in_match", 0) - offset_ms)
-            if time_ms < 0:
-                continue
-            
-            if target_puuid:
-                killer_puuid = kill.get("killer_puuid")
-                victim_puuid = kill.get("victim_puuid")
-                
-                assistants = kill.get("assistants", [])
-                assistant_puuids = []
-                for ast in assistants:
-                    if isinstance(ast, dict):
-                        assistant_puuids.append(ast.get("assistant_puuid"))
-                    elif isinstance(ast, str):
-                        assistant_puuids.append(ast)
-                        
-                if killer_puuid == target_puuid:
-                    events.append({"time": time_ms, "type": "kill"})
-                elif victim_puuid == target_puuid:
-                    events.append({"time": time_ms, "type": "death"})
-                elif target_puuid in assistant_puuids:
-                    events.append({"time": time_ms, "type": "assist"})
-            else:
-                killer = kill.get("killer_display_name", "Unknown")
-                victim = kill.get("victim_display_name", "Unknown")
-                
-                assistants = kill.get("assistants", [])
-                assistant_names = []
-                for ast in assistants:
-                    if isinstance(ast, dict):
-                        assistant_names.append(ast.get("assistant_display_name", ""))
-                    elif isinstance(ast, str):
-                        assistant_names.append(ast)
-                        
-                if target_display_name and target_display_name in killer:
-                    events.append({"time": time_ms, "type": "kill"})
-                elif target_display_name and target_display_name in victim:
-                    events.append({"time": time_ms, "type": "death"})
-                elif target_display_name and any(target_display_name in ast for ast in assistant_names):
-                    events.append({"time": time_ms, "type": "assist"})
-                elif not target_display_name:
-                    events.append({"time": time_ms, "type": "kill"})
-                
-        if local_round_events:
-            for i in range(len(local_round_events)):
-                ev = local_round_events[i]
-                phase = ev["phase"]
-                start_time = ev["time_ms"]
-                end_time = duration_ms
-                if i + 1 < len(local_round_events):
-                    end_time = local_round_events[i+1]["time_ms"]
-                    
-                if phase in ["PreRound", "InProgress", "PostRound"]:
-                    rounds.append({"start": start_time, "end": end_time, "phase": phase})
-        else:
-            if kills_data:
-                round_starts = []
-                for k in kills_data:
-                    k_match = k.get("kill_time_in_match", 0)
-                    k_round = k.get("kill_time_in_round", 0)
-                    if k_match > 0 and k_round > 0:
-                        r_start = k_match - k_round
-                        if not round_starts or abs(round_starts[-1] - r_start) > 5000:
-                            round_starts.append(r_start)
-                
-                for i, r_start in enumerate(round_starts):
-                    start = int(r_start - offset_ms)
-                    if i + 1 < len(round_starts):
-                        end = int(round_starts[i+1] - offset_ms)
-                    else:
-                        game_length = match_info.get("metadata", {}).get("game_length", 0)
-                        end = int(game_length - offset_ms) if game_length > 0 else duration_ms
-                    
-                    if end > start:
-                        rounds.append({"start": max(0, start), "end": end, "phase": "InProgress"})
-            
         self.current_rounds = rounds
         self.timeline_overlay.set_data(rounds, events)
 
