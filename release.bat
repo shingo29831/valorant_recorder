@@ -29,8 +29,8 @@ if not exist "%RELEASE_DIR%" (
 )
 
 REM Generate version.json for Cloudflare Pages
-REM Changed download_url to GitHub Releases to avoid Cloudflare Pages 25MB limit
-echo { "version": "%NEW_VERSION%", "download_url": "https://github.com/shingo29831/valorant-recorder-release/releases/download/v%NEW_VERSION%/update.zip" } > "%RELEASE_DIR%\version.json"
+REM Worker returns a 302 redirect to GitHub's S3, so it bypasses the 25MB limit.
+echo { "version": "%NEW_VERSION%", "download_url": "https://valoreco-api.meld-task.com/download/update" } > "%RELEASE_DIR%\version.json"
 
 echo.
 echo [5/5] Copying files to release repository...
