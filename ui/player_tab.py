@@ -6,6 +6,7 @@ from ui.player_video_page import PlayerVideoPage
 
 class PlayerTab(QWidget):
     settingsRequested = pyqtSignal()
+    videoPageVisible = pyqtSignal(bool)
 
     def __init__(self, config: Config):
         super().__init__()
@@ -25,6 +26,11 @@ class PlayerTab(QWidget):
         self.list_page.settingsRequested.connect(self.settingsRequested.emit)
         self.list_page.recordSelected.connect(self.on_record_selected)
         self.video_page.backRequested.connect(self.on_back_requested)
+        
+        self.stacked_widget.currentChanged.connect(self._on_current_changed)
+
+    def _on_current_changed(self, index):
+        self.videoPageVisible.emit(self.stacked_widget.currentWidget() == self.video_page)
 
     def on_record_selected(self, json_filename):
         self.video_page.load_recording(json_filename)
@@ -47,3 +53,4 @@ class PlayerTab(QWidget):
             self.list_page.refresh_list()
         elif self.stacked_widget.currentWidget() == self.video_page:
             self.video_page.restore_media()
+        self.videoPageVisible.emit(self.stacked_widget.currentWidget() == self.video_page)

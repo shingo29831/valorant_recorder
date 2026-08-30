@@ -14,6 +14,10 @@ from ui.player_components import ClickableVideoWidget, VolumeWidget, MicVolumeWi
 from ui.player_utils import find_video_for_json, guess_player_name
 from ui.event_toggle_widget import EventToggleWidget
 from ui.notification_overlay import NotificationOverlay
+from ui.clip_generator_thread import ClipGeneratorThread
+from ui.timeline_builder import build_timeline_data
+from ui.video_playback_controls import PlaybackControlsWidget
+from ui.clip_edit_panel import ClipEditPanel
 
 BACK_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white">
   <path d="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z" />
@@ -22,18 +26,6 @@ BACK_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill=
 SCISSORS_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white">
   <path d="M9.64,7.64C9.87,7.14 10,6.59 10,6C10,3.79 8.21,2 6,2C3.79,2 2,3.79 2,6C2,8.21 3.79,10 6,10C6.59,10 7.14,9.87 7.64,9.64L10,12L7.64,14.36C7.14,14.13 6.59,14 6,14C3.79,14 2,15.79 2,18C2,20.21 3.79,22 6,22C8.21,22 10,20.21 10,18C10,17.41 9.87,16.86 9.64,16.36L12,14L19,21H22V20L9.64,7.64M6,8C4.9,8 4,7.1 4,6C4,4.9 4.9,4 6,4C7.1,4 8,4.9 8,6C8,7.1 7.1,8 6,8M6,20C4.9,20 4,19.1 4,18C4,16.9 4.9,16 6,16C7.1,16 8,16.9 8,18C8,19.1 7.1,20 6,20M12,12.5C11.72,12.5 11.5,12.28 11.5,12C11.5,11.72 11.72,11.5 12,11.5C12.28,11.5 12.5,11.72 12.5,12C12.5,12.28 12.28,12.5 12,12.5M19,3H22V4L14,12L11.64,9.64L19,3Z" />
 </svg>"""
-
-PLAY_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white"><path d="M8,5.14V19.14L19,12.14L8,5.14Z" /></svg>"""
-PAUSE_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white"><path d="M14,19H18V5H14M6,19H10V5H6V19Z" /></svg>"""
-SKIP_BACK_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white"><path d="M11.5,12L20,18V6M11,18V6L2.5,12L11,18Z" /></svg>"""
-SKIP_FORWARD_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white"><path d="M13,6V18L21.5,12M4,18L12.5,12L4,6V18Z" /></svg>"""
-PREV_ROUND_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white"><path d="M6,6H8V18H6M9.5,12L18,18V6M16,14.14L12.97,12L16,9.86V14.14Z" /></svg>"""
-NEXT_ROUND_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white"><path d="M16,18H18V6H16M8,6L16.5,12L8,18V6Z" /></svg>"""
-MINUS_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white"><path d="M19,13H5V11H19V13Z" /></svg>"""
-PLUS_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white"><path d="M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z" /></svg>"""
-
-from ui.clip_generator_thread import ClipGeneratorThread
-from ui.timeline_builder import build_timeline_data
 
 class PlayerVideoPage(QWidget):
     backRequested = pyqtSignal()
@@ -132,34 +124,11 @@ class PlayerVideoPage(QWidget):
         self.player_container = PlayerContainer(self.video_widget)
         
         # クリップ編集パネル
-        self.edit_panel = QWidget()
-        self.edit_panel.setStyleSheet("background-color: #222222; border-radius: 5px;")
-        edit_layout = QHBoxLayout(self.edit_panel)
-        
-        self.start_btn = QPushButton(self.t.set_start)
-        self.start_btn.clicked.connect(self._set_clip_start)
-        self.start_label = QLabel("00:00")
-        
-        self.end_btn = QPushButton(self.t.set_end)
-        self.end_btn.clicked.connect(self._set_clip_end)
-        self.end_label = QLabel("00:00")
-        
-        self.generate_btn = QPushButton(self.t.generate)
-        self.generate_btn.setStyleSheet("background-color: #FF4655; font-weight: bold;")
-        self.generate_btn.clicked.connect(self._generate_clip)
-        
-        self.cancel_edit_btn = QPushButton(self.t.cancel)
-        self.cancel_edit_btn.clicked.connect(self._toggle_edit_mode)
-        
-        edit_layout.addWidget(self.start_btn)
-        edit_layout.addWidget(self.start_label)
-        edit_layout.addSpacing(20)
-        edit_layout.addWidget(self.end_btn)
-        edit_layout.addWidget(self.end_label)
-        edit_layout.addStretch()
-        edit_layout.addWidget(self.cancel_edit_btn)
-        edit_layout.addWidget(self.generate_btn)
-        
+        self.edit_panel = ClipEditPanel(self.t)
+        self.edit_panel.setStartRequested.connect(self._set_clip_start)
+        self.edit_panel.setEndRequested.connect(self._set_clip_end)
+        self.edit_panel.generateRequested.connect(self._generate_clip)
+        self.edit_panel.cancelRequested.connect(self._toggle_edit_mode)
         self.edit_panel.setVisible(False)
         self.clip_start_ms = 0
         self.clip_end_ms = 0
@@ -201,94 +170,17 @@ class PlayerVideoPage(QWidget):
         page_layout.addLayout(top_layout, stretch=1)
         page_layout.addWidget(controls_widget)
         
-        playback_control_layout = QHBoxLayout()
-        playback_control_layout.setContentsMargins(0, 0, 0, 0)
+        self.playback_controls = PlaybackControlsWidget()
+        self.playback_controls.prevRoundRequested.connect(self.skip_to_prev_round)
+        self.playback_controls.skipBackRequested.connect(self.skip_backward)
+        self.playback_controls.togglePlayRequested.connect(self.toggle_play)
+        self.playback_controls.skipForwardRequested.connect(self.skip_forward)
+        self.playback_controls.nextRoundRequested.connect(self.skip_to_next_round)
+        self.playback_controls.speedDecreaseRequested.connect(self.decrease_speed)
+        self.playback_controls.speedIncreaseRequested.connect(self.increase_speed)
+        self.playback_controls.speedToggleRequested.connect(self.toggle_speed)
         
-        playback_control_layout.addStretch(1)
-        
-        center_layout = QHBoxLayout()
-        center_layout.setSpacing(15)
-        
-        btn_style = "QPushButton { border-radius: 20px; background-color: #333333; } QPushButton:hover { background-color: #444444; }"
-        
-        self.prev_round_btn = QPushButton()
-        self.prev_round_btn.setFixedSize(40, 40)
-        self.prev_round_btn.setStyleSheet(btn_style)
-        self.prev_round_btn.setIcon(self._create_icon(PREV_ROUND_SVG))
-        self.prev_round_btn.setIconSize(QSize(24, 24))
-        self.prev_round_btn.clicked.connect(self.skip_to_prev_round)
-        
-        self.skip_back_btn = QPushButton()
-        self.skip_back_btn.setFixedSize(40, 40)
-        self.skip_back_btn.setStyleSheet(btn_style)
-        self.skip_back_btn.setIcon(self._create_icon(SKIP_BACK_SVG))
-        self.skip_back_btn.setIconSize(QSize(24, 24))
-        self.skip_back_btn.clicked.connect(self.skip_backward)
-        
-        self.play_pause_btn = QPushButton()
-        self.play_pause_btn.setFixedSize(50, 50)
-        self.play_pause_btn.setStyleSheet("QPushButton { border-radius: 25px; background-color: #FF4655; } QPushButton:hover { background-color: #FF5865; }")
-        self.play_pause_btn.setIcon(self._create_icon(PLAY_SVG))
-        self.play_pause_btn.setIconSize(QSize(30, 30))
-        self.play_pause_btn.clicked.connect(self.toggle_play)
-        
-        self.skip_forward_btn = QPushButton()
-        self.skip_forward_btn.setFixedSize(40, 40)
-        self.skip_forward_btn.setStyleSheet(btn_style)
-        self.skip_forward_btn.setIcon(self._create_icon(SKIP_FORWARD_SVG))
-        self.skip_forward_btn.setIconSize(QSize(24, 24))
-        self.skip_forward_btn.clicked.connect(self.skip_forward)
-        
-        self.next_round_btn = QPushButton()
-        self.next_round_btn.setFixedSize(40, 40)
-        self.next_round_btn.setStyleSheet(btn_style)
-        self.next_round_btn.setIcon(self._create_icon(NEXT_ROUND_SVG))
-        self.next_round_btn.setIconSize(QSize(24, 24))
-        self.next_round_btn.clicked.connect(self.skip_to_next_round)
-        
-        center_layout.addWidget(self.prev_round_btn)
-        center_layout.addWidget(self.skip_back_btn)
-        center_layout.addWidget(self.play_pause_btn)
-        center_layout.addWidget(self.skip_forward_btn)
-        center_layout.addWidget(self.next_round_btn)
-        
-        playback_control_layout.addLayout(center_layout)
-        
-        playback_control_layout.addStretch(1)
-        
-        speed_layout = QHBoxLayout()
-        speed_layout.setSpacing(5)
-        
-        speed_btn_style = "QPushButton { border-radius: 15px; background-color: #333333; } QPushButton:hover { background-color: #444444; }"
-        
-        self.speed_minus_btn = QPushButton()
-        self.speed_minus_btn.setFixedSize(30, 30)
-        self.speed_minus_btn.setStyleSheet(speed_btn_style)
-        self.speed_minus_btn.setIcon(self._create_icon(MINUS_SVG))
-        self.speed_minus_btn.setIconSize(QSize(16, 16))
-        self.speed_minus_btn.clicked.connect(self.decrease_speed)
-        
-        self.speed_label_ui = QLabel("1.0x")
-        self.speed_label_ui.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.speed_label_ui.setFixedSize(50, 30)
-        self.speed_label_ui.setStyleSheet("QLabel { border-radius: 15px; background-color: transparent; font-size: 16px; font-weight: bold; color: white; margin: 0px; padding: 0px; } QLabel:hover { background-color: rgba(255, 255, 255, 0.1); }")
-        self.speed_label_ui.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.speed_label_ui.installEventFilter(self)
-        
-        self.speed_plus_btn = QPushButton()
-        self.speed_plus_btn.setFixedSize(30, 30)
-        self.speed_plus_btn.setStyleSheet(speed_btn_style)
-        self.speed_plus_btn.setIcon(self._create_icon(PLUS_SVG))
-        self.speed_plus_btn.setIconSize(QSize(16, 16))
-        self.speed_plus_btn.clicked.connect(self.increase_speed)
-        
-        speed_layout.addWidget(self.speed_minus_btn)
-        speed_layout.addWidget(self.speed_label_ui)
-        speed_layout.addWidget(self.speed_plus_btn)
-        
-        playback_control_layout.addLayout(speed_layout)
-        
-        page_layout.addLayout(playback_control_layout)
+        page_layout.addWidget(self.playback_controls)
         page_layout.addWidget(self.edit_panel)
         
         self.notification = NotificationOverlay(self)
@@ -316,11 +208,7 @@ class PlayerVideoPage(QWidget):
         return QIcon(pixmap)
 
     def eventFilter(self, obj, event):
-        if obj == self.speed_label_ui:
-            if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
-                self.toggle_speed()
-                return True
-        elif obj == self.video_widget:
+        if obj == self.video_widget:
             if event.type() == QEvent.Type.Wheel:
                 delta = event.angleDelta().y()
                 if delta > 0:
@@ -347,7 +235,6 @@ class PlayerVideoPage(QWidget):
         rate = max(0.1, min(5.0, round(rate, 1)))
         self.target_playback_rate = rate
         self.is_speed_bypassed = False
-        self.speed_label_ui.setText(f"{rate:.1f}x")
         self._apply_playback_rate()
 
     def toggle_speed(self):
@@ -362,10 +249,7 @@ class PlayerVideoPage(QWidget):
         self.media_player.setPlaybackRate(actual_rate)
         self.mic_player.setPlaybackRate(actual_rate)
         
-        if self.target_playback_rate != 1.0 and not self.is_speed_bypassed:
-            self.speed_label_ui.setStyleSheet("QLabel { border-radius: 15px; background-color: rgba(255, 70, 85, 0.5); font-size: 16px; font-weight: bold; color: white; margin: 0px; padding: 0px; } QLabel:hover { background-color: rgba(255, 70, 85, 0.7); }")
-        else:
-            self.speed_label_ui.setStyleSheet("QLabel { border-radius: 15px; background-color: transparent; font-size: 16px; font-weight: bold; color: white; margin: 0px; padding: 0px; } QLabel:hover { background-color: rgba(255, 255, 255, 0.1); }")
+        self.playback_controls.set_speed_label(self.target_playback_rate, self.is_speed_bypassed)
             
         self.speed_osd_label.setText(f"{actual_rate:.1f}x")
         self.speed_osd_label.adjustSize()
@@ -407,8 +291,7 @@ class PlayerVideoPage(QWidget):
         self.timeline_overlay.set_clip_range(self.clip_start_ms, self.clip_end_ms)
 
     def _update_clip_labels(self):
-        self.start_label.setText(self.format_time(self.clip_start_ms))
-        self.end_label.setText(self.format_time(self.clip_end_ms))
+        self.edit_panel.update_labels(self.format_time(self.clip_start_ms), self.format_time(self.clip_end_ms))
 
     def _on_clip_range_changed(self, start_ms, end_ms):
         self.clip_start_ms = start_ms
@@ -443,8 +326,7 @@ class PlayerVideoPage(QWidget):
         h264_encoders = [enc for enc in available if "h264" in enc]
         encoder = h264_encoders[0] if h264_encoders else "libx264"
         
-        self.generate_btn.setEnabled(False)
-        self.generate_btn.setText(self.t.generating_clip)
+        self.edit_panel.set_generate_enabled(False, self.t.generating_clip)
         
         audio_track_count = len(self.media_player.audioTracks())
         
@@ -463,8 +345,7 @@ class PlayerVideoPage(QWidget):
         self.clip_thread.start()
 
     def _on_clip_finished(self, success, result):
-        self.generate_btn.setEnabled(True)
-        self.generate_btn.setText(self.t.generate)
+        self.edit_panel.set_generate_enabled(True, self.t.generate)
         
         if success:
             self.notification.show_message(self.t.clip_success.format(path=result))
@@ -602,10 +483,7 @@ class PlayerVideoPage(QWidget):
             self.mic_player.play()
 
     def _on_playback_state_changed(self, state):
-        if state == QMediaPlayer.PlaybackState.PlayingState:
-            self.play_pause_btn.setIcon(self._create_icon(PAUSE_SVG))
-        else:
-            self.play_pause_btn.setIcon(self._create_icon(PLAY_SVG))
+        self.playback_controls.set_playback_state(state == QMediaPlayer.PlaybackState.PlayingState)
 
     def skip_backward(self):
         pos = max(0, self.media_player.position() - 5000)

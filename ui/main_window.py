@@ -31,6 +31,9 @@ class MainWindow(QMainWindow):
         self.player_tab.settingsRequested.connect(lambda: self.stacked_widget.setCurrentWidget(self.settings_tab))
         self.settings_tab.backRequested.connect(lambda: self.stacked_widget.setCurrentWidget(self.player_tab))
         
+        self.player_tab.videoPageVisible.connect(self._on_video_page_visible)
+        self.stacked_widget.currentChanged.connect(self._on_main_tab_changed)
+        
         self.statusBar().showMessage("Initializing...")
         
         self.rec_button = QPushButton("🔴 Start Recording")
@@ -48,6 +51,17 @@ class MainWindow(QMainWindow):
         self.watcher_thread.recording_state_changed.connect(self.update_rec_button)
         self.watcher_thread.recording_state_changed.connect(self.show_recording_notification)
         self.watcher_thread.start()
+
+    def _on_video_page_visible(self, is_visible):
+        if self.stacked_widget.currentWidget() == self.player_tab:
+            self.statusBar().setVisible(not is_visible)
+
+    def _on_main_tab_changed(self, index):
+        if self.stacked_widget.currentWidget() == self.settings_tab:
+            self.statusBar().setVisible(True)
+        elif self.stacked_widget.currentWidget() == self.player_tab:
+            is_video = self.player_tab.stacked_widget.currentWidget() == self.player_tab.video_page
+            self.statusBar().setVisible(not is_video)
 
     def _apply_custom_titlebar_color(self):
         """WindowsのDWM APIを使用してタイトルバーの色をアプリの背景色(#0F1923)に合わせる"""
