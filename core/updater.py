@@ -107,6 +107,17 @@ class UpdateCheckerThread(QThread):
         except Exception as e:
             self.error_occurred.emit(f"Unexpected error during update check: {e}")
 
+class NoAuthRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """リダイレクト先が別ドメインの場合、Authorizationヘッダーを削除するハンドラ"""
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        newreq = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if req.host != newreq.host:
+            if 'Authorization' in newreq.headers:
+                del newreq.headers['Authorization']
+            if 'Authorization' in newreq.unredirected_hdrs:
+                del newreq.unredirected_hdrs['Authorization']
+        return newreq
+
 def download_and_apply_update(download_url: str):
     """ZIPをダウンロードして展開し、バッチファイル経由で自身を上書きして再起動する"""
     temp_dir = tempfile.mkdtemp()
@@ -119,11 +130,19 @@ def download_and_apply_update(download_url: str):
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
     
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPSHandler(context=ctx),
+        NoAuthRedirectHandler()
+    )
+    
     try:
-        with urllib.request.urlopen(req, timeout=30, context=ctx) as response, open(zip_path, 'wb') as out_file:
+        with opener.open(req, timeout=30) as response, open(zip_path, 'wb') as out_file:
             if response.status != 200:
                 raise RuntimeError(f"Failed to download update. HTTP Status: {response.status}")
             out_file.write(response.read())
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode('utf-8', errors='ignore')
+        raise RuntimeError(f"HTTP Error {e.code}: {e.reason}\nDetails: {error_body}")
     except urllib.error.URLError as e:
         raise RuntimeError(f"Network error while downloading update: {e.reason}")
         
