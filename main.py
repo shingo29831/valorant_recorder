@@ -54,7 +54,6 @@ from PyQt6.QtNetwork import QLocalSocket, QLocalServer
 from PyQt6.QtCore import QTextStream
 from ui.main_window import MainWindow, get_resource_path
 from core.config import Config
-from core.updater import UpdateCheckerThread, download_and_apply_update
 
 VALORANT_STYLE = """
 QWidget {
@@ -165,25 +164,6 @@ def main():
     
     window = MainWindow()
     config = Config()
-    
-    # アップデートチェックを別スレッドで開始
-    updater_thread = UpdateCheckerThread(config.UPDATE_API_URL)
-    def on_update_available(version, url):
-        reply = QMessageBox.question(
-            window, 
-            "Update Available", 
-            f"A new version ({version}) is available.\nDo you want to update now?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-        if reply == QMessageBox.StandardButton.Yes:
-            QMessageBox.information(window, "Updating", "The application will download the update and restart. Please wait...")
-            try:
-                download_and_apply_update(url)
-            except Exception as e:
-                QMessageBox.critical(window, "Update Failed", f"Failed to apply update:\n{e}")
-
-    updater_thread.update_available.connect(on_update_available)
-    updater_thread.start()
     
     def handle_connection():
         client = server.nextPendingConnection()
