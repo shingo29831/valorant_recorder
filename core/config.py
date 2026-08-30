@@ -24,7 +24,7 @@ class Config:
         self.RECORD_RESOLUTION = os.environ.get("RECORD_RESOLUTION", "1920x1080")
         self.AUTO_DELETE_DAYS = int(os.environ.get("AUTO_DELETE_DAYS", "0"))
         self.CLIP_SAVE_DIR = os.environ.get("CLIP_SAVE_DIR", os.path.join(self.SAVE_DIR, "clips"))
-        self.UPDATE_API_URL = os.environ.get("UPDATE_API_URL", "")
+        self.UPDATE_API_URL = os.environ.get("UPDATE_API_URL", "https://valoreco-api.meld-task.com/api/version")
         self.PLAYER_SYS_VOLUME = self._parse_volume(os.environ.get("PLAYER_SYS_VOLUME", "1.0"))
         self.PLAYER_MIC_VOLUME = self._parse_volume(os.environ.get("PLAYER_MIC_VOLUME", "1.0"))
 

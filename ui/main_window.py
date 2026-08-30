@@ -63,8 +63,9 @@ class MainWindow(QMainWindow):
         self.watcher_thread.start()
 
         # アップデート確認スレッドの開始
-        self.update_checker = UpdateCheckerThread("https://valorant-recorder.pages.dev/api/version")
+        self.update_checker = UpdateCheckerThread(self.config.UPDATE_API_URL)
         self.update_checker.update_available.connect(self.show_update_dialog)
+        self.update_checker.error_occurred.connect(lambda err: print(f"[Updater] {err}"))
         self.update_checker.start()
 
     def show_update_dialog(self, latest_version, download_url):

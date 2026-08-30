@@ -52,6 +52,7 @@ def _get_auth_headers():
 class UpdateCheckerThread(QThread):
     """バックグラウンドでアップデートを確認するスレッド"""
     update_available = pyqtSignal(str, str) # version, download_url
+    error_occurred = pyqtSignal(str)
 
     def __init__(self, api_url):
         super().__init__()
@@ -59,19 +60,28 @@ class UpdateCheckerThread(QThread):
 
     def run(self):
         if not self.api_url:
-            print("Update check skipped: API URL is not set.")
+            self.error_occurred.emit("Update check skipped: API URL is not set.")
             return
         try:
             req = urllib.request.Request(self.api_url, headers=_get_auth_headers())
-            with urllib.request.urlopen(req, timeout=5) as response:
-                data = json.loads(response.read().decode())
+            with urllib.request.urlopen(req, timeout=10) as response:
+                if response.status != 200:
+                    self.error_occurred.emit(f"HTTP Error: {response.status}")
+                    return
+                
+                response_text = response.read().decode('utf-8')
+                data = json.loads(response_text)
                 latest_version = data.get("version")
                 download_url = data.get("download_url")
                 
                 if latest_version and latest_version != APP_VERSION:
                     self.update_available.emit(latest_version, download_url)
+        except urllib.error.URLError as e:
+            self.error_occurred.emit(f"Network error during update check: {e.reason}")
+        except json.JSONDecodeError as e:
+            self.error_occurred.emit(f"Invalid JSON response during update check: {e}")
         except Exception as e:
-            print(f"Update check failed: {e}")
+            self.error_occurred.emit(f"Unexpected error during update check: {e}")
 
 def download_and_apply_update(download_url: str):
     """ZIPをダウンロードして展開し、バッチファイル経由で自身を上書きして再起動する"""
@@ -80,8 +90,13 @@ def download_and_apply_update(download_url: str):
     
     # 1. ZIPのダウンロード
     req = urllib.request.Request(download_url, headers=_get_auth_headers())
-    with urllib.request.urlopen(req) as response, open(zip_path, 'wb') as out_file:
-        out_file.write(response.read())
+    try:
+        with urllib.request.urlopen(req, timeout=30) as response, open(zip_path, 'wb') as out_file:
+            if response.status != 200:
+                raise RuntimeError(f"Failed to download update. HTTP Status: {response.status}")
+            out_file.write(response.read())
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"Network error while downloading update: {e.reason}")
         
     # 2. ZIPの解凍
     extract_dir = os.path.join(temp_dir, "extracted")
