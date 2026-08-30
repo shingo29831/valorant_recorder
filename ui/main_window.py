@@ -23,7 +23,7 @@ def get_resource_path(relative_path):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("ValoReco ヴァロレコ")
+        self.setWindowTitle(f"ValoReco ヴァロレコ v{APP_VERSION}")
         self.setWindowIcon(QIcon(get_resource_path("assets/icon.ico")))
         self.resize(1280, 720)
         
@@ -135,7 +135,7 @@ class MainWindow(QMainWindow):
     def setup_tray_icon(self):
         self.tray_icon = QSystemTrayIcon(self)
         self.tray_icon.setIcon(QIcon(get_resource_path("assets/icon.ico")))
-        self.tray_icon.setToolTip("ValoReco ヴァロレコ")
+        self.tray_icon.setToolTip(f"ValoReco ヴァロレコ v{APP_VERSION}")
         
         tray_menu = QMenu()
         show_action = QAction("Show", self)
