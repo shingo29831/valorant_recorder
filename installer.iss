@@ -18,6 +18,8 @@ SolidCompression=yes
 PrivilegesRequired=lowest
 ; アンインストーラの設定
 UninstallDisplayIcon={app}\main.exe
+; インストーラ自体のアイコン
+SetupIconFile=assets\icon.ico
 
 [Languages]
 Name: "japanese"; MessagesFile: "compiler:Languages\Japanese.isl"

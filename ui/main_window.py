@@ -1,7 +1,7 @@
 import sys
 import ctypes
 from PyQt6.QtWidgets import QMainWindow, QStackedWidget, QPushButton, QSystemTrayIcon, QMenu
-from PyQt6.QtGui import QAction
+from PyQt6.QtGui import QAction, QIcon
 from PyQt6.QtCore import QCoreApplication
 from core.config import Config
 from ui.watcher_thread import WatcherThread
@@ -13,6 +13,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("ValoReco ヴァロレコ")
+        self.setWindowIcon(QIcon("assets/icon.svg"))
         self.resize(1280, 720)
         
         self._titlebar_color_applied = False
@@ -87,8 +88,7 @@ class MainWindow(QMainWindow):
 
     def setup_tray_icon(self):
         self.tray_icon = QSystemTrayIcon(self)
-        icon = self.style().standardIcon(self.style().StandardPixmap.SP_ComputerIcon)
-        self.tray_icon.setIcon(icon)
+        self.tray_icon.setIcon(QIcon("assets/icon.svg"))
         self.tray_icon.setToolTip("ValoReco ヴァロレコ")
         
         tray_menu = QMenu()

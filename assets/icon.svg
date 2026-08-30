@@ -1,0 +1,42 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- 背景 (Valorant ダークブルー) -->
+  <rect width="256" height="256" rx="48" fill="#0F1923" />
+  
+  <!-- Valorant風 Vロゴ (上部) -->
+  <g transform="translate(0, -10)">
+    <!-- 左パーツ (Valorant レッド) -->
+    <polygon points="116,140 64,88 64,56 116,108" fill="#FF4655" />
+    <!-- 右パーツ (Valorant レッド) -->
+    <polygon points="132,156 200,88 200,56 132,124" fill="#FF4655" />
+  </g>
+
+  <!-- フィルムロール (下部) -->
+  <g transform="translate(28, 164)">
+    <!-- フィルム背景 -->
+    <rect width="200" height="64" rx="4" fill="#111111" stroke="#333333" stroke-width="2"/>
+    
+    <!-- 上部のパーフォレーション (穴) -->
+    <g fill="#FFFFFF">
+      <rect x="12" y="6" width="16" height="12" rx="2" />
+      <rect x="44" y="6" width="16" height="12" rx="2" />
+      <rect x="76" y="6" width="16" height="12" rx="2" />
+      <rect x="108" y="6" width="16" height="12" rx="2" />
+      <rect x="140" y="6" width="16" height="12" rx="2" />
+      <rect x="172" y="6" width="16" height="12" rx="2" />
+    </g>
+    
+    <!-- 下部のパーフォレーション (穴) -->
+    <g fill="#FFFFFF">
+      <rect x="12" y="46" width="16" height="12" rx="2" />
+      <rect x="44" y="46" width="16" height="12" rx="2" />
+      <rect x="76" y="46" width="16" height="12" rx="2" />
+      <rect x="108" y="46" width="16" height="12" rx="2" />
+      <rect x="140" y="46" width="16" height="12" rx="2" />
+      <rect x="172" y="46" width="16" height="12" rx="2" />
+    </g>
+
+    <!-- 中央の録画インジケーター (赤丸) -->
+    <circle cx="100" cy="32" r="10" fill="#FF4655" />
+    <circle cx="100" cy="32" r="14" fill="none" stroke="#FF4655" stroke-width="2" opacity="0.5" />
+  </g>
+</svg>

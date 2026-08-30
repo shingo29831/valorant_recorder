@@ -11,7 +11,7 @@ echo ==========================================
 REM Compile to a single executable using Nuitka.
 REM Includes QtMultimedia plugin, soundcard dependencies, and auth.key.
 REM Using --windows-console-mode=disable for production.
-python -m nuitka --standalone --onefile --enable-plugin=pyqt6 --include-qt-plugins=multimedia --include-package-data=soundcard --include-data-file=auth.key=auth.key --windows-console-mode=disable main.py
+python -m nuitka --standalone --onefile --enable-plugin=pyqt6 --include-qt-plugins=multimedia --include-package-data=soundcard --include-data-file=auth.key=auth.key --windows-console-mode=disable --windows-icon-from-ico=assets/icon.ico main.py
 
 REM Nuitka output file defaults to main.exe
 if not exist "main.exe" (

@@ -48,6 +48,7 @@ except Exception as e:
             pass
 
 from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtGui import QIcon
 from PyQt6.QtNetwork import QLocalSocket, QLocalServer
 from PyQt6.QtCore import QTextStream
 from ui.main_window import MainWindow
@@ -129,6 +130,7 @@ SERVER_NAME = "ValorantRecorderSingleInstance"
 
 def main():
     app = QApplication(sys.argv)
+    app.setWindowIcon(QIcon("assets/icon.svg"))
     
     # 既にアプリが起動しているかチェック
     socket = QLocalSocket()
