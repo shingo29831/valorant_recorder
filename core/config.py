@@ -5,7 +5,7 @@ class Config:
     def __init__(self):
         self.env_file = ".env"
         load_dotenv(self.env_file)
-        self.LANGUAGE = os.environ.get("LANGUAGE", "en")
+        self.LANGUAGE = os.environ.get("LANGUAGE", "ja")
         self.REGION = os.environ.get("VALORANT_REGION", "ap")
         self.RIOT_ID = os.environ.get("RIOT_ID", "")
         self.TAG_LINE = os.environ.get("TAG_LINE", "")

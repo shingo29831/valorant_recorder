@@ -44,9 +44,9 @@ class SettingsTab(QWidget):
         self.record_widget = RecordSettingsWidget(self.config, self.t, self)
         self.playback_widget = PlaybackSettingsWidget(self.config, self.t, self)
         
-        self.tab_widget.addTab(self.general_widget, getattr(self.t, 'tab_general', "General"))
-        self.tab_widget.addTab(self.record_widget, getattr(self.t, 'tab_record', "Recording"))
-        self.tab_widget.addTab(self.playback_widget, getattr(self.t, 'tab_playback', "Playback"))
+        self.tab_widget.addTab(self.general_widget, self.t.tab_general)
+        self.tab_widget.addTab(self.record_widget, self.t.tab_record)
+        self.tab_widget.addTab(self.playback_widget, self.t.tab_playback)
         
         main_layout.addWidget(self.tab_widget)
         

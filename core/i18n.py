@@ -50,6 +50,16 @@ class Translations:
     generating_clip: str
     clip_success: str
     clip_failed: str
+    tab_general: str
+    tab_record: str
+    tab_playback: str
+    system_volume: str
+    mic_volume: str
+    video_settings: str
+    audio_settings: str
+    none_option: str
+    nvidia_broadcast_not_found_title: str
+    nvidia_broadcast_not_found_msg: str
 
 EN = Translations(
     settings_title="APPLICATION SETTINGS",
@@ -99,7 +109,17 @@ EN = Translations(
     generate="Generate",
     generating_clip="Generating clip...",
     clip_success="Clip generated successfully:\n{path}",
-    clip_failed="Failed to generate clip:\n{error}"
+    clip_failed="Failed to generate clip:\n{error}",
+    tab_general="General",
+    tab_record="Recording",
+    tab_playback="Playback",
+    system_volume="System Volume",
+    mic_volume="Mic Volume",
+    video_settings="Video Settings",
+    audio_settings="Audio Settings",
+    none_option="None",
+    nvidia_broadcast_not_found_title="NVIDIA Broadcast Not Found",
+    nvidia_broadcast_not_found_msg="NVIDIA Broadcast microphone was not found in the device list.\n\nPlease ensure the NVIDIA Broadcast app is installed, running, and the microphone effect is turned on."
 )
 
 JA = Translations(
@@ -150,7 +170,17 @@ JA = Translations(
     generate="生成",
     generating_clip="クリップを生成中...",
     clip_success="クリップを生成しました:\n{path}",
-    clip_failed="クリップの生成に失敗しました:\n{error}"
+    clip_failed="クリップの生成に失敗しました:\n{error}",
+    tab_general="一般",
+    tab_record="録画",
+    tab_playback="再生",
+    system_volume="システム音量",
+    mic_volume="マイク音量",
+    video_settings="映像設定",
+    audio_settings="音声設定",
+    none_option="なし",
+    nvidia_broadcast_not_found_title="NVIDIA Broadcast が見つかりません",
+    nvidia_broadcast_not_found_msg="NVIDIA Broadcast マイクがデバイスリストに見つかりませんでした。\n\nNVIDIA Broadcast アプリがインストールされ、起動しており、マイクエフェクトがオンになっていることを確認してください。"
 )
 
 def get_trans(lang_code: str) -> Translations:

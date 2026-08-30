@@ -94,9 +94,12 @@ class PlayerListPage(QWidget):
         
         header_layout.addWidget(self.fav_btn)
         
-        settings_btn = QPushButton(" Settings")
-        settings_btn.setFixedSize(100, 30)
-        settings_btn.setStyleSheet("border-radius: 15px; background-color: #333333; color: white; font-weight: bold; text-align: center;")
+        settings_btn = QPushButton()
+        settings_btn.setFixedSize(30, 30)
+        settings_btn.setStyleSheet("""
+            QPushButton { background-color: transparent; border: none; border-radius: 15px; }
+            QPushButton:hover { background-color: rgba(255, 255, 255, 0.1); }
+        """)
         
         pixmap = QPixmap(24, 24)
         pixmap.fill(Qt.GlobalColor.transparent)
@@ -106,7 +109,7 @@ class PlayerListPage(QWidget):
         painter.end()
         
         settings_btn.setIcon(QIcon(pixmap))
-        settings_btn.setIconSize(QSize(16, 16))
+        settings_btn.setIconSize(QSize(20, 20))
         settings_btn.clicked.connect(self.settingsRequested.emit)
         
         header_layout.addWidget(settings_btn)
@@ -115,7 +118,32 @@ class PlayerListPage(QWidget):
         
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setStyleSheet("QScrollArea { border: none; background-color: transparent; }")
+        self.scroll_area.setStyleSheet("""
+            QScrollArea { 
+                border: none; 
+                background-color: transparent; 
+            }
+            QScrollBar:vertical {
+                background: #1A1A1A;
+                width: 12px;
+                margin: 0px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical {
+                background: #555555;
+                min-height: 20px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #777777;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+                height: 0px;
+            }
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+                background: none;
+            }
+        """)
         
         self.scroll_content = QWidget()
         self.scroll_content.setStyleSheet("background-color: transparent;")

@@ -42,8 +42,8 @@ class PlaybackSettingsWidget(QWidget):
         mic_vol_layout.addWidget(self.mic_vol_slider)
         mic_vol_layout.addWidget(self.mic_vol_label)
         
-        layout.addRow(getattr(self.t, 'system_volume', "System Volume"), sys_vol_layout)
-        layout.addRow(getattr(self.t, 'mic_volume', "Mic Volume"), mic_vol_layout)
+        layout.addRow(self.t.system_volume, sys_vol_layout)
+        layout.addRow(self.t.mic_volume, mic_vol_layout)
         
         self.setLayout(layout)
 

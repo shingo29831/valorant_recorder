@@ -15,9 +15,14 @@ class GeneralSettingsWidget(QWidget):
         layout.setSpacing(15)
         
         self.language_input = QComboBox()
-        self.language_input.addItems(["en", "ja"])
-        self.language_input.setCurrentText(self.config.LANGUAGE)
-        self.language_input.currentTextChanged.connect(self._on_language_changed)
+        self.language_input.addItem("English", "en")
+        self.language_input.addItem("日本語", "ja")
+        
+        index = self.language_input.findData(self.config.LANGUAGE)
+        if index >= 0:
+            self.language_input.setCurrentIndex(index)
+            
+        self.language_input.currentIndexChanged.connect(self._on_language_changed)
         
         self.save_dir_input = QLineEdit(self.config.SAVE_DIR)
         self.save_dir_input.setReadOnly(True)
@@ -46,7 +51,8 @@ class GeneralSettingsWidget(QWidget):
         
         self.setLayout(layout)
 
-    def _on_language_changed(self, lang):
+    def _on_language_changed(self, index):
+        lang = self.language_input.itemData(index)
         if lang == self.config.LANGUAGE:
             return
         self.config.LANGUAGE = lang

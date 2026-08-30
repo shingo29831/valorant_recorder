@@ -18,7 +18,7 @@ class RecordSettingsWidget(QWidget):
         main_layout.setSpacing(15)
         
         # Video Settings Group
-        video_group = QGroupBox(getattr(self.t, 'video_settings', "Video Settings"))
+        video_group = QGroupBox(self.t.video_settings)
         video_layout = QFormLayout()
         video_layout.setSpacing(15)
         
@@ -67,7 +67,7 @@ class RecordSettingsWidget(QWidget):
         main_layout.addWidget(video_group)
         
         # Audio Settings Group
-        audio_group = QGroupBox(getattr(self.t, 'audio_settings', "Audio Settings"))
+        audio_group = QGroupBox(self.t.audio_settings)
         audio_layout = QFormLayout()
         audio_layout.setSpacing(15)
         
@@ -87,19 +87,19 @@ class RecordSettingsWidget(QWidget):
         self.system_volume_meter = VolumeMeter()
         
         self.mic_input = QComboBox()
-        self.mic_input.addItem("None")
+        self.mic_input.addItem(self.t.none_option, "None")
         try:
             import soundcard as sc
             seen = set()
             for m in sc.all_microphones(include_loopback=False):
                 name = m.name
                 if name not in seen:
-                    self.mic_input.addItem(name)
+                    self.mic_input.addItem(name, name)
                     seen.add(name)
         except Exception:
             pass
         
-        idx = self.mic_input.findText(self.config.RECORD_AUDIO_MIC)
+        idx = self.mic_input.findData(self.config.RECORD_AUDIO_MIC if self.config.RECORD_AUDIO_MIC else "None")
         if idx >= 0:
             self.mic_input.setCurrentIndex(idx)
         self.mic_input.currentIndexChanged.connect(self._on_mic_changed)
@@ -118,7 +118,9 @@ class RecordSettingsWidget(QWidget):
         gain_layout.addWidget(self.mic_gain_label)
         
         self.mic_denoise_combo = QComboBox()
-        self.mic_denoise_combo.addItems(["None", "AI (RNNoise)", "NVIDIA Broadcast"])
+        self.mic_denoise_combo.addItem(self.t.none_option, "None")
+        self.mic_denoise_combo.addItem("AI (RNNoise)", "AI (RNNoise)")
+        self.mic_denoise_combo.addItem("NVIDIA Broadcast", "NVIDIA Broadcast")
         
         denoise_val = getattr(self.config, 'RECORD_AUDIO_MIC_DENOISE', 'None')
         if denoise_val in ('True', 'Standard (FFmpeg)'):
@@ -126,7 +128,7 @@ class RecordSettingsWidget(QWidget):
         elif denoise_val == 'False':
             denoise_val = 'None'
             
-        idx = self.mic_denoise_combo.findText(denoise_val)
+        idx = self.mic_denoise_combo.findData(denoise_val)
         if idx >= 0:
             self.mic_denoise_combo.setCurrentIndex(idx)
         self.mic_denoise_combo.currentIndexChanged.connect(self._on_denoise_changed)
@@ -200,21 +202,19 @@ class RecordSettingsWidget(QWidget):
             self.monitor_thread.set_monitor_audio(self.mic_monitor_cb.isChecked())
 
     def _on_denoise_changed(self, index):
-        mode = self.mic_denoise_combo.currentText()
+        mode = self.mic_denoise_combo.currentData()
         self.monitor_warning_label.setVisible(mode == "AI (RNNoise)")
             
         if mode == "NVIDIA Broadcast":
             found = False
             for i in range(self.mic_input.count()):
-                if "NVIDIA Broadcast" in self.mic_input.itemText(i):
+                if "NVIDIA Broadcast" in self.mic_input.itemData(i):
                     self.mic_input.setCurrentIndex(i)
                     found = True
                     break
             if not found:
-                QMessageBox.warning(self, "NVIDIA Broadcast Not Found", 
-                                    "NVIDIA Broadcast microphone was not found in the device list.\n\n"
-                                    "Please ensure the NVIDIA Broadcast app is installed, running, and the microphone effect is turned on.")
-                idx = self.mic_denoise_combo.findText("AI (RNNoise)")
+                QMessageBox.warning(self, self.t.nvidia_broadcast_not_found_title, self.t.nvidia_broadcast_not_found_msg)
+                idx = self.mic_denoise_combo.findData("AI (RNNoise)")
                 if idx >= 0:
                     self.mic_denoise_combo.blockSignals(True)
                     self.mic_denoise_combo.setCurrentIndex(idx)
@@ -233,9 +233,9 @@ class RecordSettingsWidget(QWidget):
 
     def start_monitors(self):
         if self.monitor_thread is None:
-            mic_name = self.mic_input.currentText()
+            mic_name = self.mic_input.currentData()
             gain = self.mic_gain_slider.value() / 100.0
-            denoise = self.mic_denoise_combo.currentText() == "AI (RNNoise)"
+            denoise = self.mic_denoise_combo.currentData() == "AI (RNNoise)"
             gate = self.mic_gate_slider.value() / 100.0
             self.monitor_thread = MicMonitorThread(mic_name, gain, denoise, gate)
             self.monitor_thread.set_monitor_audio(self.mic_monitor_cb.isChecked())
@@ -265,10 +265,10 @@ class RecordSettingsWidget(QWidget):
         self.config.RECORD_RESOLUTION = self.res_input.currentText()
         
         self.config.RECORD_AUDIO_SYSTEM_GAIN = str(self.system_gain_slider.value() / 100.0)
-        mic_val = self.mic_input.currentText()
+        mic_val = self.mic_input.currentData()
         self.config.RECORD_AUDIO_MIC = "" if mic_val == "None" else mic_val
         self.config.RECORD_AUDIO_MIC_GAIN = str(self.mic_gain_slider.value() / 100.0)
         self.config.RECORD_AUDIO_MIC_NOISE_GATE = str(self.mic_gate_slider.value())
-        self.config.RECORD_AUDIO_MIC_DENOISE = self.mic_denoise_combo.currentText()
+        self.config.RECORD_AUDIO_MIC_DENOISE = self.mic_denoise_combo.currentData()
         
         self.config.save()
