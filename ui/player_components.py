@@ -1,31 +1,9 @@
 import os
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QSlider, QLayout, QMenu, QSizePolicy, QPushButton
-from PyQt6.QtCore import Qt, pyqtSignal, QTimer, QPoint, QRect, QSize, QByteArray, QRectF
-from PyQt6.QtGui import QColor, QPen, QPixmap, QPainter
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QLayout, QMenu, QPushButton
+from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QRect, QSize, QByteArray
+from PyQt6.QtGui import QPixmap, QPainter
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 from PyQt6.QtSvg import QSvgRenderer
-
-KILL_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-  <g fill="#00A2FF" stroke="#000000" stroke-width="0.5">
-    <g transform="translate(12,12) rotate(45) translate(-12,-12)">
-      <path d="M10.5,17 H13.5 V21 H10.5 Z M7,15 H17 V17 H7 Z M10.5,5 L12,2 L13.5,5 V15 H10.5 Z" />
-    </g>
-    <g transform="translate(12,12) rotate(-45) translate(-12,-12)">
-      <path d="M10.5,17 H13.5 V21 H10.5 Z M7,15 H17 V17 H7 Z M10.5,5 L12,2 L13.5,5 V15 H10.5 Z" />
-    </g>
-  </g>
-</svg>"""
-
-DEATH_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-  <g fill="#FF0000" stroke="#000000" stroke-width="0.5">
-    <path d="M12,2 C6.5,2 3,6 3,11 c0,3.5 2,6 4,7 h10 c2,-1 4,-3.5 4,-7 C21,6 17.5,2 12,2 z M8,13 c-1.5,0 -2.5,-1.5 -2.5,-3 c0,-1.5 1,-3 2.5,-3 s2.5,1.5 2.5,3 C10.5,11.5 9.5,13 8,13 z M16,13 c-1.5,0 -2.5,-1.5 -2.5,-3 c0,-1.5 1,-3 2.5,-3 s2.5,1.5 2.5,3 C18.5,11.5 17.5,13 16,13 z M12,15.5 l-1.5,-2 h3 L12,15.5 z" />
-    <path d="M7.5,19.5 v2.5 h1.5 v-1.5 h2 v1.5 h2 v-1.5 h2 v1.5 h1.5 v-2.5 H7.5 z" />
-  </g>
-</svg>"""
-
-ASSIST_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
-  <path d="M21,8h-4.5l1.2-3.6c0.2-0.6-0.3-1.2-0.9-1.2c-0.3,0-0.6,0.1-0.8,0.3L10,9.5V20h8.5c0.8,0,1.5-0.5,1.7-1.2l1.9-6.8 C22.3,11.1,21.8,10.2,21,8z M8,10H4v10h4V10z" fill="#00FF00" stroke="#000000" stroke-width="0.5"/>
-</svg>"""
 
 STAR_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="gold" stroke="black" stroke-width="1">
   <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
@@ -261,123 +239,7 @@ class RecordItemWidget(QWidget):
         elif action == delete_action:
             self.deleteRequested.emit(self.json_filename)
 
-class VolumePopup(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent, Qt.WindowType.ToolTip)
-        self.setFixedSize(40, 120)
-        self.setStyleSheet("""
-            VolumePopup { background-color: #222222; border: 1px solid #444444; border-radius: 4px; }
-            QSlider { background: transparent; }
-            QSlider::groove:vertical { background: #444444; width: 4px; border-radius: 2px; }
-            QSlider::handle:vertical { background: #FFFFFF; height: 12px; margin: 0 -4px; border-radius: 6px; }
-            QSlider::sub-page:vertical { background: #FF4655; width: 4px; border-radius: 2px; }
-            QSlider::add-page:vertical { background: #444444; width: 4px; border-radius: 2px; }
-        """)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 10, 0, 10)
-        self.slider = QSlider(Qt.Orientation.Vertical)
-        self.slider.setRange(0, 100)
-        self.slider.setValue(100)
-        layout.addWidget(self.slider, alignment=Qt.AlignmentFlag.AlignHCenter)
 
-    def leaveEvent(self, event):
-        QTimer.singleShot(100, self._check_hide)
-        super().leaveEvent(event)
-        
-    def _check_hide(self):
-        cursor_pos = self.cursor().pos()
-        parent_widget = self.parent()
-        if parent_widget:
-            if not self.geometry().contains(cursor_pos) and not parent_widget.rect().contains(parent_widget.mapFromGlobal(cursor_pos)):
-                self.hide()
-        else:
-            if not self.geometry().contains(cursor_pos):
-                self.hide()
-
-class VolumeWidget(QWidget):
-    volumeChanged = pyqtSignal(float)
-    
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFixedSize(30, 30)
-        
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        
-        self.icon_label = QLabel("🔊")
-        self.icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.icon_label.setStyleSheet("font-size: 16px; color: white;")
-        layout.addWidget(self.icon_label)
-        
-        self.popup = VolumePopup(self)
-        self.popup.slider.valueChanged.connect(self._on_value_changed)
-        
-        self.previous_volume = 100
-        self.is_muted = False
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.toggle_mute()
-        super().mousePressEvent(event)
-        
-    def toggle_mute(self):
-        if self.is_muted:
-            self.is_muted = False
-            self.popup.slider.setValue(self.previous_volume)
-        else:
-            self.previous_volume = self.popup.slider.value()
-            if self.previous_volume == 0:
-                self.previous_volume = 100
-            self.is_muted = True
-            self.popup.slider.setValue(0)
-        
-    def _on_value_changed(self, val):
-        if val > 0:
-            self.is_muted = False
-            self.previous_volume = val
-        elif val == 0 and not self.is_muted:
-            self.is_muted = True
-            
-        self.volumeChanged.emit(val / 100.0)
-        if val == 0:
-            self.icon_label.setText("🔇")
-        elif val < 50:
-            self.icon_label.setText("🔉")
-        else:
-            self.icon_label.setText("🔊")
-            
-    def set_volume(self, volume):
-        val = int(volume * 100)
-        self.popup.slider.blockSignals(True)
-        self.popup.slider.setValue(val)
-        self.popup.slider.blockSignals(False)
-        if val == 0:
-            self.is_muted = True
-            self.icon_label.setText("🔇")
-        elif val < 50:
-            self.is_muted = False
-            self.previous_volume = val
-            self.icon_label.setText("🔉")
-        else:
-            self.is_muted = False
-            self.previous_volume = val
-            self.icon_label.setText("🔊")
-            
-    def enterEvent(self, event):
-        pos = self.mapToGlobal(self.rect().topLeft())
-        self.popup.move(pos.x() - 5, pos.y() - self.popup.height() + 5)
-        self.popup.show()
-        super().enterEvent(event)
-        
-    def leaveEvent(self, event):
-        QTimer.singleShot(100, self._check_hide)
-        super().leaveEvent(event)
-
-    def _check_hide(self):
-        cursor_pos = self.popup.cursor().pos()
-        if not self.popup.geometry().contains(cursor_pos) and not self.rect().contains(self.mapFromGlobal(cursor_pos)):
-            self.popup.hide()
 
 class PlayerContainer(QWidget):
     def __init__(self, video_widget, aspect_ratio=16/9, parent=None):
@@ -706,7 +568,7 @@ class MicVolumePopup(QWidget):
                 self.hide()
 
 class MicVolumeWidget(QWidget):
-    volumeChanged = pyqtSignal(float)
+    volumeChanged = pyqtSignal(int)
     
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -750,14 +612,14 @@ class MicVolumeWidget(QWidget):
         elif val == 0 and not self.is_muted:
             self.is_muted = True
             
-        self.volumeChanged.emit(val / 100.0)
+        self.volumeChanged.emit(val)
         if val == 0:
             self.icon_label.setStyleSheet("font-size: 16px; color: gray;")
         else:
             self.icon_label.setStyleSheet("font-size: 16px; color: white;")
             
     def set_volume(self, volume):
-        val = int(volume * 100)
+        val = int(volume)
         self.popup.slider.blockSignals(True)
         self.popup.slider.setValue(val)
         self.popup.slider.blockSignals(False)

@@ -25,8 +25,18 @@ class Config:
         self.AUTO_DELETE_DAYS = int(os.environ.get("AUTO_DELETE_DAYS", "0"))
         self.CLIP_SAVE_DIR = os.environ.get("CLIP_SAVE_DIR", os.path.join(self.SAVE_DIR, "clips"))
         self.UPDATE_API_URL = os.environ.get("UPDATE_API_URL", "")
-        self.PLAYER_SYS_VOLUME = float(os.environ.get("PLAYER_SYS_VOLUME", "1.0"))
-        self.PLAYER_MIC_VOLUME = float(os.environ.get("PLAYER_MIC_VOLUME", "1.0"))
+        self.PLAYER_SYS_VOLUME = self._parse_volume(os.environ.get("PLAYER_SYS_VOLUME", "1.0"))
+        self.PLAYER_MIC_VOLUME = self._parse_volume(os.environ.get("PLAYER_MIC_VOLUME", "1.0"))
+
+    def _parse_volume(self, val_str, default=1.0):
+        try:
+            val = float(val_str)
+            # 過去バージョンで 0~100 などの整数として保存されていた場合の互換性対応
+            if val > 2.0:
+                return val / 100.0
+            return val
+        except (ValueError, TypeError):
+            return default
 
     def save(self):
         if not os.path.exists(self.env_file):

@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel
 from PyQt6.QtCore import Qt, pyqtSignal, QByteArray
 from PyQt6.QtGui import QPixmap, QPainter
 from PyQt6.QtSvg import QSvgRenderer
-from ui.player_components import KILL_SVG, DEATH_SVG, ASSIST_SVG
+from ui.timeline_overlay import KILL_SVG, DEATH_SVG, ASSIST_SVG
 
 class EventToggleIcon(QLabel):
     toggled = pyqtSignal(str, bool)

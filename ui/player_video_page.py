@@ -10,7 +10,9 @@ from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtSvg import QSvgRenderer
 from core.config import Config
 from core.i18n import get_trans
-from ui.player_components import ClickableVideoWidget, VolumeWidget, MicVolumeWidget, TimelineOverlay, PlayerContainer
+from ui.player_components import ClickableVideoWidget, PlayerContainer
+from ui.volume_widgets import VolumeWidget, MicVolumeWidget
+from ui.timeline_overlay import TimelineOverlay
 from ui.player_utils import find_video_for_json, guess_player_name
 from ui.event_toggle_widget import EventToggleWidget
 from ui.notification_overlay import NotificationOverlay
@@ -77,7 +79,7 @@ class PlayerVideoPage(QWidget):
 
         self.media_player = QMediaPlayer(self)
         self.audio_output = QAudioOutput(self)
-        self.audio_output.setVolume(min(self.current_sys_volume, 1.0))
+        self.audio_output.setVolume(self.current_sys_volume / 2.0)
         self.media_player.setAudioOutput(self.audio_output)
         self.media_player.setVideoOutput(self.video_widget)
         self.media_player.mediaStatusChanged.connect(self._on_media_player_status_changed)
@@ -85,7 +87,7 @@ class PlayerVideoPage(QWidget):
         # マイク音を同時に再生・独立制御するためのサブプレイヤー
         self.mic_player = QMediaPlayer(self)
         self.mic_audio_output = QAudioOutput(self)
-        self.mic_audio_output.setVolume(min(self.current_mic_volume, 1.0))
+        self.mic_audio_output.setVolume(self.current_mic_volume / 2.0)
         self.mic_player.setAudioOutput(self.mic_audio_output)
         self.mic_player.mediaStatusChanged.connect(self._on_mic_player_status_changed)
         
@@ -105,11 +107,11 @@ class PlayerVideoPage(QWidget):
         controls_layout.setContentsMargins(0, 0, 0, 0)
         
         self.volume_widget = VolumeWidget()
-        self.volume_widget.set_volume(self.current_sys_volume)
+        self.volume_widget.set_volume(int(self.current_sys_volume * 100))
         self.volume_widget.volumeChanged.connect(self.on_sys_volume_changed)
         
         self.mic_volume_widget = MicVolumeWidget()
-        self.mic_volume_widget.set_volume(self.current_mic_volume)
+        self.mic_volume_widget.set_volume(int(self.current_mic_volume * 100))
         self.mic_volume_widget.volumeChanged.connect(self.on_mic_volume_changed)
         
         self.time_label = QLabel("00:00 / 00:00")
@@ -371,16 +373,13 @@ class PlayerVideoPage(QWidget):
         pass
 
     def on_sys_volume_changed(self, volume):
-        vol_float = float(volume)
-        self.current_sys_volume = vol_float
-        # 再生プレイヤーの上限は1.0(100%)に制限しつつ、保存値は200%を許容
-        self.audio_output.setVolume(min(vol_float, 1.0))
+        self.current_sys_volume = volume / 100.0
+        self.audio_output.setVolume(self.current_sys_volume / 2.0)
         self._save_volume_settings()
 
     def on_mic_volume_changed(self, volume):
-        vol_float = float(volume)
-        self.current_mic_volume = vol_float
-        self.mic_audio_output.setVolume(min(vol_float, 1.0))
+        self.current_mic_volume = volume / 100.0
+        self.mic_audio_output.setVolume(self.current_mic_volume / 2.0)
         self._save_volume_settings()
 
     def _on_media_player_status_changed(self, status):
@@ -414,9 +413,9 @@ class PlayerVideoPage(QWidget):
             QTimer.singleShot(150, self._restore_volume)
 
     def _restore_volume(self):
-        self.audio_output.setVolume(min(self.current_sys_volume, 1.0))
+        self.audio_output.setVolume(self.current_sys_volume / 2.0)
         if len(self.mic_player.audioTracks()) >= 2:
-            self.mic_audio_output.setVolume(min(self.current_mic_volume, 1.0))
+            self.mic_audio_output.setVolume(self.current_mic_volume / 2.0)
         else:
             self.mic_audio_output.setVolume(0)
 
@@ -537,3 +536,18 @@ class PlayerVideoPage(QWidget):
     def set_position(self, position):
         self.media_player.setPosition(position)
         self.mic_player.setPosition(position)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # 設定画面などで変更された最新の音量を読み込んで反映
+        sys_vol = float(getattr(self.config, 'PLAYER_SYS_VOLUME', '1.0'))
+        if self.current_sys_volume != sys_vol:
+            self.current_sys_volume = sys_vol
+            self.volume_widget.set_volume(int(sys_vol * 100))
+            self.audio_output.setVolume(sys_vol / 2.0)
+            
+        mic_vol = float(getattr(self.config, 'PLAYER_MIC_VOLUME', '1.0'))
+        if self.current_mic_volume != mic_vol:
+            self.current_mic_volume = mic_vol
+            self.mic_volume_widget.set_volume(int(mic_vol * 100))
+            self.mic_audio_output.setVolume(mic_vol / 2.0)
