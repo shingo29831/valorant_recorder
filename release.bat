@@ -16,8 +16,8 @@ call build_installer.bat
 echo.
 echo [3/5] Creating update.zip...
 if exist update.zip del update.zip
-REM Use PowerShell to compress main.exe into update.zip
-powershell -Command "Compress-Archive -Path main.exe -DestinationPath update.zip -Force"
+REM Use PowerShell to compress ValoReco.exe into update.zip
+powershell -Command "Compress-Archive -Path ValoReco.exe -DestinationPath update.zip -Force"
 
 echo.
 echo [4/5] Preparing release directory...

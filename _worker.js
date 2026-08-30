@@ -111,7 +111,7 @@ export default {
 
       const owner = "shingo29831";
       const repo = "valorant-recorder-release";
-      const assetName = url.pathname === "/download/installer" ? "ValorantRecorder_Setup.exe" : "update.zip";
+      const assetName = url.pathname === "/download/installer" ? "ValoReco_Setup.exe" : "update.zip";
 
       // GitHub API で最新のリリース情報を取得 (APP_VERSIONに依存しない)
       const releaseUrl = `https://api.github.com/repos/${owner}/${repo}/releases/latest`;
@@ -153,7 +153,7 @@ export default {
     // 3. ボット対策 & アプリケーション制限 (APIプロキシ用)
     const userAgent = request.headers.get("User-Agent") || "";
     const isBot = /bot|crawler|spider|crawling|curl|wget|postman/i.test(userAgent);
-    if (!userAgent || isBot || !userAgent.includes("ValorantRecorder")) {
+    if (!userAgent || isBot || (!userAgent.includes("ValorantRecorder") && !userAgent.includes("ValoReco"))) {
       return new Response("Forbidden", { status: 403 });
     }
 
