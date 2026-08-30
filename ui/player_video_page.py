@@ -29,6 +29,14 @@ SCISSORS_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" f
   <path d="M9.64,7.64C9.87,7.14 10,6.59 10,6C10,3.79 8.21,2 6,2C3.79,2 2,3.79 2,6C2,8.21 3.79,10 6,10C6.59,10 7.14,9.87 7.64,9.64L10,12L7.64,14.36C7.14,14.13 6.59,14 6,14C3.79,14 2,15.79 2,18C2,20.21 3.79,22 6,22C8.21,22 10,20.21 10,18C10,17.41 9.87,16.86 9.64,16.36L12,14L19,21H22V20L9.64,7.64M6,8C4.9,8 4,7.1 4,6C4,4.9 4.9,4 6,4C7.1,4 8,4.9 8,6C8,7.1 7.1,8 6,8M6,20C4.9,20 4,19.1 4,18C4,16.9 4.9,16 6,16C7.1,16 8,16.9 8,18C8,19.1 7.1,20 6,20M12,12.5C11.72,12.5 11.5,12.28 11.5,12C11.5,11.72 11.72,11.5 12,11.5C12.28,11.5 12.5,11.72 12.5,12C12.5,12.28 12.28,12.5 12,12.5M19,3H22V4L14,12L11.64,9.64L19,3Z" />
 </svg>"""
 
+ZOOM_IN_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white">
+  <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+</svg>"""
+
+ZOOM_OUT_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white">
+  <path d="M19 13H5v-2h14v2z"/>
+</svg>"""
+
 class PlayerVideoPage(QWidget):
     backRequested = pyqtSignal()
 
@@ -118,10 +126,28 @@ class PlayerVideoPage(QWidget):
         self.time_label.setFixedWidth(100)
         self.time_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
+        self.zoom_out_btn = QPushButton()
+        self.zoom_out_btn.setFixedSize(24, 24)
+        self.zoom_out_btn.setStyleSheet("border-radius: 12px; background-color: #333333;")
+        self.zoom_out_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.zoom_out_btn.setIcon(self._create_icon(ZOOM_OUT_SVG, 16))
+        self.zoom_out_btn.clicked.connect(self.zoom_out_timeline)
+        self.zoom_out_btn.hide()
+        
+        self.zoom_in_btn = QPushButton()
+        self.zoom_in_btn.setFixedSize(24, 24)
+        self.zoom_in_btn.setStyleSheet("border-radius: 12px; background-color: #333333;")
+        self.zoom_in_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.zoom_in_btn.setIcon(self._create_icon(ZOOM_IN_SVG, 16))
+        self.zoom_in_btn.clicked.connect(self.zoom_in_timeline)
+        self.zoom_in_btn.hide()
+        
         controls_layout.addWidget(self.volume_widget)
         controls_layout.addWidget(self.mic_volume_widget)
         controls_layout.addWidget(self.time_label)
         controls_layout.addWidget(self.timeline_overlay)
+        controls_layout.addWidget(self.zoom_out_btn)
+        controls_layout.addWidget(self.zoom_in_btn)
         
         self.player_container = PlayerContainer(self.video_widget)
         
@@ -265,18 +291,37 @@ class PlayerVideoPage(QWidget):
         self.speed_osd_label.show()
         self.speed_osd_timer.start(2000)
 
+    def zoom_in_timeline(self):
+        current_zoom = self.timeline_overlay.zoom_factor
+        self.timeline_overlay.set_zoom(current_zoom * 1.5, center_ms=self.media_player.position())
+
+    def zoom_out_timeline(self):
+        current_zoom = self.timeline_overlay.zoom_factor
+        self.timeline_overlay.set_zoom(current_zoom / 1.5, center_ms=self.media_player.position())
+
     def _toggle_edit_mode(self):
         is_visible = self.edit_panel.isVisible()
         self.edit_panel.setVisible(not is_visible)
+        
+        self.zoom_out_btn.setVisible(not is_visible)
+        self.zoom_in_btn.setVisible(not is_visible)
+        
         if not is_visible:
             self.clip_start_ms = self.media_player.position()
             self.clip_end_ms = min(self.media_player.duration(), self.clip_start_ms + 30000)
             self._update_clip_labels()
             self.timeline_overlay.set_edit_mode(True, self.clip_start_ms, self.clip_end_ms)
             self.edit_mode_btn.setStyleSheet("border-radius: 20px; background-color: #FF4655;")
+            
+            target_view_duration = 60000
+            duration = self.media_player.duration()
+            if duration > target_view_duration:
+                zoom = duration / target_view_duration
+                self.timeline_overlay.set_zoom(zoom, center_ms=self.media_player.position())
         else:
             self.timeline_overlay.set_edit_mode(False)
             self.edit_mode_btn.setStyleSheet("border-radius: 20px; background-color: #333333;")
+            self.timeline_overlay.set_zoom(1.0)
 
     def _set_clip_start(self):
         self.clip_start_ms = self.media_player.position()

@@ -246,18 +246,7 @@ class PlayerContainer(QWidget):
         super().__init__(parent)
         self.aspect_ratio = aspect_ratio
         self.video_widget = video_widget
-        
-        self.main_layout = QVBoxLayout(self)
-        self.main_layout.setContentsMargins(0, 0, 0, 0)
-        self.main_layout.setSpacing(0)
-        
-        self.inner_container = QWidget()
-        self.inner_layout = QVBoxLayout(self.inner_container)
-        self.inner_layout.setContentsMargins(0, 0, 0, 0)
-        self.inner_layout.setSpacing(0)
-        self.inner_layout.addWidget(self.video_widget)
-        
-        self.main_layout.addWidget(self.inner_container, alignment=Qt.AlignmentFlag.AlignCenter)
+        self.video_widget.setParent(self)
 
     def resizeEvent(self, event):
         w = event.size().width()
@@ -267,11 +256,15 @@ class PlayerContainer(QWidget):
             if w / h > self.aspect_ratio:
                 new_video_h = h
                 new_video_w = int(new_video_h * self.aspect_ratio)
+                x = (w - new_video_w) // 2
+                y = 0
             else:
                 new_video_w = w
                 new_video_h = int(new_video_w / self.aspect_ratio)
+                x = 0
+                y = (h - new_video_h) // 2
                 
-            self.inner_container.setFixedSize(new_video_w, new_video_h)
+            self.video_widget.setGeometry(x, y, new_video_w, new_video_h)
             
         super().resizeEvent(event)
 

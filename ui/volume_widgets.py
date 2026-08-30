@@ -10,8 +10,8 @@ class VolumePopup(QWidget):
             QSlider { background: transparent; }
             QSlider::groove:vertical { background: #444444; width: 4px; border-radius: 2px; }
             QSlider::handle:vertical { background: #FFFFFF; height: 12px; margin: 0 -4px; border-radius: 6px; }
-            QSlider::sub-page:vertical { background: #FF4655; width: 4px; border-radius: 2px; }
-            QSlider::add-page:vertical { background: #444444; width: 4px; border-radius: 2px; }
+            QSlider::sub-page:vertical { background: #444444; width: 4px; border-radius: 2px; }
+            QSlider::add-page:vertical { background: #FF4655; width: 4px; border-radius: 2px; }
         """)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 10, 0, 10)
@@ -128,8 +128,8 @@ class MicVolumePopup(QWidget):
             QSlider { background: transparent; }
             QSlider::groove:vertical { background: #444444; width: 4px; border-radius: 2px; }
             QSlider::handle:vertical { background: #FFFFFF; height: 12px; margin: 0 -4px; border-radius: 6px; }
-            QSlider::sub-page:vertical { background: #00A2FF; width: 4px; border-radius: 2px; }
-            QSlider::add-page:vertical { background: #444444; width: 4px; border-radius: 2px; }
+            QSlider::sub-page:vertical { background: #444444; width: 4px; border-radius: 2px; }
+            QSlider::add-page:vertical { background: #00A2FF; width: 4px; border-radius: 2px; }
         """)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 10, 0, 10)
