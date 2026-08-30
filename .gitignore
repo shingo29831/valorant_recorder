@@ -48,3 +48,4 @@ main.dist/
 main.build/
 Output/
 update.zip
+*.exe
