@@ -51,7 +51,7 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 from PyQt6.QtGui import QIcon
 from PyQt6.QtNetwork import QLocalSocket, QLocalServer
 from PyQt6.QtCore import QTextStream
-from ui.main_window import MainWindow
+from ui.main_window import MainWindow, get_resource_path
 from core.config import Config
 from core.updater import UpdateCheckerThread, download_and_apply_update
 
@@ -130,7 +130,7 @@ SERVER_NAME = "ValorantRecorderSingleInstance"
 
 def main():
     app = QApplication(sys.argv)
-    app.setWindowIcon(QIcon("assets/icon.svg"))
+    app.setWindowIcon(QIcon(get_resource_path("assets/icon.ico")))
     
     # 既にアプリが起動しているかチェック
     socket = QLocalSocket()
