@@ -4,7 +4,7 @@ import re
 import subprocess
 from datetime import datetime
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QMessageBox
-from PyQt6.QtCore import Qt, QUrl, QSize, pyqtSignal, QByteArray, QTimer, QThread
+from PyQt6.QtCore import Qt, QUrl, QSize, pyqtSignal, QByteArray, QTimer, QThread, QEvent
 from PyQt6.QtGui import QIcon, QPixmap, QPainter
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
 from PyQt6.QtSvg import QSvgRenderer
@@ -22,6 +22,15 @@ BACK_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill=
 SCISSORS_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white">
   <path d="M9.64,7.64C9.87,7.14 10,6.59 10,6C10,3.79 8.21,2 6,2C3.79,2 2,3.79 2,6C2,8.21 3.79,10 6,10C6.59,10 7.14,9.87 7.64,9.64L10,12L7.64,14.36C7.14,14.13 6.59,14 6,14C3.79,14 2,15.79 2,18C2,20.21 3.79,22 6,22C8.21,22 10,20.21 10,18C10,17.41 9.87,16.86 9.64,16.36L12,14L19,21H22V20L9.64,7.64M6,8C4.9,8 4,7.1 4,6C4,4.9 4.9,4 6,4C7.1,4 8,4.9 8,6C8,7.1 7.1,8 6,8M6,20C4.9,20 4,19.1 4,18C4,16.9 4.9,16 6,16C7.1,16 8,16.9 8,18C8,19.1 7.1,20 6,20M12,12.5C11.72,12.5 11.5,12.28 11.5,12C11.5,11.72 11.72,11.5 12,11.5C12.28,11.5 12.5,11.72 12.5,12C12.5,12.28 12.28,12.5 12,12.5M19,3H22V4L14,12L11.64,9.64L19,3Z" />
 </svg>"""
+
+PLAY_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white"><path d="M8,5.14V19.14L19,12.14L8,5.14Z" /></svg>"""
+PAUSE_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white"><path d="M14,19H18V5H14M6,19H10V5H6V19Z" /></svg>"""
+SKIP_BACK_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white"><path d="M11.5,12L20,18V6M11,18V6L2.5,12L11,18Z" /></svg>"""
+SKIP_FORWARD_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white"><path d="M13,6V18L21.5,12M4,18L12.5,12L4,6V18Z" /></svg>"""
+PREV_ROUND_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white"><path d="M6,6H8V18H6M9.5,12L18,18V6M16,14.14L12.97,12L16,9.86V14.14Z" /></svg>"""
+NEXT_ROUND_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white"><path d="M16,18H18V6H16M8,6L16.5,12L8,18V6Z" /></svg>"""
+MINUS_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white"><path d="M19,13H5V11H19V13Z" /></svg>"""
+PLUS_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white"><path d="M19,13H13V19H11V13H5V11H11V5H13V11H19V13Z" /></svg>"""
 
 class ClipGeneratorThread(QThread):
     finished = pyqtSignal(bool, str)
@@ -157,6 +166,7 @@ class PlayerVideoPage(QWidget):
         self.media_player.positionChanged.connect(self.position_changed)
         self.media_player.durationChanged.connect(self.duration_changed)
         self.media_player.errorOccurred.connect(self.handle_media_error)
+        self.media_player.playbackStateChanged.connect(self._on_playback_state_changed)
         
         controls_widget = QWidget()
         controls_layout = QHBoxLayout(controls_widget)
@@ -250,9 +260,184 @@ class PlayerVideoPage(QWidget):
         
         page_layout.addLayout(top_layout, stretch=1)
         page_layout.addWidget(controls_widget)
+        
+        playback_control_layout = QHBoxLayout()
+        playback_control_layout.setContentsMargins(0, 0, 0, 0)
+        
+        playback_control_layout.addStretch(1)
+        
+        center_layout = QHBoxLayout()
+        center_layout.setSpacing(15)
+        
+        btn_style = "QPushButton { border-radius: 20px; background-color: #333333; } QPushButton:hover { background-color: #444444; }"
+        
+        self.prev_round_btn = QPushButton()
+        self.prev_round_btn.setFixedSize(40, 40)
+        self.prev_round_btn.setStyleSheet(btn_style)
+        self.prev_round_btn.setIcon(self._create_icon(PREV_ROUND_SVG))
+        self.prev_round_btn.setIconSize(QSize(24, 24))
+        self.prev_round_btn.clicked.connect(self.skip_to_prev_round)
+        
+        self.skip_back_btn = QPushButton()
+        self.skip_back_btn.setFixedSize(40, 40)
+        self.skip_back_btn.setStyleSheet(btn_style)
+        self.skip_back_btn.setIcon(self._create_icon(SKIP_BACK_SVG))
+        self.skip_back_btn.setIconSize(QSize(24, 24))
+        self.skip_back_btn.clicked.connect(self.skip_backward)
+        
+        self.play_pause_btn = QPushButton()
+        self.play_pause_btn.setFixedSize(50, 50)
+        self.play_pause_btn.setStyleSheet("QPushButton { border-radius: 25px; background-color: #FF4655; } QPushButton:hover { background-color: #FF5865; }")
+        self.play_pause_btn.setIcon(self._create_icon(PLAY_SVG))
+        self.play_pause_btn.setIconSize(QSize(30, 30))
+        self.play_pause_btn.clicked.connect(self.toggle_play)
+        
+        self.skip_forward_btn = QPushButton()
+        self.skip_forward_btn.setFixedSize(40, 40)
+        self.skip_forward_btn.setStyleSheet(btn_style)
+        self.skip_forward_btn.setIcon(self._create_icon(SKIP_FORWARD_SVG))
+        self.skip_forward_btn.setIconSize(QSize(24, 24))
+        self.skip_forward_btn.clicked.connect(self.skip_forward)
+        
+        self.next_round_btn = QPushButton()
+        self.next_round_btn.setFixedSize(40, 40)
+        self.next_round_btn.setStyleSheet(btn_style)
+        self.next_round_btn.setIcon(self._create_icon(NEXT_ROUND_SVG))
+        self.next_round_btn.setIconSize(QSize(24, 24))
+        self.next_round_btn.clicked.connect(self.skip_to_next_round)
+        
+        center_layout.addWidget(self.prev_round_btn)
+        center_layout.addWidget(self.skip_back_btn)
+        center_layout.addWidget(self.play_pause_btn)
+        center_layout.addWidget(self.skip_forward_btn)
+        center_layout.addWidget(self.next_round_btn)
+        
+        playback_control_layout.addLayout(center_layout)
+        
+        playback_control_layout.addStretch(1)
+        
+        speed_layout = QHBoxLayout()
+        speed_layout.setSpacing(5)
+        
+        speed_btn_style = "QPushButton { border-radius: 15px; background-color: #333333; } QPushButton:hover { background-color: #444444; }"
+        
+        self.speed_minus_btn = QPushButton()
+        self.speed_minus_btn.setFixedSize(30, 30)
+        self.speed_minus_btn.setStyleSheet(speed_btn_style)
+        self.speed_minus_btn.setIcon(self._create_icon(MINUS_SVG))
+        self.speed_minus_btn.setIconSize(QSize(16, 16))
+        self.speed_minus_btn.clicked.connect(self.decrease_speed)
+        
+        self.speed_label_ui = QLabel("1.0x")
+        self.speed_label_ui.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.speed_label_ui.setFixedSize(60, 30)
+        self.speed_label_ui.setStyleSheet("QLabel { border-radius: 15px; background-color: transparent; font-size: 16px; font-weight: bold; color: white; } QLabel:hover { background-color: rgba(255, 255, 255, 0.1); }")
+        self.speed_label_ui.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.speed_label_ui.installEventFilter(self)
+        
+        self.speed_plus_btn = QPushButton()
+        self.speed_plus_btn.setFixedSize(30, 30)
+        self.speed_plus_btn.setStyleSheet(speed_btn_style)
+        self.speed_plus_btn.setIcon(self._create_icon(PLUS_SVG))
+        self.speed_plus_btn.setIconSize(QSize(16, 16))
+        self.speed_plus_btn.clicked.connect(self.increase_speed)
+        
+        speed_layout.addWidget(self.speed_minus_btn)
+        speed_layout.addWidget(self.speed_label_ui)
+        speed_layout.addWidget(self.speed_plus_btn)
+        
+        playback_control_layout.addLayout(speed_layout)
+        
+        page_layout.addLayout(playback_control_layout)
         page_layout.addWidget(self.edit_panel)
         
         self.notification = NotificationOverlay(self)
+        
+        self.target_playback_rate = 1.0
+        self.is_speed_bypassed = False
+        self.video_widget.installEventFilter(self)
+        
+        self.speed_osd_label = QLabel("1.0x", self.video_widget)
+        self.speed_osd_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.speed_osd_label.setStyleSheet("background-color: rgba(0, 0, 0, 150); color: white; font-size: 24px; font-weight: bold; border-radius: 10px; padding: 10px;")
+        self.speed_osd_label.hide()
+        
+        self.speed_osd_timer = QTimer(self)
+        self.speed_osd_timer.setSingleShot(True)
+        self.speed_osd_timer.timeout.connect(self.speed_osd_label.hide)
+
+    def _create_icon(self, svg_bytes, size=24):
+        pixmap = QPixmap(size, size)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        renderer = QSvgRenderer(QByteArray(svg_bytes))
+        renderer.render(painter)
+        painter.end()
+        return QIcon(pixmap)
+
+    def eventFilter(self, obj, event):
+        if obj == self.speed_label_ui:
+            if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
+                self.toggle_speed()
+                return True
+        elif obj == self.video_widget:
+            if event.type() == QEvent.Type.Wheel:
+                delta = event.angleDelta().y()
+                if delta > 0:
+                    self.increase_speed()
+                elif delta < 0:
+                    self.decrease_speed()
+                return True
+            elif event.type() == QEvent.Type.Resize:
+                if self.speed_osd_label.isVisible():
+                    vw_rect = self.video_widget.rect()
+                    lbl_rect = self.speed_osd_label.rect()
+                    x = (vw_rect.width() - lbl_rect.width()) // 2
+                    y = vw_rect.height() - lbl_rect.height() - 30
+                    self.speed_osd_label.move(x, y)
+        return super().eventFilter(obj, event)
+
+    def increase_speed(self):
+        self.set_target_playback_rate(self.target_playback_rate + 0.1)
+
+    def decrease_speed(self):
+        self.set_target_playback_rate(self.target_playback_rate - 0.1)
+
+    def set_target_playback_rate(self, rate):
+        rate = max(0.1, min(5.0, round(rate, 1)))
+        self.target_playback_rate = rate
+        self.is_speed_bypassed = False
+        self.speed_label_ui.setText(f"{rate:.1f}x")
+        self._apply_playback_rate()
+
+    def toggle_speed(self):
+        if self.target_playback_rate == 1.0:
+            return
+        self.is_speed_bypassed = not self.is_speed_bypassed
+        self._apply_playback_rate()
+
+    def _apply_playback_rate(self):
+        actual_rate = 1.0 if self.is_speed_bypassed else self.target_playback_rate
+        
+        self.media_player.setPlaybackRate(actual_rate)
+        self.mic_player.setPlaybackRate(actual_rate)
+        
+        if self.target_playback_rate != 1.0 and not self.is_speed_bypassed:
+            self.speed_label_ui.setStyleSheet("QLabel { border-radius: 15px; background-color: rgba(255, 70, 85, 0.5); font-size: 16px; font-weight: bold; color: white; } QLabel:hover { background-color: rgba(255, 70, 85, 0.7); }")
+        else:
+            self.speed_label_ui.setStyleSheet("QLabel { border-radius: 15px; background-color: transparent; font-size: 16px; font-weight: bold; color: white; } QLabel:hover { background-color: rgba(255, 255, 255, 0.1); }")
+            
+        self.speed_osd_label.setText(f"{actual_rate:.1f}x")
+        self.speed_osd_label.adjustSize()
+        
+        vw_rect = self.video_widget.rect()
+        lbl_rect = self.speed_osd_label.rect()
+        x = (vw_rect.width() - lbl_rect.width()) // 2
+        y = vw_rect.height() - lbl_rect.height() - 30
+        self.speed_osd_label.move(x, y)
+        
+        self.speed_osd_label.show()
+        self.speed_osd_timer.start(2000)
 
     def _toggle_edit_mode(self):
         is_visible = self.edit_panel.isVisible()
@@ -365,14 +550,14 @@ class PlayerVideoPage(QWidget):
         pass
 
     def on_sys_volume_changed(self, volume):
-        vol_float = float(volume) / 100.0
+        vol_float = float(volume)
         self.current_sys_volume = vol_float
         # 再生プレイヤーの上限は1.0(100%)に制限しつつ、保存値は200%を許容
         self.audio_output.setVolume(min(vol_float, 1.0))
         self._save_volume_settings()
 
     def on_mic_volume_changed(self, volume):
-        vol_float = float(volume) / 100.0
+        vol_float = float(volume)
         self.current_mic_volume = vol_float
         self.mic_audio_output.setVolume(min(vol_float, 1.0))
         self._save_volume_settings()
@@ -424,6 +609,8 @@ class PlayerVideoPage(QWidget):
         self.mic_loaded = False
         self.current_json_filename = json_filename
         json_path = os.path.join(self.config.SAVE_DIR, json_filename)
+        
+        self.set_target_playback_rate(1.0)
         
         try:
             with open(json_path, 'r', encoding='utf-8') as f:
@@ -605,6 +792,7 @@ class PlayerVideoPage(QWidget):
                     if end > start:
                         rounds.append({"start": max(0, start), "end": end, "phase": "InProgress"})
             
+        self.current_rounds = rounds
         self.timeline_overlay.set_data(rounds, events)
 
     def handle_media_error(self, error, error_string):
@@ -617,6 +805,42 @@ class PlayerVideoPage(QWidget):
         else:
             self.media_player.play()
             self.mic_player.play()
+
+    def _on_playback_state_changed(self, state):
+        if state == QMediaPlayer.PlaybackState.PlayingState:
+            self.play_pause_btn.setIcon(self._create_icon(PAUSE_SVG))
+        else:
+            self.play_pause_btn.setIcon(self._create_icon(PLAY_SVG))
+
+    def skip_backward(self):
+        pos = max(0, self.media_player.position() - 5000)
+        self.set_position(pos)
+
+    def skip_forward(self):
+        pos = min(self.media_player.duration(), self.media_player.position() + 5000)
+        self.set_position(pos)
+
+    def skip_to_prev_round(self):
+        if not hasattr(self, 'current_rounds') or not self.current_rounds:
+            return
+        current_pos = self.media_player.position()
+        target_pos = 0
+        for r in reversed(self.current_rounds):
+            if r["start"] < current_pos - 2000:
+                target_pos = r["start"]
+                break
+        self.set_position(target_pos)
+
+    def skip_to_next_round(self):
+        if not hasattr(self, 'current_rounds') or not self.current_rounds:
+            return
+        current_pos = self.media_player.position()
+        target_pos = self.media_player.duration()
+        for r in self.current_rounds:
+            if r["start"] > current_pos + 2000:
+                target_pos = r["start"]
+                break
+        self.set_position(target_pos)
 
     def format_time(self, ms):
         s = ms // 1000

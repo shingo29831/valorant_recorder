@@ -207,56 +207,85 @@ class FFmpegRecorder:
                 spk_thread = threading.Thread(target=spk_worker, daemon=True)
                 spk_thread.start()
 
-                buffer_duration = frames_per_buffer / samplerate
-                # 音が鳴っている時は、揺らぎを許容するためにバッファ時間より少し長めのタイムアウトを設定
-                timeout_sec = buffer_duration * 1.5
+                import time
+                
+                start_time = time.perf_counter()
+                total_frames_generated = 0
 
                 while not self.stop_event.is_set():
-                    # スピーカーのキューが溜まりすぎている場合は古いデータを捨てる（遅延・音ズレ防止）
+                    # スピーカーのキューが溜まりすぎている場合は古いデータを捨てる（遅延防止）
                     while spk_queue.qsize() > 2:
                         try:
                             spk_queue.get_nowait()
                         except queue.Empty:
                             break
 
-                    # スピーカー音が鳴っていないとrecordがブロックするため、タイムアウト付きで取得し、
-                    # 取得できない場合は無音データを生成してFFmpegのエンコード停止を防ぐ
                     try:
-                        spk_data = spk_queue.get(timeout=timeout_sec)
+                        # 短いタイムアウトでデータを待つ
+                        spk_data = spk_queue.get(timeout=0.05)
                         spk_data = spk_data * system_gain
-                        # データが取得できた場合（音が鳴っている場合）は、揺らぎを許容するタイムアウトに戻す
-                        timeout_sec = buffer_duration * 1.5
                     except queue.Empty:
-                        spk_data = np.zeros((frames_per_buffer, 2), dtype=np.float32)
-                        # タイムアウトした場合（無音でブロックしている場合）は、
-                        # 時間ズレ（音ズレ）を防ぐために正確なバッファ時間をタイムアウトに設定し、
-                        # 実時間と同じペースで無音データを生成する
-                        timeout_sec = buffer_duration
-                    
-                    if mic_rec is not None:
-                        # マイクのキューが溜まりすぎている場合は古いデータを捨てる（遅延・音ズレ防止）
-                        while mic_queue.qsize() > 2:
+                        spk_data = None
+
+                    if spk_data is not None:
+                        frames_to_process = spk_data.shape[0]
+                        
+                        if mic_rec is not None:
+                            # マイクのキューが溜まりすぎている場合は古いデータを捨てる
+                            while mic_queue.qsize() > 2:
+                                try:
+                                    mic_queue.get_nowait()
+                                except queue.Empty:
+                                    break
+                                    
                             try:
-                                mic_queue.get_nowait()
+                                mic_data = mic_queue.get_nowait()
+                                mic_data = mic_data * mic_gain
+                                # サイズ合わせ
+                                if mic_data.shape[0] < frames_to_process:
+                                    pad = np.zeros((frames_to_process - mic_data.shape[0], 2), dtype=np.float32)
+                                    mic_data = np.concatenate((mic_data, pad), axis=0)
+                                elif mic_data.shape[0] > frames_to_process:
+                                    mic_data = mic_data[:frames_to_process, :]
                             except queue.Empty:
-                                break
-                                
+                                mic_data = np.zeros((frames_to_process, 2), dtype=np.float32)
+                        else:
+                            mic_data = np.zeros((frames_to_process, 2), dtype=np.float32)
+                        
+                        combined = np.concatenate((spk_data, mic_data), axis=1)
+                        combined = np.clip(combined, -1.0, 1.0)
+                        
                         try:
-                            mic_data = mic_queue.get_nowait()
-                            mic_data = mic_data * mic_gain
-                        except queue.Empty:
-                            mic_data = np.zeros((frames_per_buffer, 2), dtype=np.float32)
+                            self.audio_queue.put_nowait(combined.astype(np.float32).tobytes())
+                            total_frames_generated += frames_to_process
+                        except queue.Full:
+                            pass
+                            
+                        # 音が鳴っている間は、WASAPIのハードウェアクロックとシステムタイマーのズレを吸収するため、
+                        # start_time を現在時刻と生成済みフレーム数から逆算して補正する（ドリフト防止）
+                        start_time = time.perf_counter() - (total_frames_generated / samplerate)
+                        
                     else:
-                        mic_data = np.zeros_like(spk_data)
-                    
-                    # システム音とマイク音を結合して4chストリームにする (FL, FR, RL, RR)
-                    combined = np.concatenate((spk_data, mic_data), axis=1)
-                    combined = np.clip(combined, -1.0, 1.0)
-                    
-                    try:
-                        self.audio_queue.put_nowait(combined.astype(np.float32).tobytes())
-                    except queue.Full:
-                        pass
+                        # 無音時（タイムアウト）：システムタイマーベースで正確な量の無音データを補完する
+                        current_time = time.perf_counter()
+                        elapsed = current_time - start_time
+                        expected_frames = int(elapsed * samplerate)
+                        
+                        frames_shortage = expected_frames - total_frames_generated
+                        
+                        if frames_shortage > 0:
+                            # 一度に大量に生成しすぎないよう制限（最大1バッファ分ずつ）
+                            frames_to_add = min(frames_shortage, frames_per_buffer)
+                            
+                            pad_spk = np.zeros((frames_to_add, 2), dtype=np.float32)
+                            pad_mic = np.zeros((frames_to_add, 2), dtype=np.float32)
+                            combined_pad = np.concatenate((pad_spk, pad_mic), axis=1)
+                            
+                            try:
+                                self.audio_queue.put_nowait(combined_pad.astype(np.float32).tobytes())
+                                total_frames_generated += frames_to_add
+                            except queue.Full:
+                                pass
 
                 worker_stop.set()
                 if mic_thread is not None:
@@ -375,6 +404,7 @@ class FFmpegRecorder:
             "-tune", tune,
             "-b:v", "10M",
             "-pix_fmt", "yuv420p",
+            "-r", self.config.RECORD_FPS,
             "-c:a", "aac",
             "-b:a", "192k",
             "-movflags", "frag_keyframe+empty_moov",

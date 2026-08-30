@@ -312,7 +312,33 @@ class VolumeWidget(QWidget):
         self.popup = VolumePopup(self)
         self.popup.slider.valueChanged.connect(self._on_value_changed)
         
+        self.previous_volume = 100
+        self.is_muted = False
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.toggle_mute()
+        super().mousePressEvent(event)
+        
+    def toggle_mute(self):
+        if self.is_muted:
+            self.is_muted = False
+            self.popup.slider.setValue(self.previous_volume)
+        else:
+            self.previous_volume = self.popup.slider.value()
+            if self.previous_volume == 0:
+                self.previous_volume = 100
+            self.is_muted = True
+            self.popup.slider.setValue(0)
+        
     def _on_value_changed(self, val):
+        if val > 0:
+            self.is_muted = False
+            self.previous_volume = val
+        elif val == 0 and not self.is_muted:
+            self.is_muted = True
+            
         self.volumeChanged.emit(val / 100.0)
         if val == 0:
             self.icon_label.setText("🔇")
@@ -327,10 +353,15 @@ class VolumeWidget(QWidget):
         self.popup.slider.setValue(val)
         self.popup.slider.blockSignals(False)
         if val == 0:
+            self.is_muted = True
             self.icon_label.setText("🔇")
         elif val < 50:
+            self.is_muted = False
+            self.previous_volume = val
             self.icon_label.setText("🔉")
         else:
+            self.is_muted = False
+            self.previous_volume = val
             self.icon_label.setText("🔊")
             
     def enterEvent(self, event):
@@ -692,7 +723,33 @@ class MicVolumeWidget(QWidget):
         self.popup = MicVolumePopup(self)
         self.popup.slider.valueChanged.connect(self._on_value_changed)
         
+        self.previous_volume = 100
+        self.is_muted = False
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.toggle_mute()
+        super().mousePressEvent(event)
+        
+    def toggle_mute(self):
+        if self.is_muted:
+            self.is_muted = False
+            self.popup.slider.setValue(self.previous_volume)
+        else:
+            self.previous_volume = self.popup.slider.value()
+            if self.previous_volume == 0:
+                self.previous_volume = 100
+            self.is_muted = True
+            self.popup.slider.setValue(0)
+        
     def _on_value_changed(self, val):
+        if val > 0:
+            self.is_muted = False
+            self.previous_volume = val
+        elif val == 0 and not self.is_muted:
+            self.is_muted = True
+            
         self.volumeChanged.emit(val / 100.0)
         if val == 0:
             self.icon_label.setStyleSheet("font-size: 16px; color: gray;")
@@ -705,8 +762,11 @@ class MicVolumeWidget(QWidget):
         self.popup.slider.setValue(val)
         self.popup.slider.blockSignals(False)
         if val == 0:
+            self.is_muted = True
             self.icon_label.setStyleSheet("font-size: 16px; color: gray;")
         else:
+            self.is_muted = False
+            self.previous_volume = val
             self.icon_label.setStyleSheet("font-size: 16px; color: white;")
             
     def enterEvent(self, event):

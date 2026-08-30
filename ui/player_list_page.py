@@ -94,26 +94,6 @@ class PlayerListPage(QWidget):
         
         header_layout.addWidget(self.fav_btn)
         
-        self.filter_btn = QPushButton()
-        self.filter_btn.setFixedSize(30, 30)
-        self.filter_btn.setStyleSheet("""
-            QPushButton { background-color: rgba(128, 128, 128, 0.5); border: none; border-radius: 15px; }
-            QPushButton:hover { background-color: rgba(128, 128, 128, 0.8); }
-        """)
-        
-        filter_pixmap = QPixmap(24, 24)
-        filter_pixmap.fill(Qt.GlobalColor.transparent)
-        filter_painter = QPainter(filter_pixmap)
-        filter_renderer = QSvgRenderer(QByteArray(FILTER_SVG))
-        filter_renderer.render(filter_painter)
-        filter_painter.end()
-        
-        self.filter_btn.setIcon(QIcon(filter_pixmap))
-        self.filter_btn.setIconSize(QSize(18, 18))
-        self.filter_btn.clicked.connect(self.show_filter_menu)
-        
-        header_layout.addWidget(self.filter_btn)
-        
         settings_btn = QPushButton(" Settings")
         settings_btn.setFixedSize(100, 30)
         settings_btn.setStyleSheet("border-radius: 15px; background-color: #333333; color: white; font-weight: bold; text-align: center;")
@@ -132,6 +112,34 @@ class PlayerListPage(QWidget):
         header_layout.addWidget(settings_btn)
         
         layout.addWidget(header_widget)
+        
+        subheader_widget = QWidget()
+        subheader_widget.setStyleSheet("background-color: transparent; border: none;")
+        subheader_layout = QHBoxLayout(subheader_widget)
+        # スクロールバーの幅を考慮し、右側にマージンを設けてスクロールバーの左側に配置する
+        subheader_layout.setContentsMargins(0, 0, 25, 10)
+        subheader_layout.addStretch()
+        
+        self.filter_btn = QPushButton()
+        self.filter_btn.setFixedSize(30, 30)
+        self.filter_btn.setStyleSheet("""
+            QPushButton { background-color: rgba(128, 128, 128, 0.5); border: none; border-radius: 15px; }
+            QPushButton:hover { background-color: rgba(128, 128, 128, 0.8); }
+        """)
+        
+        filter_pixmap = QPixmap(24, 24)
+        filter_pixmap.fill(Qt.GlobalColor.transparent)
+        filter_painter = QPainter(filter_pixmap)
+        filter_renderer = QSvgRenderer(QByteArray(FILTER_SVG))
+        filter_renderer.render(filter_painter)
+        filter_painter.end()
+        
+        self.filter_btn.setIcon(QIcon(filter_pixmap))
+        self.filter_btn.setIconSize(QSize(18, 18))
+        self.filter_btn.clicked.connect(self.show_filter_menu)
+        
+        subheader_layout.addWidget(self.filter_btn)
+        layout.addWidget(subheader_widget)
         
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
@@ -283,11 +291,11 @@ class PlayerListPage(QWidget):
         menu = QMenu(self)
         
         action_clear = menu.addAction("Clear Filter")
-        action_clear.triggered.connect(lambda: self.apply_filter(None))
+        action_clear.triggered.connect(lambda checked=False: self.apply_filter(None))
         menu.addSeparator()
         
         action_fav = menu.addAction("Favorite")
-        action_fav.triggered.connect(lambda: self.apply_filter(("favorite", True)))
+        action_fav.triggered.connect(lambda checked=False: self.apply_filter(("favorite", True)))
         
         menu_agent = menu.addMenu("Agent")
         for agent in sorted(self.available_agents):
