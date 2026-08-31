@@ -26,7 +26,7 @@ REM Compile to a single executable using Nuitka.
 REM Includes QtMultimedia plugin, soundcard dependencies, auth.key, C++ DLLs, and AI models.
 REM Using --windows-console-mode=disable for production.
 REM Nuitka excludes .dll files in --include-data-dir by default, so we force include them using --include-data-files with wildcards.
-python -m nuitka --standalone --onefile --file-reference-choice=runtime --enable-plugin=pyqt6 --include-qt-plugins=multimedia --include-package-data=soundcard --include-data-file=auth.key=auth.key --include-data-dir=assets=assets --include-data-files=cpp/audio_processor/build/Release/*.dll=cpp/audio_processor/build/Release/ --include-data-dir=cpp/audio_processor/models=models --windows-console-mode=disable --windows-icon-from-ico=assets/icon.ico -o ValoReco.exe main.py
+python -m nuitka --standalone --onefile --file-reference-choice=runtime --enable-plugin=pyqt6 --include-qt-plugins=multimedia --include-package-data=soundcard --include-data-file=auth.key=auth.key --include-data-dir=assets=assets --include-data-files=cpp/audio_processor/build/Release/*.dll=cpp/audio_processor/build/Release/ --include-data-dir=cpp/audio_processor/models=cpp/audio_processor/models --windows-console-mode=disable --windows-icon-from-ico=assets/icon.ico -o ValoReco.exe main.py
 
 if %ERRORLEVEL% NEQ 0 (
     echo [Error] Nuitka build failed!

@@ -1,7 +1,32 @@
 import ctypes
+from ctypes import wintypes
 import numpy as np
 import os
 import platform
+
+def get_short_path_name(long_name: str) -> str:
+    """
+    Windowsの短いパス名(8.3形式)を取得する。
+    非ASCII文字(日本語など)を含むパスをC/Rustライブラリに渡す際のエラーを回避する。
+    """
+    if platform.system() != "Windows":
+        return long_name
+    try:
+        _GetShortPathNameW = ctypes.windll.kernel32.GetShortPathNameW
+        _GetShortPathNameW.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+        _GetShortPathNameW.restype = wintypes.DWORD
+        
+        output_buf_size = _GetShortPathNameW(long_name, None, 0)
+        if output_buf_size == 0:
+            return long_name
+            
+        output_buf = ctypes.create_unicode_buffer(output_buf_size)
+        success = _GetShortPathNameW(long_name, output_buf, output_buf_size)
+        if success > 0:
+            return output_buf.value
+    except Exception:
+        pass
+    return long_name
 
 class AudioProcessorWrapper:
     """
@@ -29,16 +54,17 @@ class AudioProcessorWrapper:
                 
             # ロードテスト (依存DLLを解決するために winmode=0 を指定)
             if platform.system() == "Windows":
+                short_dll_dir = get_short_path_name(os.path.dirname(dll_path))
                 if hasattr(os, 'add_dll_directory'):
-                    os.add_dll_directory(os.path.dirname(dll_path))
+                    os.add_dll_directory(short_dll_dir)
                 # 依存DLLを明示的にプリロードしてロードエラーを防ぐ
                 try:
-                    ctypes.CDLL(os.path.join(os.path.dirname(dll_path), "deep_filter.dll"), winmode=0)
-                    ctypes.CDLL(os.path.join(os.path.dirname(dll_path), "libspeexdsp.dll"), winmode=0)
+                    ctypes.CDLL(os.path.join(short_dll_dir, "deep_filter.dll"), winmode=0)
+                    ctypes.CDLL(os.path.join(short_dll_dir, "libspeexdsp.dll"), winmode=0)
                 except Exception:
                     pass
                     
-            ctypes.CDLL(dll_path, winmode=0)
+            ctypes.CDLL(get_short_path_name(dll_path), winmode=0)
             return True
         except Exception as e:
             print(f"[AudioProcessorWrapper] Failed to load DLL: {e}")
@@ -50,9 +76,8 @@ class AudioProcessorWrapper:
         self.channels = channels
         
         import sys
-        # PyInstaller実行時のリソースパス(リリース版対応)
-        is_frozen = getattr(sys, 'frozen', False)
-        if is_frozen:
+        # PyInstaller/Nuitka実行時のリソースパス(リリース版対応)
+        if hasattr(sys, '_MEIPASS'):
             base_dir = sys._MEIPASS
         else:
             base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -78,16 +103,17 @@ class AudioProcessorWrapper:
 
         # DLLのロード
         if platform.system() == "Windows":
+            short_dll_dir = get_short_path_name(os.path.dirname(dll_path))
             if hasattr(os, 'add_dll_directory'):
-                os.add_dll_directory(os.path.dirname(dll_path))
+                os.add_dll_directory(short_dll_dir)
             # 依存DLLを明示的にプリロード
             try:
-                ctypes.CDLL(os.path.join(os.path.dirname(dll_path), "deep_filter.dll"), winmode=0)
-                ctypes.CDLL(os.path.join(os.path.dirname(dll_path), "libspeexdsp.dll"), winmode=0)
+                ctypes.CDLL(os.path.join(short_dll_dir, "deep_filter.dll"), winmode=0)
+                ctypes.CDLL(os.path.join(short_dll_dir, "libspeexdsp.dll"), winmode=0)
             except Exception:
                 pass
                 
-        self.lib = ctypes.CDLL(dll_path, winmode=0)
+        self.lib = ctypes.CDLL(get_short_path_name(dll_path), winmode=0)
 
         # C APIのシグネチャ設定
         self.lib.AudioProcessor_Create.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_char_p]
@@ -150,6 +176,14 @@ class AudioProcessorWrapper:
 
         if not model_path_to_use:
             print("[AudioProcessorWrapper] Warning: DeepFilterNet model archive (.tar.gz) not found. AI Denoise will be disabled.")
+        else:
+            # 非ASCII文字(日本語など)を含むパスによるRust側でのパニックを防ぐため、短いパス(8.3形式)に変換して渡す
+            try:
+                short_tar_path = get_short_path_name(model_path_to_use.decode('utf-8'))
+                model_path_to_use = short_tar_path.replace('\\', '/').encode('utf-8')
+                print(f"[AudioProcessorWrapper] Using short model path: {short_tar_path}")
+            except Exception as e:
+                print(f"[AudioProcessorWrapper] Failed to get short path for model: {e}")
             
         self.processor_ptr = self.lib.AudioProcessor_Create(sample_rate, channels, model_path_to_use)
         if not self.processor_ptr:
