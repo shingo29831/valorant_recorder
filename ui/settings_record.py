@@ -119,6 +119,11 @@ class RecordSettingsWidget(QWidget):
         
         self.mic_denoise_combo = QComboBox()
         self.mic_denoise_combo.addItem(self.t.none_option, "None")
+        
+        from recorder.audio_processor_wrapper import AudioProcessorWrapper
+        if AudioProcessorWrapper.is_available():
+            self.mic_denoise_combo.addItem("AI (DeepFilterNet)", "AI (DeepFilterNet)")
+            
         self.mic_denoise_combo.addItem("AI (RNNoise)", "AI (RNNoise)")
         self.mic_denoise_combo.addItem("NVIDIA Broadcast", "NVIDIA Broadcast")
         
@@ -128,10 +133,25 @@ class RecordSettingsWidget(QWidget):
         elif denoise_val == 'False':
             denoise_val = 'None'
             
+        if denoise_val == 'AI (DeepFilterNet)' and not AudioProcessorWrapper.is_available():
+            denoise_val = 'AI (RNNoise)'
+            
         idx = self.mic_denoise_combo.findData(denoise_val)
         if idx >= 0:
             self.mic_denoise_combo.setCurrentIndex(idx)
         self.mic_denoise_combo.currentIndexChanged.connect(self._on_denoise_changed)
+
+        self.mic_preprocess_combo = QComboBox()
+        none_opt = getattr(self.t, 'none_option', "None")
+        self.mic_preprocess_combo.addItem(none_opt, "None")
+        self.mic_preprocess_combo.addItem("SpeexDSP", "SpeexDSP")
+        self.mic_preprocess_combo.addItem("WebRTC (Coming Soon)", "WebRTC")
+        
+        pre_val = getattr(self.config, 'RECORD_AUDIO_MIC_PREPROCESS', 'SpeexDSP')
+        idx = self.mic_preprocess_combo.findData(pre_val)
+        if idx >= 0:
+            self.mic_preprocess_combo.setCurrentIndex(idx)
+        self.mic_preprocess_combo.currentIndexChanged.connect(self._on_preprocess_changed)
 
         self.mic_gate_slider = QSlider(Qt.Orientation.Horizontal)
         self.mic_gate_slider.setRange(0, 100)
@@ -155,7 +175,7 @@ class RecordSettingsWidget(QWidget):
         
         self.monitor_warning_label = QLabel(self.t.monitor_warning)
         self.monitor_warning_label.setStyleSheet("color: #AAAAAA; font-size: 11px; font-style: italic;")
-        self.monitor_warning_label.setVisible(denoise_val == "AI (RNNoise)")
+        self.monitor_warning_label.setVisible(denoise_val in ("AI (RNNoise)", "AI (DeepFilterNet)"))
         
         monitor_layout = QVBoxLayout()
         monitor_layout.addWidget(self.mic_monitor_cb)
@@ -167,6 +187,7 @@ class RecordSettingsWidget(QWidget):
         audio_layout.addRow(self.t.microphone, self.mic_input)
         audio_layout.addRow(self.t.mic_gain, gain_layout)
         audio_layout.addRow(self.t.noise_cancel, self.mic_denoise_combo)
+        audio_layout.addRow(getattr(self.t, 'mic_preprocess', 'Pre-process (HPF)'), self.mic_preprocess_combo)
         audio_layout.addRow(self.t.noise_gate, gate_layout)
         audio_layout.addRow(self.t.mic_level, self.volume_meter)
         audio_layout.addRow("", monitor_layout)
@@ -201,9 +222,15 @@ class RecordSettingsWidget(QWidget):
         if self.monitor_thread:
             self.monitor_thread.set_monitor_audio(self.mic_monitor_cb.isChecked())
 
+    def _on_preprocess_changed(self, index):
+        mode = self.mic_preprocess_combo.currentData()
+        if self.monitor_thread:
+            self.monitor_thread.set_preprocess(mode)
+        self._save_settings()
+
     def _on_denoise_changed(self, index):
         mode = self.mic_denoise_combo.currentData()
-        self.monitor_warning_label.setVisible(mode == "AI (RNNoise)")
+        self.monitor_warning_label.setVisible(mode in ("AI (RNNoise)", "AI (DeepFilterNet)"))
             
         if mode == "NVIDIA Broadcast":
             found = False
@@ -222,7 +249,7 @@ class RecordSettingsWidget(QWidget):
                 mode = "AI (RNNoise)"
         
         if self.monitor_thread:
-            self.monitor_thread.set_denoise(mode == "AI (RNNoise)")
+            self.monitor_thread.set_denoise(mode)
         self._save_settings()
 
     def _on_mic_changed(self):
@@ -235,9 +262,10 @@ class RecordSettingsWidget(QWidget):
         if self.monitor_thread is None:
             mic_name = self.mic_input.currentData()
             gain = self.mic_gain_slider.value() / 100.0
-            denoise = self.mic_denoise_combo.currentData() == "AI (RNNoise)"
+            denoise_mode = self.mic_denoise_combo.currentData()
             gate = self.mic_gate_slider.value() / 100.0
-            self.monitor_thread = MicMonitorThread(mic_name, gain, denoise, gate)
+            pre_mode = self.mic_preprocess_combo.currentData()
+            self.monitor_thread = MicMonitorThread(mic_name, gain, denoise_mode, gate, pre_mode)
             self.monitor_thread.set_monitor_audio(self.mic_monitor_cb.isChecked())
             self.monitor_thread.level_ready.connect(self.volume_meter.set_level)
             self.monitor_thread.start()
@@ -270,5 +298,6 @@ class RecordSettingsWidget(QWidget):
         self.config.RECORD_AUDIO_MIC_GAIN = str(self.mic_gain_slider.value() / 100.0)
         self.config.RECORD_AUDIO_MIC_NOISE_GATE = str(self.mic_gate_slider.value())
         self.config.RECORD_AUDIO_MIC_DENOISE = self.mic_denoise_combo.currentData()
+        self.config.RECORD_AUDIO_MIC_PREPROCESS = self.mic_preprocess_combo.currentData()
         
         self.config.save()

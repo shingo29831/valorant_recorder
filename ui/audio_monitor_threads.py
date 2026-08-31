@@ -57,11 +57,12 @@ class SystemAudioMonitorThread(QThread):
 class MicMonitorThread(QThread):
     level_ready = pyqtSignal(float)
 
-    def __init__(self, mic_name, gain, denoise=False, gate_threshold=0.0):
+    def __init__(self, mic_name, gain, denoise_mode="None", gate_threshold=0.0, preprocess_mode="SpeexDSP"):
         super().__init__()
         self.mic_name = mic_name
         self.gain = gain
-        self.denoise = denoise
+        self.denoise_mode = denoise_mode
+        self.preprocess_mode = preprocess_mode
         self.gate_threshold = gate_threshold
         self.monitor_audio = False
         self.running = True
@@ -71,8 +72,11 @@ class MicMonitorThread(QThread):
     def set_gain(self, gain):
         self.gain = gain
 
-    def set_denoise(self, denoise):
-        self.denoise = denoise
+    def set_denoise(self, denoise_mode):
+        self.denoise_mode = denoise_mode
+
+    def set_preprocess(self, preprocess_mode):
+        self.preprocess_mode = preprocess_mode
 
     def set_gate_threshold(self, threshold):
         self.gate_threshold = threshold
@@ -83,21 +87,15 @@ class MicMonitorThread(QThread):
     def process_audio(self, data):
         data = data * self.gain
 
-        if self.denoise:
-            # ブロック全体のエネルギー(RMS)を計算
+        # RNNoiseの場合はPython側で簡易的なノイズリダクションをシミュレート（モニター用）
+        if self.denoise_mode == "AI (RNNoise)":
             rms = np.sqrt(np.mean(data**2) + 1e-8)
-            
-            # ノイズフロアの動的推定
             if rms < self.noise_floor:
                 self.noise_floor = 0.8 * self.noise_floor + 0.2 * rms
             else:
                 self.noise_floor = 0.995 * self.noise_floor + 0.005 * rms
             
-            # Signal-to-Noise Ratio (SNR) の計算
             snr = rms / self.noise_floor
-            
-            # SNRが低い（定常ノイズのみ）場合は、信号全体を強く減衰させる
-            # FFmpegの arnndn に近い挙動をシミュレート
             if snr < 3.0:
                 reduction = max(0.05, (snr - 1.0) / 2.0)
                 data = data * reduction
@@ -127,6 +125,7 @@ class MicMonitorThread(QThread):
         warnings.filterwarnings("ignore", module=".*soundcard.*")
         try:
             import soundcard as sc
+            from recorder.audio_processor_wrapper import AudioProcessorWrapper
             
             # sc.SoundcardRuntimeWarning も明示的に無視する
             warnings.simplefilter("ignore", category=sc.SoundcardRuntimeWarning)
@@ -166,6 +165,15 @@ class MicMonitorThread(QThread):
                 except Exception:
                     player = None
                     
+                # AudioProcessorWrapper の初期化 (ダウンミックス後のモノラル処理用)
+                processor = None
+                if self.denoise_mode == "AI (DeepFilterNet)":
+                    try:
+                        processor = AudioProcessorWrapper(sample_rate=48000, channels=1)
+                        processor.set_preprocess_type(self.preprocess_mode)
+                    except Exception as e:
+                        print(f"Failed to initialize AudioProcessorWrapper: {e}")
+                    
                 if recorder is not None:
                     with recorder:
                         if player is not None:
@@ -175,6 +183,10 @@ class MicMonitorThread(QThread):
                                     if channels == 2:
                                         # ステレオの場合は平均をとってモノラルにダウンミックス
                                         data = data.mean(axis=1, keepdims=True)
+                                        
+                                    if processor is not None:
+                                        data = processor.process(data)
+                                        
                                     processed = self.process_audio(data)
                                     if self.monitor_audio:
                                         # モノラルをステレオに複製して再生
@@ -185,6 +197,10 @@ class MicMonitorThread(QThread):
                                 data = recorder.record(numframes=2400)
                                 if channels == 2:
                                     data = data.mean(axis=1, keepdims=True)
+                                    
+                                if processor is not None:
+                                    data = processor.process(data)
+                                    
                                 self.process_audio(data)
                 else:
                     while self.running:

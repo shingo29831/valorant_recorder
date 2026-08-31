@@ -63,7 +63,14 @@ class AudioSettingsWidget(QWidget):
         gain_layout.addWidget(self.mic_gain_label)
         
         self.mic_denoise_combo = QComboBox()
-        self.mic_denoise_combo.addItems(["None", "AI (RNNoise)", "NVIDIA Broadcast"])
+        self.mic_denoise_combo.addItem("None")
+        
+        from recorder.audio_processor_wrapper import AudioProcessorWrapper
+        if AudioProcessorWrapper.is_available():
+            self.mic_denoise_combo.addItem("AI (DeepFilterNet)")
+            
+        self.mic_denoise_combo.addItem("AI (RNNoise)")
+        self.mic_denoise_combo.addItem("NVIDIA Broadcast")
         
         denoise_val = getattr(self.config, 'RECORD_AUDIO_MIC_DENOISE', 'None')
         if denoise_val in ('True', 'Standard (FFmpeg)'):
@@ -71,10 +78,27 @@ class AudioSettingsWidget(QWidget):
         elif denoise_val == 'False':
             denoise_val = 'None'
             
+        if denoise_val == 'AI (DeepFilterNet)' and not AudioProcessorWrapper.is_available():
+            denoise_val = 'AI (RNNoise)'
+            
         idx = self.mic_denoise_combo.findText(denoise_val)
         if idx >= 0:
             self.mic_denoise_combo.setCurrentIndex(idx)
         self.mic_denoise_combo.currentIndexChanged.connect(self._on_denoise_changed)
+
+        self.mic_preprocess_combo = QComboBox()
+        self.mic_preprocess_combo.addItem("None")
+        self.mic_preprocess_combo.addItem("SpeexDSP")
+        self.mic_preprocess_combo.addItem("WebRTC (Coming Soon)")
+        
+        pre_val = getattr(self.config, 'RECORD_AUDIO_MIC_PREPROCESS', 'SpeexDSP')
+        if pre_val == "WebRTC":
+            idx = self.mic_preprocess_combo.findText("WebRTC (Coming Soon)")
+        else:
+            idx = self.mic_preprocess_combo.findText(pre_val)
+        if idx >= 0:
+            self.mic_preprocess_combo.setCurrentIndex(idx)
+        self.mic_preprocess_combo.currentIndexChanged.connect(self._on_preprocess_changed)
 
         self.mic_gate_slider = QSlider(Qt.Orientation.Horizontal)
         self.mic_gate_slider.setRange(0, 100)
@@ -98,7 +122,7 @@ class AudioSettingsWidget(QWidget):
         
         self.monitor_warning_label = QLabel(self.t.monitor_warning)
         self.monitor_warning_label.setStyleSheet("color: #AAAAAA; font-size: 11px; font-style: italic;")
-        self.monitor_warning_label.setVisible(denoise_val == "AI (RNNoise)")
+        self.monitor_warning_label.setVisible(denoise_val in ("AI (RNNoise)", "AI (DeepFilterNet)"))
         
         monitor_layout = QVBoxLayout()
         monitor_layout.addWidget(self.mic_monitor_cb)
@@ -110,6 +134,7 @@ class AudioSettingsWidget(QWidget):
         layout.addRow(self.t.microphone, self.mic_input)
         layout.addRow(self.t.mic_gain, gain_layout)
         layout.addRow(self.t.noise_cancel, self.mic_denoise_combo)
+        layout.addRow(getattr(self.t, 'mic_preprocess', 'Pre-process (HPF)'), self.mic_preprocess_combo)
         layout.addRow(self.t.noise_gate, gate_layout)
         layout.addRow(self.t.mic_level, self.volume_meter)
         layout.addRow("", monitor_layout)
@@ -141,9 +166,17 @@ class AudioSettingsWidget(QWidget):
         if self.monitor_thread:
             self.monitor_thread.set_monitor_audio(self.mic_monitor_cb.isChecked())
 
+    def _on_preprocess_changed(self, index):
+        mode = self.mic_preprocess_combo.currentText()
+        if mode == "WebRTC (Coming Soon)":
+            mode = "WebRTC"
+        if self.monitor_thread:
+            self.monitor_thread.set_preprocess(mode)
+        self._save_settings()
+
     def _on_denoise_changed(self, index):
         mode = self.mic_denoise_combo.currentText()
-        self.monitor_warning_label.setVisible(mode == "AI (RNNoise)")
+        self.monitor_warning_label.setVisible(mode in ("AI (RNNoise)", "AI (DeepFilterNet)"))
             
         if mode == "NVIDIA Broadcast":
             found = False
@@ -164,7 +197,7 @@ class AudioSettingsWidget(QWidget):
                 mode = "AI (RNNoise)"
         
         if self.monitor_thread:
-            self.monitor_thread.set_denoise(mode == "AI (RNNoise)")
+            self.monitor_thread.set_denoise(mode)
         self._save_settings()
 
     def _on_mic_changed(self):
@@ -177,9 +210,14 @@ class AudioSettingsWidget(QWidget):
         if self.monitor_thread is None:
             mic_name = self.mic_input.currentText()
             gain = self.mic_gain_slider.value() / 100.0
-            denoise = self.mic_denoise_combo.currentText() == "AI (RNNoise)"
+            denoise_mode = self.mic_denoise_combo.currentText()
             gate = self.mic_gate_slider.value() / 100.0
-            self.monitor_thread = MicMonitorThread(mic_name, gain, denoise, gate)
+            
+            pre_mode = self.mic_preprocess_combo.currentText()
+            if pre_mode == "WebRTC (Coming Soon)":
+                pre_mode = "WebRTC"
+                
+            self.monitor_thread = MicMonitorThread(mic_name, gain, denoise_mode, gate, pre_mode)
             self.monitor_thread.set_monitor_audio(self.mic_monitor_cb.isChecked())
             self.monitor_thread.level_ready.connect(self.volume_meter.set_level)
             self.monitor_thread.start()
@@ -208,4 +246,10 @@ class AudioSettingsWidget(QWidget):
         self.config.RECORD_AUDIO_MIC_GAIN = str(self.mic_gain_slider.value() / 100.0)
         self.config.RECORD_AUDIO_MIC_NOISE_GATE = str(self.mic_gate_slider.value())
         self.config.RECORD_AUDIO_MIC_DENOISE = self.mic_denoise_combo.currentText()
+        
+        pre_mode = self.mic_preprocess_combo.currentText()
+        if pre_mode == "WebRTC (Coming Soon)":
+            pre_mode = "WebRTC"
+        self.config.RECORD_AUDIO_MIC_PREPROCESS = pre_mode
+        
         self.config.save()

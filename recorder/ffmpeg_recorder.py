@@ -165,9 +165,27 @@ class FFmpegRecorder:
                 
                 def mic_worker():
                     warnings.simplefilter("ignore", category=sc.SoundcardRuntimeWarning)
+                    
+                    processor = None
+                    denoise_mode = str(getattr(self.config, 'RECORD_AUDIO_MIC_DENOISE', 'None'))
+                    if denoise_mode == 'AI (DeepFilterNet)':
+                        try:
+                            from recorder.audio_processor_wrapper import AudioProcessorWrapper
+                            processor = AudioProcessorWrapper(sample_rate=samplerate, channels=mic_channels)
+                            preprocess_mode = str(getattr(self.config, 'RECORD_AUDIO_MIC_PREPROCESS', 'SpeexDSP'))
+                            processor.set_preprocess_type(preprocess_mode)
+                        except Exception as e:
+                            if self.log_file and not self.log_file.closed:
+                                self.log_file.write(f"Failed to initialize AudioProcessorWrapper: {e}\n")
+                                self.log_file.flush()
+
                     try:
                         while not worker_stop.is_set() and not self.stop_event.is_set():
                             data = mic_rec.record(numframes=frames_per_buffer)
+                            
+                            if processor is not None:
+                                data = processor.process(data)
+                                
                             if mic_channels == 1:
                                 data = np.repeat(data, 2, axis=1)
                             
@@ -353,15 +371,14 @@ class FFmpegRecorder:
         filter_complex = "[1:a]asplit=2[a_res1][a_res2];[a_res1]pan=stereo|c0=1.0*c0|c1=1.0*c1[a0];[a_res2]pan=stereo|c0=1.0*c2|c1=1.0*c3[a1]"
         
         mic_filters = []
+        
+        # RNNoiseの場合はFFmpegのarnndnフィルタを使用する
         if denoise_mode in ('True', 'Standard (FFmpeg)', 'AI (RNNoise)'):
             try:
-                # FFmpegの実行ディレクトリからの相対パスを取得し、ドライブレターのコロンを排除する
                 rel_model_path = os.path.relpath(self.rnnoise_model_path, start=os.getcwd())
                 model_path_str = rel_model_path.replace('\\', '/')
-                # 相対パスであればコロンが含まれないため、スペース対策としてシングルクォートで囲むだけで安全に渡せる
                 mic_filters.append(f"arnndn=m='{model_path_str}'")
             except ValueError:
-                # ドライブが異なる場合は絶対パスを使用し、コロンとスペースをエスケープ（クォートなし）
                 model_path_str = self.rnnoise_model_path.replace('\\', '/').replace(':', '\\:').replace(' ', '\\ ')
                 mic_filters.append(f"arnndn=m={model_path_str}")
             

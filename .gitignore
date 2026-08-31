@@ -52,3 +52,17 @@ update.zip
 .exe
 
 main.onefile-build/
+
+# C++ Audio Processor Build
+cpp/audio_processor/build/
+cpp/audio_processor/out/
+cpp/audio_processor/.vs/
+cpp/audio_processor/CMakeCache.txt
+cpp/audio_processor/CMakeFiles/
+cpp/audio_processor/Makefile
+cpp/audio_processor/cmake_install.cmake
+
+# Third-party binaries and huge AI models (NVIDIA Maxine)
+# ※ヘッダや.libはGit管理しても良いですが、DLLやモデルは除外推奨
+cpp/third_party/nvidia_maxine/bin/*.dll
+cpp/third_party/nvidia_maxine/models/
