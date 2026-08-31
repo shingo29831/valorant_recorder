@@ -66,3 +66,16 @@ cpp/audio_processor/cmake_install.cmake
 # ※ヘッダや.libはGit管理しても良いですが、DLLやモデルは除外推奨
 cpp/third_party/nvidia_maxine/bin/*.dll
 cpp/third_party/nvidia_maxine/models/
+
+# C++ Build Artifacts & Dynamic Libraries
+*.dll
+*.lib
+*.exp
+*.pdb
+*.ilk
+build/
+out/
+.vs/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake

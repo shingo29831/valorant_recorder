@@ -8,6 +8,7 @@ class SystemAudioMonitorThread(QThread):
         super().__init__()
         self.gain = gain
         self.running = True
+        self.current_limiter_gain = 1.0
 
     def set_gain(self, gain):
         self.gain = gain
@@ -17,6 +18,19 @@ class SystemAudioMonitorThread(QThread):
         peak = np.max(np.abs(data))
         level = min(1.0, peak ** 0.5)
         self.level_ready.emit(float(level))
+        
+        # スムージング付きソフトリミッター
+        # フレーム単位の急激なゲイン変化によるポツ音と、ハードクリップによる音の歪みを防ぐ
+        peak = np.max(np.abs(data))
+        target_gain = 0.99 / peak if peak > 0.99 else 1.0
+        
+        if self.current_limiter_gain != target_gain:
+            gains = np.linspace(self.current_limiter_gain, target_gain, len(data), dtype=np.float32).reshape(-1, 1)
+            data = data * gains
+            self.current_limiter_gain = target_gain
+        elif target_gain < 1.0:
+            data = data * target_gain
+
         return data
 
     def run(self):
@@ -42,7 +56,9 @@ class SystemAudioMonitorThread(QThread):
             print("\n=== SystemAudioMonitorThread Error ===")
             traceback.print_exc()
             print("======================================\n")
-            log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sys_audio_error.log")
+            app_data_dir = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'ValoReco')
+            os.makedirs(app_data_dir, exist_ok=True)
+            log_path = os.path.join(app_data_dir, "sys_audio_error.log")
             with open(log_path, "a", encoding="utf-8") as f:
                 f.write(f"SystemAudioMonitorThread error:\n{traceback.format_exc()}\n")
 
@@ -50,7 +66,9 @@ class SystemAudioMonitorThread(QThread):
         self.running = False
         if not self.wait(2000):
             import os, datetime
-            log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "thread_error.log")
+            app_data_dir = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'ValoReco')
+            os.makedirs(app_data_dir, exist_ok=True)
+            log_path = os.path.join(app_data_dir, "thread_error.log")
             with open(log_path, "a", encoding="utf-8") as f:
                 f.write(f"[{datetime.datetime.now()}] SystemAudioMonitorThread wait timed out.\n")
 
@@ -68,6 +86,11 @@ class MicMonitorThread(QThread):
         self.running = True
         self.noise_floor = 0.01
         self.gate_open = False
+        self.current_gate_gain = 1.0
+        self.current_rnnoise_gain = 1.0
+        self.current_limiter_gain = 1.0
+        self.gate_hold_frames = 0
+        self.MAX_HOLD_FRAMES = 10  # 50ms * 10 = 500ms
 
     def set_gain(self, gain):
         self.gain = gain
@@ -97,8 +120,17 @@ class MicMonitorThread(QThread):
             
             snr = rms / self.noise_floor
             if snr < 3.0:
-                reduction = max(0.05, (snr - 1.0) / 2.0)
-                data = data * reduction
+                target_reduction = max(0.05, (snr - 1.0) / 2.0)
+            else:
+                target_reduction = 1.0
+                
+            # ゲインを滑らかに適用 (プツプツ音防止)
+            if self.current_rnnoise_gain != target_reduction:
+                gains = np.linspace(self.current_rnnoise_gain, target_reduction, len(data), dtype=np.float32).reshape(-1, 1)
+                data = data * gains
+                self.current_rnnoise_gain = target_reduction
+            else:
+                data = data * target_reduction
 
         # メーター表示用のレベル計算（ゲート適用前）
         peak = np.max(np.abs(data))
@@ -109,13 +141,32 @@ class MicMonitorThread(QThread):
         if self.gate_threshold > 0:
             amp_threshold = (self.gate_threshold / 2.0) ** 2
             rms = np.sqrt(np.mean(data**2) + 1e-8)
+            
             if rms > amp_threshold:
                 self.gate_open = True
-            elif rms < amp_threshold * 0.5: # ヒステリシス
-                self.gate_open = False
+                self.gate_hold_frames = self.MAX_HOLD_FRAMES
+            else:
+                if self.gate_hold_frames > 0:
+                    self.gate_hold_frames -= 1
+                else:
+                    self.gate_open = False
             
-            if not self.gate_open:
-                data = data * 0.01
+            target_gain = 1.0 if self.gate_open else 0.01
+            
+            # ゲインを滑らかに適用 (プツプツ音防止)
+            if self.current_gate_gain != target_gain:
+                gains = np.linspace(self.current_gate_gain, target_gain, len(data), dtype=np.float32).reshape(-1, 1)
+                data = data * gains
+                self.current_gate_gain = target_gain
+            else:
+                data = data * target_gain
+
+        # ソフトリミッター (過大入力を滑らかに抑え、音割れを防ぐ)
+        # マイクゲインを大きめに設定しても、この処理により適切な音量に均一化されます
+        peak = np.max(np.abs(data))
+        if peak > 0.99:
+            # 0.99を超える場合は全体をスケールダウン
+            data = data * (0.99 / peak)
 
         return data
 
@@ -167,12 +218,13 @@ class MicMonitorThread(QThread):
                     
                 # AudioProcessorWrapper の初期化 (ダウンミックス後のモノラル処理用)
                 processor = None
-                if self.denoise_mode == "AI (DeepFilterNet)":
-                    try:
-                        processor = AudioProcessorWrapper(sample_rate=48000, channels=1)
-                        processor.set_preprocess_type(self.preprocess_mode)
-                    except Exception as e:
-                        print(f"Failed to initialize AudioProcessorWrapper: {e}")
+                try:
+                    processor = AudioProcessorWrapper(sample_rate=48000, channels=1)
+                except Exception as e:
+                    print(f"Failed to initialize AudioProcessorWrapper: {e}")
+                    
+                last_denoise = None
+                last_preprocess = None
                     
                 if recorder is not None:
                     with recorder:
@@ -185,7 +237,19 @@ class MicMonitorThread(QThread):
                                         data = data.mean(axis=1, keepdims=True)
                                         
                                     if processor is not None:
-                                        data = processor.process(data)
+                                        if last_preprocess != self.preprocess_mode:
+                                            processor.set_preprocess_type(self.preprocess_mode)
+                                            last_preprocess = self.preprocess_mode
+                                        if last_denoise != self.denoise_mode:
+                                            if self.denoise_mode == "AI (DeepFilterNet)":
+                                                processor.set_denoise_type("DeepFilterNet")
+                                            else:
+                                                processor.set_denoise_type("None")
+                                            last_denoise = self.denoise_mode
+                                            
+                                        # 処理が不要な場合はバイパスして無音化リスクを回避
+                                        if self.preprocess_mode != "None" or self.denoise_mode == "AI (DeepFilterNet)":
+                                            data = processor.process(data)
                                         
                                     processed = self.process_audio(data)
                                     if self.monitor_audio:
@@ -199,7 +263,19 @@ class MicMonitorThread(QThread):
                                     data = data.mean(axis=1, keepdims=True)
                                     
                                 if processor is not None:
-                                    data = processor.process(data)
+                                    if last_preprocess != self.preprocess_mode:
+                                        processor.set_preprocess_type(self.preprocess_mode)
+                                        last_preprocess = self.preprocess_mode
+                                    if last_denoise != self.denoise_mode:
+                                        if self.denoise_mode == "AI (DeepFilterNet)":
+                                            processor.set_denoise_type("DeepFilterNet")
+                                        else:
+                                            processor.set_denoise_type("None")
+                                        last_denoise = self.denoise_mode
+                                        
+                                    # 処理が不要な場合はバイパスして無音化リスクを回避
+                                    if self.preprocess_mode != "None" or self.denoise_mode == "AI (DeepFilterNet)":
+                                        data = processor.process(data)
                                     
                                 self.process_audio(data)
                 else:
@@ -216,7 +292,9 @@ class MicMonitorThread(QThread):
             print("\n=== MicMonitorThread Error ===")
             traceback.print_exc()
             print("==============================\n")
-            log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "mic_error.log")
+            app_data_dir = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'ValoReco')
+            os.makedirs(app_data_dir, exist_ok=True)
+            log_path = os.path.join(app_data_dir, "mic_error.log")
             with open(log_path, "a", encoding="utf-8") as f:
                 f.write(f"MicMonitorThread error:\n{traceback.format_exc()}\n")
 
@@ -224,6 +302,8 @@ class MicMonitorThread(QThread):
         self.running = False
         if not self.wait(2000):
             import os, datetime
-            log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "thread_error.log")
+            app_data_dir = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'ValoReco')
+            os.makedirs(app_data_dir, exist_ok=True)
+            log_path = os.path.join(app_data_dir, "thread_error.log")
             with open(log_path, "a", encoding="utf-8") as f:
                 f.write(f"[{datetime.datetime.now()}] MicMonitorThread wait timed out.\n")

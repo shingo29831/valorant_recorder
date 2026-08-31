@@ -143,8 +143,8 @@ class RecordSettingsWidget(QWidget):
 
         self.mic_preprocess_combo = QComboBox()
         none_opt = getattr(self.t, 'none_option', "None")
-        self.mic_preprocess_combo.addItem(none_opt, "None")
-        self.mic_preprocess_combo.addItem("SpeexDSP", "SpeexDSP")
+        self.mic_preprocess_combo.addItem(f"{none_opt} (無効化)", "None")
+        self.mic_preprocess_combo.addItem("SpeexDSP (HPF有効)", "SpeexDSP")
         self.mic_preprocess_combo.addItem("WebRTC (Coming Soon)", "WebRTC")
         
         pre_val = getattr(self.config, 'RECORD_AUDIO_MIC_PREPROCESS', 'SpeexDSP')
@@ -152,6 +152,15 @@ class RecordSettingsWidget(QWidget):
         if idx >= 0:
             self.mic_preprocess_combo.setCurrentIndex(idx)
         self.mic_preprocess_combo.currentIndexChanged.connect(self._on_preprocess_changed)
+        
+        self.preprocess_warning_label = QLabel("※前処理が無効化されているため、低周波ノイズが入りやすくなります")
+        self.preprocess_warning_label.setStyleSheet("color: #FFaa00; font-size: 11px; font-weight: bold;")
+        self.preprocess_warning_label.setVisible(pre_val == "None")
+        
+        preprocess_layout = QVBoxLayout()
+        preprocess_layout.addWidget(self.mic_preprocess_combo)
+        preprocess_layout.addWidget(self.preprocess_warning_label)
+        preprocess_layout.setSpacing(2)
 
         self.mic_gate_slider = QSlider(Qt.Orientation.Horizontal)
         self.mic_gate_slider.setRange(0, 100)
@@ -187,7 +196,7 @@ class RecordSettingsWidget(QWidget):
         audio_layout.addRow(self.t.microphone, self.mic_input)
         audio_layout.addRow(self.t.mic_gain, gain_layout)
         audio_layout.addRow(self.t.noise_cancel, self.mic_denoise_combo)
-        audio_layout.addRow(getattr(self.t, 'mic_preprocess', 'Pre-process (HPF)'), self.mic_preprocess_combo)
+        audio_layout.addRow(getattr(self.t, 'mic_preprocess', 'Pre-process (HPF)'), preprocess_layout)
         audio_layout.addRow(self.t.noise_gate, gate_layout)
         audio_layout.addRow(self.t.mic_level, self.volume_meter)
         audio_layout.addRow("", monitor_layout)
@@ -224,6 +233,7 @@ class RecordSettingsWidget(QWidget):
 
     def _on_preprocess_changed(self, index):
         mode = self.mic_preprocess_combo.currentData()
+        self.preprocess_warning_label.setVisible(mode == "None")
         if self.monitor_thread:
             self.monitor_thread.set_preprocess(mode)
         self._save_settings()

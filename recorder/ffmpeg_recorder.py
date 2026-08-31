@@ -48,8 +48,10 @@ def get_available_encoders(ffmpeg_path: str) -> tuple[list, list]:
     available = []
     warning_keys = []
     
-    # 失敗原因特定のため、プロジェクトルートにログを出力する
-    log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "encoder_test.log")
+    # 失敗原因特定のため、永続的なデータディレクトリにログを出力する
+    app_data_dir = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'ValoReco')
+    os.makedirs(app_data_dir, exist_ok=True)
+    log_path = os.path.join(app_data_dir, "encoder_test.log")
     
     try:
         with open(log_path, "w", encoding="utf-8") as f:
@@ -91,9 +93,11 @@ class FFmpegRecorder:
         self.stop_event = threading.Event()
         self.audio_queue = queue.Queue(maxsize=200)
         
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        self.ffmpeg_path = ensure_ffmpeg_downloaded(project_root)
-        self.rnnoise_model_path = ensure_rnnoise_model_downloaded(project_root)
+        # Nuitkaの実行時一時ディレクトリではなく、永続的なディレクトリにダウンロードする
+        app_data_dir = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'ValoReco')
+        os.makedirs(app_data_dir, exist_ok=True)
+        self.ffmpeg_path = ensure_ffmpeg_downloaded(app_data_dir)
+        self.rnnoise_model_path = ensure_rnnoise_model_downloaded(app_data_dir)
         self.actual_encoder = self._determine_encoder()
 
     def _determine_encoder(self) -> str:
@@ -115,7 +119,10 @@ class FFmpegRecorder:
         warnings.filterwarnings("ignore", message=".*data discontinuity.*")
         
         samplerate = 48000
-        frames_per_buffer = 1024
+        # AIノイズキャンセル(DeepFilterNet)やSpeexDSPは10ms(480サンプル)単位での処理を要求するため、
+        # 480の倍数であり、かつモニター時と同じ安定したバッファサイズである2400(50ms)に設定する。
+        # バッファが小さすぎると処理落ち(ドロップアウト)が発生しプツプツ音の原因になる。
+        frames_per_buffer = 2400
         mic_gain = float(getattr(self.config, 'RECORD_AUDIO_MIC_GAIN', '1.0'))
         system_gain = float(getattr(self.config, 'RECORD_AUDIO_SYSTEM_GAIN', '1.0'))
         
@@ -168,12 +175,24 @@ class FFmpegRecorder:
                     
                     processor = None
                     denoise_mode = str(getattr(self.config, 'RECORD_AUDIO_MIC_DENOISE', 'None'))
-                    if denoise_mode == 'AI (DeepFilterNet)':
+                    preprocess_mode = str(getattr(self.config, 'RECORD_AUDIO_MIC_PREPROCESS', 'SpeexDSP'))
+                    gate_threshold = float(getattr(self.config, 'RECORD_AUDIO_MIC_NOISE_GATE', '0')) / 100.0
+                    gate_open = False
+                    current_gate_gain = 1.0
+                    current_limiter_gain = 1.0
+                    gate_hold_frames = 0
+                    MAX_HOLD_FRAMES = 10  # 50ms * 10 = 500ms のホールドタイム（声の途切れ防止）
+                    
+                    if denoise_mode == 'AI (DeepFilterNet)' or preprocess_mode != 'None':
                         try:
                             from recorder.audio_processor_wrapper import AudioProcessorWrapper
-                            processor = AudioProcessorWrapper(sample_rate=samplerate, channels=mic_channels)
-                            preprocess_mode = str(getattr(self.config, 'RECORD_AUDIO_MIC_PREPROCESS', 'SpeexDSP'))
+                            # DeepFilterNetはモノラル専用のため、マイクのチャンネル数に関わらず常にchannels=1で初期化する
+                            processor = AudioProcessorWrapper(sample_rate=samplerate, channels=1)
                             processor.set_preprocess_type(preprocess_mode)
+                            if denoise_mode == 'AI (DeepFilterNet)':
+                                processor.set_denoise_type("DeepFilterNet")
+                            else:
+                                processor.set_denoise_type("None")
                         except Exception as e:
                             if self.log_file and not self.log_file.closed:
                                 self.log_file.write(f"Failed to initialize AudioProcessorWrapper: {e}\n")
@@ -184,10 +203,50 @@ class FFmpegRecorder:
                             data = mic_rec.record(numframes=frames_per_buffer)
                             
                             if processor is not None:
+                                # ステレオの場合はモノラルにダウンミックスしてから処理
+                                if mic_channels == 2:
+                                    data = data.mean(axis=1, keepdims=True)
                                 data = processor.process(data)
-                                
-                            if mic_channels == 1:
+                                # 処理後にステレオに戻す
                                 data = np.repeat(data, 2, axis=1)
+                            else:
+                                if mic_channels == 1:
+                                    data = np.repeat(data, 2, axis=1)
+                                    
+                            # スムージング付きソフトリミッター
+                            # ハードクリップ(np.clip)による音の歪みと、フレーム単位の急激なゲイン変化によるポツ音を両方防ぐ
+                            peak = np.max(np.abs(data))
+                            target_gain = 0.99 / peak if peak > 0.99 else 1.0
+                            
+                            if current_limiter_gain != target_gain:
+                                gains = np.linspace(current_limiter_gain, target_gain, len(data), dtype=np.float32).reshape(-1, 1)
+                                data = data * gains
+                                current_limiter_gain = target_gain
+                            elif target_gain < 1.0:
+                                data = data * target_gain
+                                
+                            # モニター時と全く同じスムージング付きノイズゲートをPython側で適用する
+                            if gate_threshold > 0:
+                                amp_threshold = (gate_threshold / 2.0) ** 2
+                                rms = np.sqrt(np.mean(data**2) + 1e-8)
+                                
+                                if rms > amp_threshold:
+                                    gate_open = True
+                                    gate_hold_frames = MAX_HOLD_FRAMES
+                                else:
+                                    if gate_hold_frames > 0:
+                                        gate_hold_frames -= 1
+                                    else:
+                                        gate_open = False
+                                
+                                target_gain = 1.0 if gate_open else 0.01
+                                
+                                if current_gate_gain != target_gain:
+                                    gains = np.linspace(current_gate_gain, target_gain, len(data), dtype=np.float32).reshape(-1, 1)
+                                    data = data * gains
+                                    current_gate_gain = target_gain
+                                else:
+                                    data = data * target_gain
                             
                             # データサイズが異なる場合のパディング/トリミング（形状不一致によるクラッシュ防止）
                             if data.shape[0] < frames_per_buffer:
@@ -229,6 +288,9 @@ class FFmpegRecorder:
                 
                 start_time = time.perf_counter()
                 total_frames_generated = 0
+                
+                # マイクの連続的な波形を保持するバッファ（キュー破棄によるポツ音防止）
+                mic_buffer = np.zeros((0, 2), dtype=np.float32)
 
                 while not self.stop_event.is_set():
                     # スピーカーのキューが溜まりすぎている場合は古いデータを捨てる（遅延防止）
@@ -249,24 +311,28 @@ class FFmpegRecorder:
                         frames_to_process = spk_data.shape[0]
                         
                         if mic_rec is not None:
-                            # マイクのキューが溜まりすぎている場合は古いデータを捨てる
-                            while mic_queue.qsize() > 2:
+                            # キューから利用可能なすべてのデータをバッファに追加し、波形の連続性を保つ
+                            while True:
                                 try:
-                                    mic_queue.get_nowait()
+                                    chunk = mic_queue.get_nowait()
+                                    mic_buffer = np.concatenate((mic_buffer, chunk), axis=0)
                                 except queue.Empty:
                                     break
-                                    
-                            try:
-                                mic_data = mic_queue.get_nowait()
-                                mic_data = mic_data * mic_gain
-                                # サイズ合わせ
-                                if mic_data.shape[0] < frames_to_process:
-                                    pad = np.zeros((frames_to_process - mic_data.shape[0], 2), dtype=np.float32)
-                                    mic_data = np.concatenate((mic_data, pad), axis=0)
-                                elif mic_data.shape[0] > frames_to_process:
-                                    mic_data = mic_data[:frames_to_process, :]
-                            except queue.Empty:
-                                mic_data = np.zeros((frames_to_process, 2), dtype=np.float32)
+                            
+                            # ドリフトによりバッファが溜まりすぎた場合（例: 0.5秒以上）のみ、古いデータを捨てる
+                            if mic_buffer.shape[0] > samplerate * 0.5:
+                                mic_buffer = mic_buffer[-int(samplerate * 0.1):]
+                                
+                            if mic_buffer.shape[0] >= frames_to_process:
+                                mic_data = mic_buffer[:frames_to_process]
+                                mic_buffer = mic_buffer[frames_to_process:]
+                            else:
+                                # データが足りない場合はゼロパディング
+                                pad = np.zeros((frames_to_process - mic_buffer.shape[0], 2), dtype=np.float32)
+                                mic_data = np.concatenate((mic_buffer, pad), axis=0)
+                                mic_buffer = np.zeros((0, 2), dtype=np.float32)
+                                
+                            mic_data = mic_data * mic_gain
                         else:
                             mic_data = np.zeros((frames_to_process, 2), dtype=np.float32)
                         
@@ -382,13 +448,7 @@ class FFmpegRecorder:
                 model_path_str = self.rnnoise_model_path.replace('\\', '/').replace(':', '\\:').replace(' ', '\\ ')
                 mic_filters.append(f"arnndn=m={model_path_str}")
             
-        if gate_level > 0:
-            # UIのパーセンテージ(0.0〜1.0)をFFmpegのagateフィルタ用の振幅閾値に変換
-            # モニター時(MicMonitorThread)の計算式 (gate_level / 2.0)**2 に合わせる
-            amp_threshold = (gate_level / 2.0) ** 2
-            # ただし、FFmpegのagateは閾値の解釈が厳格なため、極端な減衰を防ぐために少し緩和する
-            # ratio=4 (モニターの0.01倍減衰より自然な減衰)、attack=10、release=100
-            mic_filters.append(f"agate=threshold={amp_threshold:.4f}:ratio=4:attack=10:release=100")
+        # ノイズゲートはPython側でモニターと全く同じ処理を適用するため、FFmpegのagateフィルタは使用しない
             
         if mic_filters:
             # フィルタ適用後にチャンネルレイアウトやサンプリングレートが失われないようaformatで明示的に指定する
