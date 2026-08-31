@@ -27,6 +27,7 @@ class Config:
         self.UPDATE_API_URL = os.environ.get("UPDATE_API_URL") or "https://valoreco-api.meld-task.com/api/version"
         self.PLAYER_SYS_VOLUME = self._parse_volume(os.environ.get("PLAYER_SYS_VOLUME", "1.0"))
         self.PLAYER_MIC_VOLUME = self._parse_volume(os.environ.get("PLAYER_MIC_VOLUME", "1.0"))
+        self.AUTO_START = os.environ.get("AUTO_START", "False").lower() == "true"
 
     def _parse_volume(self, val_str, default=1.0):
         try:
@@ -63,3 +64,4 @@ class Config:
         set_key(self.env_file, "UPDATE_API_URL", self.UPDATE_API_URL)
         set_key(self.env_file, "PLAYER_SYS_VOLUME", str(self.PLAYER_SYS_VOLUME))
         set_key(self.env_file, "PLAYER_MIC_VOLUME", str(self.PLAYER_MIC_VOLUME))
+        set_key(self.env_file, "AUTO_START", str(self.AUTO_START))

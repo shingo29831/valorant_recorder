@@ -164,24 +164,40 @@ def download_and_apply_update(download_url: str):
     if not new_exe_path:
         raise FileNotFoundError("Executable (.exe) not found in the downloaded update archive.")
 
+    # 実行ファイルのパスを特定する
+    # PyInstallerの場合は sys.frozen が True になり、sys.executable が自身のexeを指す
+    if getattr(sys, 'frozen', False):
+        current_exe_path = sys.executable
+    else:
+        # Nuitka等で sys.frozen がない場合、sys.executable が元の python.exe を指すことがあるため sys.argv[0] を使用する
+        current_exe_path = os.path.abspath(sys.argv[0])
+
     # 開発環境(Pythonスクリプト実行)の場合は更新をスキップ
-    current_exe_path = sys.executable
-    if not current_exe_path.endswith(".exe") or "python" in os.path.basename(current_exe_path).lower():
-        raise RuntimeError("Cannot apply update in development environment (running via python.exe).")
+    if not current_exe_path.lower().endswith(".exe") or "python" in os.path.basename(current_exe_path).lower():
+        raise RuntimeError(f"Cannot apply update in development environment (running via {os.path.basename(current_exe_path)}).")
     
     # 4. 上書き更新用バッチファイルの作成
     bat_path = os.path.join(temp_dir, "update.bat")
     with open(bat_path, "w", encoding="utf-8") as bat_file:
         bat_file.write("@echo off\n")
-        # アプリが完全に終了するのを待つ
-        bat_file.write("timeout /t 2 /nobreak > nul\n")
+        # コマンドプロンプトをUTF-8モードに変更し、日本語パスの文字化けを防ぐ
+        bat_file.write("chcp 65001 > nul\n")
+        bat_file.write(":retry\n")
+        # アプリが完全に終了してファイルのロックが解除されるのを待つ
+        bat_file.write("timeout /t 1 /nobreak > nul\n")
         # 新しいexeで古いexeを上書き
         bat_file.write(f'move /y "{new_exe_path}" "{current_exe_path}"\n')
+        # 上書きに失敗した場合（まだアプリが起動中でファイルがロックされている場合など）はリトライ
+        bat_file.write("if errorlevel 1 goto retry\n")
         # 新しいexeを起動
         bat_file.write(f'start "" "{current_exe_path}"\n')
         # バッチファイル自身を削除
         bat_file.write('del "%~f0"\n')
         
     # 5. バッチファイルを非表示で実行してアプリを終了
-    subprocess.Popen([bat_path], shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
-    # スレッド内での sys.exit() は SystemExit 例外を投げるだけなので、ここでは終了させず呼び出し元に委ねる
+    # shell=True に依存せず、明示的に cmd.exe を呼び出す
+    subprocess.Popen(["cmd.exe", "/c", bat_path], creationflags=subprocess.CREATE_NO_WINDOW)
+    
+    # バッチファイル起動後、即座にプロセスを強制終了してファイルのロックを解除する
+    # QCoreApplication.quit() では終了が遅延するため os._exit(0) を使用
+    os._exit(0)

@@ -5,7 +5,7 @@ import traceback
 from PyQt6.QtWidgets import QFileDialog, QMessageBox, QProgressDialog, QApplication
 from PyQt6.QtCore import Qt
 
-def change_save_directory(parent_widget, current_dir, t):
+def change_save_directory(parent_widget, current_dir, t, suffix="/valorant_records"):
     """
     保存先ディレクトリの変更と、既存ファイルの移行処理を行うユーティリティ関数。
     成功した場合は新しいディレクトリパスを返し、キャンセルされた場合はNoneを返す。
@@ -30,8 +30,8 @@ def change_save_directory(parent_widget, current_dir, t):
             return None
         
         selected_dir = selected_dir.replace('\\', '/')
-        if not selected_dir.endswith('/valorant_records'):
-            new_save_dir = f"{selected_dir}/valorant_records"
+        if suffix and not selected_dir.endswith(suffix):
+            new_save_dir = f"{selected_dir}{suffix}"
         else:
             new_save_dir = selected_dir
 

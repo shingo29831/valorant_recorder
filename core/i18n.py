@@ -60,6 +60,21 @@ class Translations:
     none_option: str
     nvidia_broadcast_not_found_title: str
     nvidia_broadcast_not_found_msg: str
+    filter_clear: str
+    filter_favorite: str
+    filter_agent: str
+    filter_result: str
+    filter_map: str
+    result_win: str
+    result_loss: str
+    result_draw: str
+    auto_start: str
+    enable: str
+    clip_save_directory: str
+    check_update: str
+    checking_update: str
+    up_to_date: str
+    up_to_date_msg: str
 
 EN = Translations(
     settings_title="APPLICATION SETTINGS",
@@ -119,7 +134,22 @@ EN = Translations(
     audio_settings="Audio Settings",
     none_option="None",
     nvidia_broadcast_not_found_title="NVIDIA Broadcast Not Found",
-    nvidia_broadcast_not_found_msg="NVIDIA Broadcast microphone was not found in the device list.\n\nPlease ensure the NVIDIA Broadcast app is installed, running, and the microphone effect is turned on."
+    nvidia_broadcast_not_found_msg="NVIDIA Broadcast microphone was not found in the device list.\n\nPlease ensure the NVIDIA Broadcast app is installed, running, and the microphone effect is turned on.",
+    filter_clear="Clear Filter",
+    filter_favorite="Favorite",
+    filter_agent="Agent",
+    filter_result="Result",
+    filter_map="Map",
+    result_win="Win",
+    result_loss="Loss",
+    result_draw="Draw",
+    auto_start="Auto Start on Boot:",
+    enable="Enable",
+    clip_save_directory="Clip Save Directory:",
+    check_update="Check for Updates",
+    checking_update="Checking...",
+    up_to_date="Up to Date",
+    up_to_date_msg="You are using the latest version."
 )
 
 JA = Translations(
@@ -180,7 +210,22 @@ JA = Translations(
     audio_settings="音声設定",
     none_option="なし",
     nvidia_broadcast_not_found_title="NVIDIA Broadcast が見つかりません",
-    nvidia_broadcast_not_found_msg="NVIDIA Broadcast マイクがデバイスリストに見つかりませんでした。\n\nNVIDIA Broadcast アプリがインストールされ、起動しており、マイクエフェクトがオンになっていることを確認してください。"
+    nvidia_broadcast_not_found_msg="NVIDIA Broadcast マイクがデバイスリストに見つかりませんでした。\n\nNVIDIA Broadcast アプリがインストールされ、起動しており、マイクエフェクトがオンになっていることを確認してください。",
+    filter_clear="フィルターをクリア",
+    filter_favorite="お気に入り",
+    filter_agent="エージェント",
+    filter_result="勝敗",
+    filter_map="マップ",
+    result_win="勝利",
+    result_loss="敗北",
+    result_draw="引き分け",
+    auto_start="PC起動時に自動起動:",
+    enable="有効にする",
+    clip_save_directory="クリップ保存先:",
+    check_update="アップデートを確認",
+    checking_update="確認中...",
+    up_to_date="最新版です",
+    up_to_date_msg="現在最新バージョンを使用しています。"
 )
 
 def get_trans(lang_code: str) -> Translations:

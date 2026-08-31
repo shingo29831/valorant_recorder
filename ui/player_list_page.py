@@ -8,6 +8,7 @@ from PyQt6.QtCore import Qt, QSize, pyqtSignal, QByteArray, QPoint
 from PyQt6.QtGui import QIcon, QPixmap, QPainter
 from PyQt6.QtSvg import QSvgRenderer
 from core.config import Config
+from core.i18n import get_trans
 from ui.player_components import FlowLayout, RecordItemWidget
 from ui.player_utils import find_video_for_json, get_agent_name, get_match_result
 
@@ -34,6 +35,7 @@ class PlayerListPage(QWidget):
     def __init__(self, config: Config, parent=None):
         super().__init__(parent)
         self.config = config
+        self.t = get_trans(getattr(self.config, 'LANGUAGE', 'en'))
         
         self.delete_mode = False
         self.favorite_mode = False
@@ -318,24 +320,24 @@ class PlayerListPage(QWidget):
     def show_filter_menu(self):
         menu = QMenu(self)
         
-        action_clear = menu.addAction("Clear Filter")
+        action_clear = menu.addAction(self.t.filter_clear)
         action_clear.triggered.connect(lambda checked=False: self.apply_filter(None))
         menu.addSeparator()
         
-        action_fav = menu.addAction("Favorite")
+        action_fav = menu.addAction(self.t.filter_favorite)
         action_fav.triggered.connect(lambda checked=False: self.apply_filter(("favorite", True)))
         
-        menu_agent = menu.addMenu("Agent")
+        menu_agent = menu.addMenu(self.t.filter_agent)
         for agent in sorted(self.available_agents):
             action = menu_agent.addAction(agent)
             action.triggered.connect(lambda checked, a=agent: self.apply_filter(("agent", a)))
             
-        menu_result = menu.addMenu("Result")
-        for res, label in [("win", "Win"), ("loss", "Loss"), ("draw", "Draw")]:
+        menu_result = menu.addMenu(self.t.filter_result)
+        for res, label in [("win", self.t.result_win), ("loss", self.t.result_loss), ("draw", self.t.result_draw)]:
             action = menu_result.addAction(label)
             action.triggered.connect(lambda checked, r=res: self.apply_filter(("result", r)))
             
-        menu_map = menu.addMenu("Map")
+        menu_map = menu.addMenu(self.t.filter_map)
         for m in sorted(self.available_maps):
             action = menu_map.addAction(m)
             action.triggered.connect(lambda checked, m_name=m: self.apply_filter(("map", m_name)))
