@@ -284,25 +284,13 @@ class FFmpegRecorder:
                 spk_thread = threading.Thread(target=spk_worker, daemon=True)
                 spk_thread.start()
 
-                import time
-                
-                start_time = time.perf_counter()
-                total_frames_generated = 0
-                
                 # マイクの連続的な波形を保持するバッファ（キュー破棄によるポツ音防止）
                 mic_buffer = np.zeros((0, 2), dtype=np.float32)
 
                 while not self.stop_event.is_set():
-                    # スピーカーのキューが溜まりすぎている場合は古いデータを捨てる（遅延防止）
-                    while spk_queue.qsize() > 2:
-                        try:
-                            spk_queue.get_nowait()
-                        except queue.Empty:
-                            break
-
                     try:
-                        # 短いタイムアウトでデータを待つ
-                        spk_data = spk_queue.get(timeout=0.05)
+                        # タイムアウトを長くし、一時的なスレッド遅延で無音が誤挿入されるのを防ぐ
+                        spk_data = spk_queue.get(timeout=0.5)
                         spk_data = spk_data * system_gain
                     except queue.Empty:
                         spk_data = None
@@ -319,9 +307,9 @@ class FFmpegRecorder:
                                 except queue.Empty:
                                     break
                             
-                            # ドリフトによりバッファが溜まりすぎた場合（例: 0.5秒以上）のみ、古いデータを捨てる
-                            if mic_buffer.shape[0] > samplerate * 0.5:
-                                mic_buffer = mic_buffer[-int(samplerate * 0.1):]
+                            # ドリフトによりバッファが極端に溜まりすぎた場合（例: 3秒以上）のみ、古いデータを捨てる
+                            if mic_buffer.shape[0] > samplerate * 3.0:
+                                mic_buffer = mic_buffer[-int(samplerate * 0.5):]
                                 
                             if mic_buffer.shape[0] >= frames_to_process:
                                 mic_data = mic_buffer[:frames_to_process]
@@ -341,35 +329,21 @@ class FFmpegRecorder:
                         
                         try:
                             self.audio_queue.put_nowait(combined.astype(np.float32).tobytes())
-                            total_frames_generated += frames_to_process
                         except queue.Full:
                             pass
                             
-                        # 音が鳴っている間は、WASAPIのハードウェアクロックとシステムタイマーのズレを吸収するため、
-                        # start_time を現在時刻と生成済みフレーム数から逆算して補正する（ドリフト防止）
-                        start_time = time.perf_counter() - (total_frames_generated / samplerate)
-                        
                     else:
-                        # 無音時（タイムアウト）：システムタイマーベースで正確な量の無音データを補完する
-                        current_time = time.perf_counter()
-                        elapsed = current_time - start_time
-                        expected_frames = int(elapsed * samplerate)
+                        # 無音時（タイムアウト）：スピーカーからのデータが0.5秒以上来ない場合、
+                        # 録画の進行を止めないために1バッファ分の無音を挿入する。
+                        # 実時間との厳密な同期（ドリフト補正）は、かえってジッターを引き起こすため廃止。
+                        pad_spk = np.zeros((frames_per_buffer, 2), dtype=np.float32)
+                        pad_mic = np.zeros((frames_per_buffer, 2), dtype=np.float32)
+                        combined_pad = np.concatenate((pad_spk, pad_mic), axis=1)
                         
-                        frames_shortage = expected_frames - total_frames_generated
-                        
-                        if frames_shortage > 0:
-                            # 一度に大量に生成しすぎないよう制限（最大1バッファ分ずつ）
-                            frames_to_add = min(frames_shortage, frames_per_buffer)
-                            
-                            pad_spk = np.zeros((frames_to_add, 2), dtype=np.float32)
-                            pad_mic = np.zeros((frames_to_add, 2), dtype=np.float32)
-                            combined_pad = np.concatenate((pad_spk, pad_mic), axis=1)
-                            
-                            try:
-                                self.audio_queue.put_nowait(combined_pad.astype(np.float32).tobytes())
-                                total_frames_generated += frames_to_add
-                            except queue.Full:
-                                pass
+                        try:
+                            self.audio_queue.put_nowait(combined_pad.astype(np.float32).tobytes())
+                        except queue.Full:
+                            pass
 
                 worker_stop.set()
                 if mic_thread is not None:
@@ -506,7 +480,9 @@ class FFmpegRecorder:
         
         self.audio_ready_event.wait(timeout=5.0)
         
-        creationflags = (subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW) if os.name == 'nt' else 0
+        # CREATE_NO_WINDOW に加え DETACHED_PROCESS (0x00000008) を指定し、
+        # プロセス起動時にOSがコンソール用に一瞬フォーカスを奪う現象を完全に防ぐ
+        creationflags = (subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW | 0x00000008) if os.name == 'nt' else 0
         
         self.process = subprocess.Popen(
             cmd,

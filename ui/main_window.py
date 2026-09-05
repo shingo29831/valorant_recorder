@@ -28,6 +28,7 @@ class MainWindow(QMainWindow):
         self.resize(1280, 720)
         
         self._titlebar_color_applied = False
+        self._pending_update = None
         
         self.config = Config()
         
@@ -55,8 +56,6 @@ class MainWindow(QMainWindow):
         
         self.setup_tray_icon()
         
-        self.notification_overlay = NotificationOverlay()
-        
         self.watcher_thread = WatcherThread(self.config)
         self.watcher_thread.log_signal.connect(self.update_status)
         self.watcher_thread.match_saved_signal.connect(self.player_tab.refresh_list)
@@ -75,6 +74,11 @@ class MainWindow(QMainWindow):
             print("[MainWindow] UPDATE_API_URL is not set. Update checker skipped.")
 
     def show_update_dialog(self, latest_version, download_url):
+        # ゲーム中などにフォーカスを奪わないよう、非アクティブ時はトースト通知すら出さず、フラグのみ立てる
+        if self.isHidden() or not self.isActiveWindow():
+            self._pending_update = (latest_version, download_url)
+            return
+
         msg_box = QMessageBox(self)
         msg_box.setWindowTitle("アップデートのお知らせ")
         msg_box.setText(f"新しいバージョン ({latest_version}) が利用可能です。\n現在のバージョン: {APP_VERSION}\n\n今すぐアップデートしますか？")
@@ -179,19 +183,25 @@ class MainWindow(QMainWindow):
             self.rec_button.setText("🔴 Start Recording")
 
     def show_recording_notification(self, is_recording):
-        if is_recording:
-            self.notification_overlay.show_message("🔴 録画を開始しました")
-        else:
-            self.notification_overlay.show_message("⏹ 録画を終了しました")
+        # Windowsのトースト通知自体がフルスクリーンゲームを最小化させる原因になるため、
+        # アプリがアクティブな時（ユーザーが直接操作している時）のみ通知を出す
+        if self.isActiveWindow():
+            if is_recording:
+                self.tray_icon.showMessage("ValoReco", "🔴 録画を開始しました", QSystemTrayIcon.MessageIcon.Information, 3000)
+            else:
+                self.tray_icon.showMessage("ValoReco", "⏹ 録画を終了しました", QSystemTrayIcon.MessageIcon.Information, 3000)
 
     def update_status(self, message: str):
-        self.statusBar().showMessage(message)
+        # ウィンドウが非アクティブ(ゲーム中など)の時にUIを更新すると、
+        # OSがウィンドウのアクティブ化とみなしゲームのフォーカスを奪うことがあるためスキップする
+        if self.isActiveWindow():
+            self.statusBar().showMessage(message)
 
     def closeEvent(self, event):
         # ウィンドウの閉じるボタンが押された時は非表示にしてトレイに格納する
         event.ignore()
         self.hide()
-        self.notification_overlay.show_message("バックグラウンドで実行を継続します")
+        self.tray_icon.showMessage("ValoReco", "バックグラウンドで実行を継続します", QSystemTrayIcon.MessageIcon.Information, 3000)
 
     def hideEvent(self, event):
         super().hideEvent(event)
@@ -207,6 +217,13 @@ class MainWindow(QMainWindow):
             
         if hasattr(self, 'player_tab'):
             self.player_tab.on_shown()
+            
+        # 保留されていたアップデートがあれば、UIの描画完了を待ってからダイアログを表示する
+        if getattr(self, '_pending_update', None):
+            latest_version, download_url = self._pending_update
+            self._pending_update = None
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(500, lambda: self.show_update_dialog(latest_version, download_url))
 
     def quit_app(self):
         # トレイメニューからQuitが選択された時に完全に終了する

@@ -42,6 +42,7 @@ class PlayerListPage(QWidget):
         self.current_filter = None
         self.available_agents = set()
         self.available_maps = set()
+        self._needs_refresh = False
         
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
@@ -185,6 +186,12 @@ class PlayerListPage(QWidget):
             x = self.scroll_area.geometry().right() - self.filter_btn.width() - 25
             y = self.scroll_area.geometry().top() + 10
             self.filter_btn.move(x, y)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # 保留されていたリスト更新があれば、画面が表示されたタイミングで実行する
+        if getattr(self, '_needs_refresh', False):
+            self.refresh_list()
 
     def _get_selected_files(self):
         selected_files = []
@@ -409,6 +416,13 @@ class PlayerListPage(QWidget):
                 self._clear_layout(item.layout())
 
     def refresh_list(self):
+        # ウィンドウが非表示(ゲーム中など)の時にUIを再構築すると、
+        # OSがフォーカス要求と誤認してゲームが裏画面に行くため、更新を保留する
+        if not self.isVisible():
+            self._needs_refresh = True
+            return
+            
+        self._needs_refresh = False
         self.clear_list()
                 
         if not os.path.exists(self.config.SAVE_DIR):

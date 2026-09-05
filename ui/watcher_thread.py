@@ -116,8 +116,18 @@ class WatcherThread(QThread):
         if self.current_video_path is None:
             return
 
-        self.log_signal.emit("[Recorder] Match ended. Stopping recording...")
-        self._stop_and_process_recording()
+        self.log_signal.emit("[Recorder] Match ended. Waiting 15 seconds to capture result screen...")
+        
+        # 試合終了直後のリザルト画面や勝利/敗北アニメーションを含めるため、
+        # 15秒間のディレイを設けてから非同期で録画を停止する
+        def delayed_stop(video_path_to_stop):
+            time.sleep(15)
+            # 15秒後にまだ同じ動画の録画が続いていれば停止する
+            if self.current_video_path == video_path_to_stop:
+                self.log_signal.emit("[Recorder] Stopping recording after delay...")
+                self._stop_and_process_recording()
+
+        threading.Thread(target=delayed_stop, args=(self.current_video_path,), daemon=True).start()
 
     def _stop_and_process_recording(self):
         self.recording_end_time = time.time()

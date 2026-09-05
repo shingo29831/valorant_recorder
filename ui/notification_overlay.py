@@ -9,7 +9,7 @@ class NotificationOverlay(QWidget):
         self.setWindowFlags(
             Qt.WindowType.WindowStaysOnTopHint |
             Qt.WindowType.FramelessWindowHint |
-            Qt.WindowType.Tool |
+            Qt.WindowType.ToolTip |
             Qt.WindowType.WindowTransparentForInput |
             Qt.WindowType.WindowDoesNotAcceptFocus
         )
@@ -40,6 +40,11 @@ class NotificationOverlay(QWidget):
         self.opacity_anim = QPropertyAnimation(self, b"windowOpacity")
         self.opacity_anim.setDuration(300)
         
+        # フォーカススティーリング(ゲームが裏画面に行く現象)を完全に防ぐため、
+        # ウィンドウを常に表示状態(透明度0)にしておき、show/hideの切り替えを発生させない
+        self.setWindowOpacity(0.0)
+        self.show()
+        
     def show_message(self, message, duration=3000):
         # アニメーション中の場合は一度停止してリセット
         if self.opacity_anim.state() == QPropertyAnimation.State.Running:
@@ -58,10 +63,7 @@ class NotificationOverlay(QWidget):
             geom = screen.geometry()
             self.move(geom.x() + 30, geom.y() + 30)
             
-        self.setWindowOpacity(0.0)
-        self.show()
-        
-        self.opacity_anim.setStartValue(0.0)
+        self.opacity_anim.setStartValue(self.windowOpacity())
         self.opacity_anim.setEndValue(1.0)
         self.opacity_anim.setEasingCurve(QEasingCurve.Type.OutQuad)
         self.opacity_anim.start()
@@ -80,4 +82,4 @@ class NotificationOverlay(QWidget):
             self.opacity_anim.finished.disconnect(self._on_fade_out_finished)
         except TypeError:
             pass
-        self.hide()
+        # hide()を呼ばず、透明度0のまま待機させる
