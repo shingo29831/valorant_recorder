@@ -110,7 +110,7 @@ class WatcherThread(QThread):
         self._update_current_player()
         
         if is_recovery:
-            self.log_signal.emit("[Recorder] Match in progress detected. Auto-recovering recording...")
+            self.log_signal.emit("[Recorder] Match in progress detected (Recovery mode). Auto-recovering recording...")
         else:
             self.log_signal.emit("[Recorder] Match started. Starting FFmpeg recording...")
             

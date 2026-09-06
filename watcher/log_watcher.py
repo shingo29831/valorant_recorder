@@ -16,6 +16,8 @@ class LogWatcher:
         self.on_ability_used = on_ability_used
         self.on_performance_drop = on_performance_drop
         self.is_in_match = False
+        self.is_match_ending = False
+        self.has_entered_in_progress = False
         self.is_range = False
         self.phase_pattern_1 = re.compile(r"State:\s*\w+\s*->\s*(PreRound|InProgress|PostRound)")
         self.phase_pattern_2 = re.compile(r"Match State Changed from\s*\w+\s*to\s*(PreRound|InProgress|PostRound)")
@@ -77,9 +79,31 @@ class LogWatcher:
 
                     log_time = self._parse_log_time(line)
 
+                    # メニューに戻った検知（試合終了フェーズのリセット用）
+                    is_menu = "Broadcasting state changed to Menus" in line
+
+                    # アビリティ使用検知
+                    is_ability = "LogAbilitySystem:" in line and "Ability activated" in line
+                    
+                    # 試合中（途中復帰用）およびラウンドフェーズ検知
+                    is_progress = False
+                    match_phase = self.phase_pattern_1.search(line) or self.phase_pattern_2.search(line)
+                    if match_phase:
+                        is_progress = True
+                        if match_phase.group(1) == "InProgress":
+                            self.has_entered_in_progress = True
+                    elif is_ability:
+                        is_progress = True
+                        self.has_entered_in_progress = True
+                    elif "Broadcasting state changed to InGame" in line:
+                        is_progress = True
+                        self.has_entered_in_progress = True
+
+                    if is_menu:
+                        self.is_match_ending = False
+
                     # 試合開始の検知 (ピック画面から完全録画するため Pregame を追加)
                     is_start = (
-                        "LogPregameManager:" in line or
                         "Broadcasting state changed to Pregame" in line or
                         "Match State Changed from WaitingToStart to PreRound" in line or
                         "Match State Changed from WaitingToStart to InProgress" in line or
@@ -88,33 +112,37 @@ class LogWatcher:
                         "Broadcasting state changed to InGame" in line
                     )
                     
-                    # 試合中（途中復帰用）およびラウンドフェーズ検知
-                    is_progress = False
-                    match_phase = self.phase_pattern_1.search(line) or self.phase_pattern_2.search(line)
-                    if match_phase:
-                        is_progress = True
-                    elif "Broadcasting state changed to InGame" in line:
-                        is_progress = True
-
                     # 試合終了の検知
-                    is_end = (
+                    is_end_log = (
                         "Match State Changed from InProgress to WaitingPostMatch" in line or
                         "State: InProgress -> WaitingPostMatch" in line or
-                        "Broadcasting state changed to PostGame" in line or
-                        "Broadcasting state changed to TransitionToMainMenu" in line
+                        "Broadcasting state changed to PostGame" in line
                     )
+                    
+                    is_end = False
+                    if self.is_in_match:
+                        if is_end_log and self.has_entered_in_progress:
+                            # 実際に試合が始まってから終了ログが出た場合のみ終了とみなす
+                            is_end = True
+                        elif is_menu and not self.has_entered_in_progress:
+                            # Pregame(エージェント選択)中にメニューに戻った場合はドッジとみなして終了する
+                            is_end = True
 
-                    was_in_match = self.is_in_match
-
-                    if is_start and not self.is_in_match:
+                    if is_start:
+                        self.is_match_ending = False
+                        if not self.is_in_match:
+                            self.is_in_match = True
+                            self.has_entered_in_progress = False
+                            self.on_match_start(self.is_range, log_time, False)
+                    elif is_progress and not self.is_in_match and not self.is_match_ending:
+                        # 録画中断からの自動復帰 (試合終了直後ではない場合のみ)
                         self.is_in_match = True
-                        self.on_match_start(self.is_range, log_time, False)
-                    elif is_progress and not self.is_in_match:
-                        # 録画中断からの自動復帰
-                        self.is_in_match = True
+                        self.has_entered_in_progress = True
                         self.on_match_start(self.is_range, log_time, True)
                     elif is_end and self.is_in_match:
                         self.is_in_match = False
+                        self.is_match_ending = True
+                        self.has_entered_in_progress = False
                         self.on_match_end(self.is_range)
                         
                     # ラウンドフェーズの記録
@@ -122,7 +150,7 @@ class LogWatcher:
                         self.on_round_phase_changed(match_phase.group(1), log_time)
 
                     # ウルト発動マーカー (LogAbilitySystem)
-                    if self.is_in_match and self.on_ability_used and "LogAbilitySystem:" in line and "Ability activated" in line:
+                    if self.is_in_match and self.on_ability_used and is_ability:
                         self.on_ability_used(log_time)
 
                     # 自動負荷コントロール (パフォーマンス低下の検知)
