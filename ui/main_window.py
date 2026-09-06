@@ -56,6 +56,9 @@ class MainWindow(QMainWindow):
         
         self.setup_tray_icon()
         
+        # ゲームのフォーカスを奪わないカスタム通知オーバーレイの初期化
+        self.notification_overlay = NotificationOverlay()
+        
         self.watcher_thread = WatcherThread(self.config)
         self.watcher_thread.log_signal.connect(self.update_status)
         self.watcher_thread.match_saved_signal.connect(self.player_tab.refresh_list)
@@ -183,13 +186,12 @@ class MainWindow(QMainWindow):
             self.rec_button.setText("🔴 Start Recording")
 
     def show_recording_notification(self, is_recording):
-        # Windowsのトースト通知自体がフルスクリーンゲームを最小化させる原因になるため、
-        # アプリがアクティブな時（ユーザーが直接操作している時）のみ通知を出す
-        if self.isActiveWindow():
-            if is_recording:
-                self.tray_icon.showMessage("ValoReco", "🔴 録画を開始しました", QSystemTrayIcon.MessageIcon.Information, 3000)
-            else:
-                self.tray_icon.showMessage("ValoReco", "⏹ 録画を終了しました", QSystemTrayIcon.MessageIcon.Information, 3000)
+        # Windowsのトースト通知はフルスクリーンゲームのフォーカスを奪うため使用せず、
+        # フォーカスを奪わないカスタムオーバーレイを使用して左上に通知を表示する
+        if is_recording:
+            self.notification_overlay.show_message("🔴 録画を開始しました", 3000)
+        else:
+            self.notification_overlay.show_message("⏹ 録画を終了しました", 3000)
 
     def update_status(self, message: str):
         # ウィンドウが非アクティブ(ゲーム中など)の時にUIを更新すると、

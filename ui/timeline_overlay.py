@@ -315,6 +315,9 @@ class TimelineOverlay(QWidget):
             elif ev['type'] == 'assist':
                 color = QColor("#00FF00")
                 renderer = self.assist_renderer
+            elif ev['type'] == 'ult':
+                color = QColor("#FF00FF")
+                renderer = None
             else:
                 color = QColor("#FFFFFF")
                 renderer = None

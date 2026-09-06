@@ -62,6 +62,11 @@ class RecordSettingsWidget(QWidget):
         video_layout.addRow(self.t.recording_fps, self.fps_input)
         video_layout.addRow(self.t.encoder, encoder_layout)
         video_layout.addRow(self.t.resolution, self.res_input)
+
+        self.perf_control_cb = QCheckBox("自動負荷コントロールを有効にする (ゲームのFPS低下を防ぐ)")
+        self.perf_control_cb.setChecked(getattr(self.config, 'AUTO_PERFORMANCE_CONTROL', False))
+        self.perf_control_cb.toggled.connect(self._save_settings)
+        video_layout.addRow("", self.perf_control_cb)
         
         video_group.setLayout(video_layout)
         main_layout.addWidget(video_group)
@@ -301,6 +306,7 @@ class RecordSettingsWidget(QWidget):
         self.config.RECORD_FPS = self.fps_input.currentText()
         self.config.RECORD_ENCODER = self.encoder_input.currentText()
         self.config.RECORD_RESOLUTION = self.res_input.currentText()
+        self.config.AUTO_PERFORMANCE_CONTROL = self.perf_control_cb.isChecked()
         
         self.config.RECORD_AUDIO_SYSTEM_GAIN = str(self.system_gain_slider.value() / 100.0)
         mic_val = self.mic_input.currentData()

@@ -4,56 +4,51 @@ from datetime import datetime
 from ui.player_utils import guess_player_name
 
 def build_timeline_data(match_info: dict, duration_ms: int, riot_id: str, tag_line: str) -> tuple[list, list]:
-    offset_ms = 0
-    local_round_events = match_info.get("local_round_events", [])
-    kills_data = match_info.get("kills", [])
+    # 1. 録画開始のUNIXタイムスタンプ(ms)を取得
+    recording_start_ms = match_info.get("local_recording_start_time_ms")
+    if not recording_start_ms:
+        start_time_sec = match_info.get("local_match_start_time", 0)
+        recording_start_ms = int(start_time_sec * 1000)
+        
+    # 2. API時間(相対)とローカル時間(UNIX絶対)のオフセットを計算
+    game_start_sec = match_info.get("metadata", {}).get("game_start", 0)
+    api_to_local_offset = game_start_sec * 1000
     
-    api_first_start = 0
-    if kills_data:
-        first_kill = kills_data[0]
-        k_match = first_kill.get("kill_time_in_match", 0)
-        k_round = first_kill.get("kill_time_in_round", 0)
+    kills_data = match_info.get("kills", [])
+    local_round_events = match_info.get("local_round_events", [])
+    local_ability_events = match_info.get("local_ability_events", [])
+    
+    api_round_starts = []
+    for k in kills_data:
+        k_match = k.get("kill_time_in_match", 0)
+        k_round = k.get("kill_time_in_round", 0)
         if k_match > 0 and k_round > 0:
-            api_first_start = k_match - k_round
-
-    if local_round_events and api_first_start > 0:
-        first_local_preround = next((ev for ev in local_round_events if ev["phase"] == "PreRound"), None)
-        if first_local_preround:
-            offset_ms = api_first_start - first_local_preround["time_ms"]
-        else:
-            first_local_inprogress = next((ev for ev in local_round_events if ev["phase"] == "InProgress"), None)
-            if first_local_inprogress:
-                offset_ms = api_first_start - first_local_inprogress["time_ms"]
-    elif "local_match_start_time" in match_info and "local_match_end_time" in match_info and duration_ms > 0:
-        game_length = match_info.get("metadata", {}).get("game_length")
-        if game_length:
-            game_length_sec = game_length / 1000.0 if game_length > 100000 else game_length
-            end_delay_sec = 6.5
-            offset_sec = game_length_sec + end_delay_sec - (duration_ms / 1000.0)
-            offset_ms = int(offset_sec * 1000)
-        else:
-            start_time = match_info["local_match_start_time"]
-            end_time = match_info["local_match_end_time"]
-            video_zero_local = end_time - (duration_ms / 1000.0)
-            offset_sec = video_zero_local - start_time
-            offset_ms = int(offset_sec * 1000)
-    else:
-        if "video_offset_ms" in match_info:
-            offset_ms = match_info["video_offset_ms"]
-        else:
-            video_path = match_info.get("local_video_path", "")
-            basename = os.path.basename(video_path)
-            date_pattern = re.compile(r"(\d{8}_\d{6})")
-            vid_match = date_pattern.search(basename)
-            if vid_match:
-                try:
-                    vid_time = datetime.strptime(vid_match.group(1), "%Y%m%d_%H%M%S")
-                    vid_timestamp = vid_time.timestamp()
-                    game_start = match_info.get("metadata", {}).get("game_start")
-                    if game_start:
-                        offset_ms = int((vid_timestamp - game_start) * 1000)
-                except Exception:
-                    pass
+            r_start = k_match - k_round
+            if not api_round_starts or abs(api_round_starts[-1] - r_start) > 5000:
+                api_round_starts.append(r_start)
+                
+    local_round_starts = []
+    for ev in local_round_events:
+        if ev["phase"] == "PreRound":
+            t = ev["time_ms"]
+            if t < 1000000000000:
+                t += recording_start_ms
+            local_round_starts.append(t)
+            
+    if api_round_starts and local_round_starts:
+        best_offset = api_to_local_offset
+        min_diff = float('inf')
+        
+        for l_start in local_round_starts:
+            for a_start in api_round_starts:
+                offset = l_start - a_start
+                diff = abs(offset - (game_start_sec * 1000))
+                if diff < 300000 and diff < min_diff:
+                    min_diff = diff
+                    best_offset = offset
+                    
+        if min_diff != float('inf'):
+            api_to_local_offset = best_offset
 
     events = []
     rounds = []
@@ -74,28 +69,20 @@ def build_timeline_data(match_info: dict, duration_ms: int, riot_id: str, tag_li
         target_display_name = guess_player_name(kills_data)
         
     for kill in kills_data:
-        time_ms = int(kill.get("kill_time_in_match", 0) - offset_ms)
-        if time_ms < 0:
+        t_api = kill.get("kill_time_in_match", 0)
+        t_local = t_api + api_to_local_offset
+        time_in_video = int(t_local - recording_start_ms)
+        
+        if time_in_video < 0 or time_in_video > duration_ms + 10000:
             continue
         
         if target_puuid:
-            killer_puuid = kill.get("killer_puuid")
-            victim_puuid = kill.get("victim_puuid")
-            
-            assistants = kill.get("assistants", [])
-            assistant_puuids = []
-            for ast in assistants:
-                if isinstance(ast, dict):
-                    assistant_puuids.append(ast.get("assistant_puuid"))
-                elif isinstance(ast, str):
-                    assistant_puuids.append(ast)
-                    
             if killer_puuid == target_puuid:
-                events.append({"time": time_ms, "type": "kill"})
+                events.append({"time": time_in_video, "type": "kill"})
             elif victim_puuid == target_puuid:
-                events.append({"time": time_ms, "type": "death"})
+                events.append({"time": time_in_video, "type": "death"})
             elif target_puuid in assistant_puuids:
-                events.append({"time": time_ms, "type": "assist"})
+                events.append({"time": time_in_video, "type": "assist"})
         else:
             killer = kill.get("killer_display_name", "Unknown")
             victim = kill.get("victim_display_name", "Unknown")
@@ -109,45 +96,68 @@ def build_timeline_data(match_info: dict, duration_ms: int, riot_id: str, tag_li
                     assistant_names.append(ast)
                     
             if target_display_name and target_display_name in killer:
-                events.append({"time": time_ms, "type": "kill"})
+                events.append({"time": time_in_video, "type": "kill"})
             elif target_display_name and target_display_name in victim:
-                events.append({"time": time_ms, "type": "death"})
+                events.append({"time": time_in_video, "type": "death"})
             elif target_display_name and any(target_display_name in ast for ast in assistant_names):
-                events.append({"time": time_ms, "type": "assist"})
+                events.append({"time": time_in_video, "type": "assist"})
             elif not target_display_name:
-                events.append({"time": time_ms, "type": "kill"})
+                events.append({"time": time_in_video, "type": "kill"})
+
+    for ev in local_ability_events:
+        t_local = ev["time_ms"]
+        if t_local < 1000000000000:
+            t_local += recording_start_ms
+        time_in_video = int(t_local - recording_start_ms)
+        if 0 <= time_in_video <= duration_ms + 10000:
+            events.append({"time": time_in_video, "type": "ult"})
             
     if local_round_events:
         for i in range(len(local_round_events)):
             ev = local_round_events[i]
             phase = ev["phase"]
-            start_time = ev["time_ms"]
+            
+            t_local = ev["time_ms"]
+            if t_local < 1000000000000:
+                t_local += recording_start_ms
+            start_time = int(t_local - recording_start_ms)
+            
             end_time = duration_ms
             if i + 1 < len(local_round_events):
-                end_time = local_round_events[i+1]["time_ms"]
+                next_t_local = local_round_events[i+1]["time_ms"]
+                if next_t_local < 1000000000000:
+                    next_t_local += recording_start_ms
+                end_time = int(next_t_local - recording_start_ms)
                 
-            if phase in ["PreRound", "InProgress", "PostRound"]:
+            if start_time < 0:
+                start_time = 0
+            if end_time > duration_ms:
+                end_time = duration_ms
+                
+            if start_time < end_time and phase in ["PreRound", "InProgress", "PostRound"]:
                 rounds.append({"start": start_time, "end": end_time, "phase": phase})
     else:
-        if kills_data:
-            round_starts = []
-            for k in kills_data:
-                k_match = k.get("kill_time_in_match", 0)
-                k_round = k.get("kill_time_in_round", 0)
-                if k_match > 0 and k_round > 0:
-                    r_start = k_match - k_round
-                    if not round_starts or abs(round_starts[-1] - r_start) > 5000:
-                        round_starts.append(r_start)
-            
-            for i, r_start in enumerate(round_starts):
-                start = int(r_start - offset_ms)
-                if i + 1 < len(round_starts):
-                    end = int(round_starts[i+1] - offset_ms)
+        if api_round_starts:
+            for i, r_start in enumerate(api_round_starts):
+                t_local = r_start + api_to_local_offset
+                start_time = int(t_local - recording_start_ms)
+                
+                if i + 1 < len(api_round_starts):
+                    next_t_local = api_round_starts[i+1] + api_to_local_offset
+                    end_time = int(next_t_local - recording_start_ms)
                 else:
                     game_length = match_info.get("metadata", {}).get("game_length", 0)
-                    end = int(game_length - offset_ms) if game_length > 0 else duration_ms
+                    if game_length > 0:
+                        end_time = int((game_length * 1000 + api_to_local_offset) - recording_start_ms)
+                    else:
+                        end_time = duration_ms
                 
-                if end > start:
-                    rounds.append({"start": max(0, start), "end": end, "phase": "InProgress"})
+                if start_time < 0:
+                    start_time = 0
+                if end_time > duration_ms:
+                    end_time = duration_ms
+                    
+                if start_time < end_time:
+                    rounds.append({"start": start_time, "end": end_time, "phase": "InProgress"})
                     
     return rounds, events

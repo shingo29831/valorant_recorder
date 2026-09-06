@@ -102,12 +102,12 @@ class RecordItemWidget(QWidget):
     renameRequested = pyqtSignal(str, str)
     deleteRequested = pyqtSignal(str)
 
-    def __init__(self, json_filename, display_name, thumb_path, result, is_favorite=False, parent=None):
+    def __init__(self, json_filename, display_name, thumb_path, result, is_favorite=False, mmr_change=0, party_members=None, parent=None):
         super().__init__(parent)
         self.json_filename = json_filename
         self.display_name = display_name
         self.is_favorite = is_favorite
-        self.setFixedSize(260, 180)
+        self.setFixedSize(260, 210)
         
         layout = QVBoxLayout(self)
         layout.setContentsMargins(5, 5, 5, 5)
@@ -144,6 +144,22 @@ class RecordItemWidget(QWidget):
         
         layout.addWidget(self.thumb_label, alignment=Qt.AlignmentFlag.AlignHCenter)
         layout.addWidget(self.name_label)
+        
+        if mmr_change != 0:
+            mmr_text = f"昇格/降格: +{mmr_change}" if mmr_change > 0 else f"昇格/降格: {mmr_change}"
+            mmr_color = "#00FF00" if mmr_change > 0 else "#FF4655"
+            self.mmr_label = QLabel(mmr_text)
+            self.mmr_label.setStyleSheet(f"color: {mmr_color}; font-weight: bold; font-size: 12px;")
+            self.mmr_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            layout.addWidget(self.mmr_label)
+
+        if party_members and len(party_members) > 1:
+            party_text = f"Party: {len(party_members)}人"
+            self.party_label = QLabel(party_text)
+            self.party_label.setStyleSheet("color: #888888; font-size: 11px;")
+            self.party_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.party_label.setToolTip("\n".join(party_members))
+            layout.addWidget(self.party_label)
         
         if result == "win":
             bg_color = "#2E7D32"

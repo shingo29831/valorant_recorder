@@ -25,10 +25,13 @@ class WatcherThread(QThread):
             on_match_start=self.handle_match_start,
             on_match_end=self.handle_match_end,
             on_real_match_end=self.handle_real_match_end,
-            on_round_phase_changed=self.handle_round_phase_changed
+            on_round_phase_changed=self.handle_round_phase_changed,
+            on_ability_used=self.handle_ability_used,
+            on_performance_drop=self.handle_performance_drop
         )
         self.current_video_path = None
         self.local_round_events = []
+        self.local_ability_events = []
         self.recording_start_time = 0
         self.real_start_time = 0
         self._is_running = True
@@ -83,7 +86,7 @@ class WatcherThread(QThread):
             self.log_signal.emit("[Recorder] Stopping recording on real match end...")
             self._stop_and_process_recording()
 
-    def handle_match_start(self, is_range: bool):
+    def handle_match_start(self, is_range: bool, match_start_timestamp: float = None, is_recovery: bool = False):
         if is_range:
             self.log_signal.emit("[Recorder] 射撃訓練場(Range)を検知しました。録画とAPI取得をスキップします。")
             return
@@ -93,9 +96,15 @@ class WatcherThread(QThread):
             return
 
         self.recording_start_time = time.time()
+        self.local_recording_start_time_ms = int(self.recording_start_time * 1000)
         self.local_round_events = []
         self._update_current_player()
-        self.log_signal.emit("[Recorder] Match started. Starting FFmpeg recording...")
+        
+        if is_recovery:
+            self.log_signal.emit("[Recorder] Match in progress detected. Auto-recovering recording...")
+        else:
+            self.log_signal.emit("[Recorder] Match started. Starting FFmpeg recording...")
+            
         try:
             self.current_video_path = self.recorder.start_recording()
             self.log_signal.emit(f"[Recorder] Recording to: {self.current_video_path}")
@@ -103,11 +112,22 @@ class WatcherThread(QThread):
         except Exception as e:
             self.log_signal.emit(f"[Error] Failed to start recording: {e}")
 
-    def handle_round_phase_changed(self, phase: str):
-        if self.recording_start_time > 0:
-            time_ms = int((time.time() - self.recording_start_time) * 1000)
-            self.local_round_events.append({"phase": phase, "time_ms": time_ms})
-            self.log_signal.emit(f"[Recorder] Round phase changed: {phase} at {time_ms}ms")
+    def handle_round_phase_changed(self, phase: str, phase_timestamp: float = None):
+        if self.current_video_path is not None:
+            # 絶対時刻(UNIXタイムスタンプミリ秒)で記録し、後でAPIデータと高精度に同期する
+            ts_ms = int((phase_timestamp if phase_timestamp else time.time()) * 1000)
+            self.local_round_events.append({"phase": phase, "time_ms": ts_ms})
+            self.log_signal.emit(f"[Recorder] Round phase changed: {phase} at {ts_ms}ms (UNIX)")
+
+    def handle_ability_used(self, timestamp: float):
+        if self.current_video_path is not None:
+            ts_ms = int(timestamp * 1000)
+            self.local_ability_events.append({"time_ms": ts_ms})
+            
+    def handle_performance_drop(self):
+        if getattr(self.config, 'AUTO_PERFORMANCE_CONTROL', False) and self.current_video_path is not None:
+            self.log_signal.emit("[Recorder] Performance drop detected. Lowering FFmpeg priority...")
+            self.recorder.set_low_priority()
 
     def handle_match_end(self, is_range: bool):
         if is_range:
@@ -142,15 +162,18 @@ class WatcherThread(QThread):
         start_time = self.recording_start_time
         end_time = self.recording_end_time
         events = list(self.local_round_events)
+        ability_events = list(self.local_ability_events)
         self.current_video_path = None
         
         threading.Thread(
             target=self._fetch_api_and_save,
-            args=(video_path, start_time, end_time, events),
+            args=(video_path, start_time, end_time, events, ability_events),
             daemon=True
         ).start()
 
-    def _fetch_api_and_save(self, video_path, start_time, end_time, events):
+    def _fetch_api_and_save(self, video_path, start_time, end_time, events, ability_events=None):
+        if ability_events is None:
+            ability_events = []
         self.log_signal.emit("[API] Checking for match data...")
         
         if not self.current_riot_id or not self.current_tag_line:
@@ -185,10 +208,27 @@ class WatcherThread(QThread):
 
         if match_data:
             try:
+                # パーティメンバーの抽出
+                party_members = []
+                target_party_id = None
+                players = match_data.get("players", {}).get("all_players", [])
+                for p in players:
+                    if p.get("name", "").lower() == self.current_riot_id.lower() and p.get("tag", "").lower() == self.current_tag_line.lower():
+                        target_party_id = p.get("party_id")
+                        break
+                if target_party_id:
+                    for p in players:
+                        if p.get("party_id") == target_party_id:
+                            party_members.append(f"{p.get('name')}#{p.get('tag')}")
+                
+                match_data['party_members'] = party_members
                 match_data['local_video_path'] = video_path
                 match_data['local_match_start_time'] = start_time
                 match_data['local_match_end_time'] = end_time
                 match_data['local_round_events'] = events
+                match_data['local_ability_events'] = ability_events
+                if hasattr(self, 'local_recording_start_time_ms'):
+                    match_data['local_recording_start_time_ms'] = self.local_recording_start_time_ms
                         
                 filepath = self.store.save_match_metadata(match_data, mmr_change)
                 self.log_signal.emit(f"[Storage] Metadata saved: {filepath}")
@@ -259,8 +299,12 @@ class WatcherThread(QThread):
             "local_video_path": video_path,
             "local_match_start_time": vid_time,
             "local_match_end_time": end_time,
-            "local_round_events": events
+            "local_round_events": events,
+            "local_ability_events": []
         }
+        if hasattr(self, 'local_recording_start_time_ms'):
+            match_data['local_recording_start_time_ms'] = self.local_recording_start_time_ms
+            
         self.store.save_match_metadata(match_data, 0)
         self.match_saved_signal.emit()
 

@@ -561,3 +561,15 @@ class FFmpegRecorder:
         if self.log_file:
             self.log_file.close()
             self.log_file = None
+
+    def set_low_priority(self):
+        """FFmpegプロセスの優先度を下げてゲームのFPS低下を防ぐ"""
+        if self.process and self.process.poll() is None:
+            try:
+                import ctypes
+                import sys
+                if sys.platform == "win32":
+                    # BELOW_NORMAL_PRIORITY_CLASS = 0x00004000
+                    ctypes.windll.kernel32.SetPriorityClass(int(self.process._handle), 0x00004000)
+            except Exception as e:
+                warnings.warn(f"Failed to set low priority: {e}")

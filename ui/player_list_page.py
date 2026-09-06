@@ -504,12 +504,17 @@ class PlayerListPage(QWidget):
                     if date_key not in records_by_date:
                         records_by_date[date_key] = []
                         
+                    mmr_change = data.get("mmr_change", 0)
+                    party_members = match_info.get("party_members", [])
+
                     records_by_date[date_key].append({
                         'filename': f,
                         'display_name': display_name,
                         'thumb_path': thumb_path if os.path.exists(thumb_path) else "",
                         'result': result,
-                        'is_favorite': is_favorite
+                        'is_favorite': is_favorite,
+                        'mmr_change': mmr_change,
+                        'party_members': party_members
                     })
                     
                 except Exception as e:
@@ -549,7 +554,7 @@ class PlayerListPage(QWidget):
             date_checkbox.toggled.connect(lambda checked, fw=flow_widget, cb=date_checkbox: self._on_date_checkbox_toggled(checked, fw, cb))
             
             for rec in records_by_date[date_key]:
-                item_widget = RecordItemWidget(rec['filename'], rec['display_name'], rec['thumb_path'], rec['result'], rec['is_favorite'])
+                item_widget = RecordItemWidget(rec['filename'], rec['display_name'], rec['thumb_path'], rec['result'], rec['is_favorite'], rec.get('mmr_change', 0), rec.get('party_members', []))
                 item_widget.doubleClicked.connect(self.recordSelected.emit)
                 item_widget.renameRequested.connect(self.rename_record)
                 item_widget.deleteRequested.connect(self.delete_record)
