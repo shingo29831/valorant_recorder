@@ -535,6 +535,12 @@ class PlayerVideoPage(QWidget):
         self.config.save()
 
     def load_recording(self, json_filename):
+        # 前の動画のキャッシュや状態を完全にリセットする
+        self.media_player.stop()
+        self.mic_player.stop()
+        self.media_player.setSource(QUrl())
+        self.mic_player.setSource(QUrl())
+        
         self.media_loaded = False
         self.mic_loaded = False
         self.current_json_filename = json_filename

@@ -37,23 +37,29 @@ AudioProcessor::AudioProcessor(int sample_rate, int channels, const char* model_
 
     /* --- 2. Initialize DeepFilterNet --- */
     try {
-        // DeepFilterNetの初期化 (モデルパス、減衰制限dB、ログレベル)
-        // Rust側のパニック（クラッシュ）を防ぐため、有効なパスが渡された場合のみ初期化する
         if (model_path != nullptr && std::strlen(model_path) > 0) {
-            // 減衰制限(Attenuation limit)を100dBに設定し、ノイズを強力にカットする
-            // マルチチャンネル処理のため、チャンネルごとに独立したステートを生成する
+            // Windowsのパス区切り文字を統一 (Rust側のパーサー対策)
+            std::string path_str(model_path);
+            std::replace(path_str.begin(), path_str.end(), '\\', '/');
+            
             for (int c = 0; c < channels_; ++c) {
-                DFState* state = df_create(model_path, 100.0f, 0);
+                DFState* state = df_create(path_str.c_str(), 100.0f, 0);
                 if (!state) {
-                    std::cerr << "[AudioProcessor] Error: df_create returned nullptr for channel " << c << ". AI Denoise will not work." << std::endl;
+                    std::cerr << "[AudioProcessor] Error: df_create returned nullptr for channel " << c << " with path: " << path_str << std::endl;
+                } else {
+                    df_states_.push_back(state);
                 }
-                df_states_.push_back(state);
+            }
+            if (df_states_.empty()) {
+                std::cerr << "[AudioProcessor] AI Denoise disabled: All df_create calls failed." << std::endl;
             }
         } else {
             std::cerr << "[AudioProcessor] DeepFilterNet model path is empty. AI Denoise will be disabled." << std::endl;
         }
+    } catch (const std::exception& e) {
+        std::cerr << "[AudioProcessor] Exception in DeepFilterNet init: " << e.what() << std::endl;
     } catch (...) {
-        std::cerr << "[AudioProcessor] Failed to initialize DeepFilterNet." << std::endl;
+        std::cerr << "[AudioProcessor] Unknown exception in DeepFilterNet init." << std::endl;
     }
 }
 

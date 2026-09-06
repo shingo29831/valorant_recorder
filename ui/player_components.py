@@ -1,7 +1,7 @@
 import os
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QLayout, QMenu, QPushButton
-from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QRect, QSize, QByteArray
-from PyQt6.QtGui import QPixmap, QPainter
+from PyQt6.QtCore import Qt, pyqtSignal, QPoint, QRect, QSize, QByteArray, QTimer
+from PyQt6.QtGui import QPixmap, QPainter, QPen, QColor
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 from PyQt6.QtSvg import QSvgRenderer
 
@@ -97,16 +97,43 @@ class FlowLayout(QLayout):
 
         return y + lineHeight - rect.y()
 
+class LoadingSpinner(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.angle = 0
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.rotate)
+        self.timer.start(50)
+        self.setFixedSize(40, 40)
+
+    def rotate(self):
+        self.angle = (self.angle + 30) % 360
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.translate(self.width() / 2, self.height() / 2)
+        painter.rotate(self.angle)
+        
+        pen = QPen(QColor("white"))
+        pen.setWidth(4)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.drawArc(-12, -12, 24, 24, 0, 270 * 16)
+
+
 class RecordItemWidget(QWidget):
     doubleClicked = pyqtSignal(str)
     renameRequested = pyqtSignal(str, str)
     deleteRequested = pyqtSignal(str)
 
-    def __init__(self, json_filename, display_name, thumb_path, result, is_favorite=False, mmr_change=0, party_members=None, parent=None):
+    def __init__(self, json_filename, display_name, thumb_path, result, is_favorite=False, mmr_change=0, party_members=None, is_fetching_api=False, parent=None):
         super().__init__(parent)
         self.json_filename = json_filename
         self.display_name = display_name
         self.is_favorite = is_favorite
+        self.is_fetching_api = is_fetching_api
         self.setFixedSize(260, 210)
         
         layout = QVBoxLayout(self)
@@ -125,6 +152,14 @@ class RecordItemWidget(QWidget):
         else:
             self.thumb_label.setText("No Thumbnail")
             self.thumb_label.setStyleSheet("background-color: black; color: white;")
+            
+        if self.is_fetching_api:
+            self.overlay = QLabel(self.thumb_label)
+            self.overlay.setFixedSize(240, 135)
+            self.overlay.setStyleSheet("background-color: rgba(0, 0, 0, 150);")
+            
+            self.spinner = LoadingSpinner(self.overlay)
+            self.spinner.move((240 - 40) // 2, (135 - 40) // 2)
             
         self.fav_icon = QLabel(self.thumb_label)
         self.fav_icon.setFixedSize(24, 24)
