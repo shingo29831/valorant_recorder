@@ -2,7 +2,7 @@ import os
 import re
 from datetime import datetime
 
-def find_video_for_json(save_dir: str, json_filename: str, json_data: dict) -> str:
+def find_video_for_json(save_dir: str, json_filename: str, json_data: dict, video_cache: dict = None) -> str:
     match_info = json_data.get("match_info", json_data)
     video_path = match_info.get("local_video_path") or json_data.get("local_video_path")
     
@@ -34,18 +34,25 @@ def find_video_for_json(save_dir: str, json_filename: str, json_data: dict) -> s
     best_video = ""
     min_diff = float('inf')
 
-    for f in os.listdir(save_dir):
-        if f.endswith(('.mp4', '.mkv', '.avi')):
-            vid_match = date_pattern.search(f)
-            if vid_match:
-                try:
-                    vid_time = datetime.strptime(vid_match.group(1), "%Y%m%d_%H%M%S")
-                    diff = abs((json_time - vid_time).total_seconds())
-                    if diff < min_diff and diff < 7200:
-                        min_diff = diff
-                        best_video = os.path.join(save_dir, f)
-                except ValueError:
-                    continue
+    if video_cache is not None:
+        for f, vid_time in video_cache.items():
+            diff = abs((json_time - vid_time).total_seconds())
+            if diff < min_diff and diff < 7200:
+                min_diff = diff
+                best_video = os.path.join(save_dir, f)
+    else:
+        for f in os.listdir(save_dir):
+            if f.endswith(('.mp4', '.mkv', '.avi')):
+                vid_match = date_pattern.search(f)
+                if vid_match:
+                    try:
+                        vid_time = datetime.strptime(vid_match.group(1), "%Y%m%d_%H%M%S")
+                        diff = abs((json_time - vid_time).total_seconds())
+                        if diff < min_diff and diff < 7200:
+                            min_diff = diff
+                            best_video = os.path.join(save_dir, f)
+                    except ValueError:
+                        continue
                     
     return best_video
 
@@ -93,6 +100,10 @@ def get_agent_name(riot_id: str, tag_line: str, match_info: dict, kills_data: li
     return "Unknown Agent"
 
 def get_match_result(riot_id: str, tag_line: str, match_info: dict, kills_data: list) -> str:
+    mode = match_info.get("metadata", {}).get("mode", "").lower()
+    if mode == "deathmatch":
+        return "deathmatch"
+
     riot_id = riot_id.lower()
     tag_line = tag_line.lower()
     

@@ -67,17 +67,23 @@ class FFmpegRecorder:
         cmd = [
             self.ffmpeg_path,
             "-y",
-            "-thread_queue_size", "1024",
         ]
         
+        filter_complex = ""
+        video_map = "0:v"
+        
         if self.config.RECORD_VIDEO_FORMAT == "ddagrab":
-            # ddagrab は lavfi 経由で呼び出す必要がある
             cmd.extend([
+                "-thread_queue_size", "1024",
                 "-f", "lavfi",
                 "-i", f"ddagrab=framerate={self.config.RECORD_FPS}"
             ])
+            filter_complex += "[0:v]hwdownload,format=bgra[v_out];"
+            video_map = "[v_out]"
         else:
             cmd.extend([
+                "-thread_queue_size", "1024",
+                "-use_wallclock_as_timestamps", "1",
                 "-f", self.config.RECORD_VIDEO_FORMAT,
                 "-framerate", self.config.RECORD_FPS,
                 "-video_size", self.config.RECORD_RESOLUTION,
@@ -89,7 +95,7 @@ class FFmpegRecorder:
 
         # a_resをasplit=2で2つのストリームに複製してから、それぞれをpanフィルタに渡す
         # FFmpegの自動ダウンミックスによる音量減衰を防ぐため、ゲイン(1.0*)を明示的に指定
-        filter_complex = "[1:a]asplit=2[a_res1][a_res2];[a_res1]pan=stereo|c0=1.0*c0|c1=1.0*c1[a0];[a_res2]pan=stereo|c0=1.0*c2|c1=1.0*c3[a1]"
+        filter_complex += "[1:a]asplit=2[a_res1][a_res2];[a_res1]pan=stereo|c0=1.0*c0|c1=1.0*c1[a0];[a_res2]pan=stereo|c0=1.0*c2|c1=1.0*c3[a1]"
         
         mic_filters = []
         
@@ -121,12 +127,13 @@ class FFmpegRecorder:
 
         cmd.extend([
             "-thread_queue_size", "1024",
+            "-use_wallclock_as_timestamps", "1",
             "-f", "f32le",
             "-ar", "48000",
             "-ac", "4",
             "-i", "pipe:0",
             "-filter_complex", filter_complex,
-            "-map", "0:v",
+            "-map", video_map,
             "-map", "[a_mixed]",
             "-map", "[a0_out]",
             "-map", "[a1_out]",
@@ -136,6 +143,7 @@ class FFmpegRecorder:
             "-b:v", "10M",
             "-pix_fmt", "yuv420p",
             "-r", self.config.RECORD_FPS,
+            "-fps_mode", "cfr",
             "-c:a", "aac",
             "-b:a", "192k",
             "-movflags", "frag_keyframe+empty_moov",

@@ -1,3 +1,4 @@
+import sys
 from PyQt6.QtWidgets import QWidget, QLabel, QVBoxLayout
 from PyQt6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QGuiApplication
@@ -6,10 +7,11 @@ class NotificationOverlay(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         # 最前面表示、フレームなし、タスクバー非表示、クリック透過、フォーカス拒否を設定
+        # ToolTipは他のウィンドウに隠れやすいため、Toolを使用する
         self.setWindowFlags(
             Qt.WindowType.WindowStaysOnTopHint |
             Qt.WindowType.FramelessWindowHint |
-            Qt.WindowType.ToolTip |
+            Qt.WindowType.Tool |
             Qt.WindowType.WindowTransparentForInput |
             Qt.WindowType.WindowDoesNotAcceptFocus
         )
@@ -62,6 +64,23 @@ class NotificationOverlay(QWidget):
         if screen:
             geom = screen.geometry()
             self.move(geom.x() + 30, geom.y() + 30)
+            
+        # Zオーダーが下がっている可能性があるため、確実に最前面へ持ってくる
+        self.raise_()
+        if sys.platform == 'win32':
+            import ctypes
+            HWND_TOPMOST = -1
+            SWP_NOMOVE = 0x0002
+            SWP_NOSIZE = 0x0001
+            SWP_NOACTIVATE = 0x0010
+            try:
+                hwnd = int(self.winId())
+                ctypes.windll.user32.SetWindowPos(
+                    hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE
+                )
+            except Exception:
+                pass
             
         self.opacity_anim.setStartValue(self.windowOpacity())
         self.opacity_anim.setEndValue(1.0)

@@ -1,9 +1,11 @@
 import os
 import sys
 import ctypes
-from PyQt6.QtWidgets import QMainWindow, QStackedWidget, QPushButton, QSystemTrayIcon, QMenu, QMessageBox, QProgressDialog
+from PyQt6.QtWidgets import QMainWindow, QStackedWidget, QPushButton, QSystemTrayIcon, QMenu, QMessageBox, QProgressDialog, QApplication
 from PyQt6.QtGui import QAction, QIcon
-from PyQt6.QtCore import QCoreApplication, Qt
+from PyQt6.QtCore import QCoreApplication, Qt, pyqtSignal
+import traceback
+import threading
 from core.config import Config
 from ui.watcher_thread import WatcherThread
 from ui.settings_tab import SettingsTab
@@ -21,8 +23,13 @@ def get_resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 class MainWindow(QMainWindow):
+    fatalErrorOccurred = pyqtSignal(str)
+
     def __init__(self):
         super().__init__()
+        self.fatalErrorOccurred.connect(self.show_fatal_error_dialog)
+        self._setup_exception_handlers()
+        
         self.setWindowTitle(f"ValoReco ヴァロレコ v{APP_VERSION}")
         self.setWindowIcon(QIcon(get_resource_path("assets/icon.ico")))
         self.resize(1280, 720)
@@ -65,6 +72,40 @@ class MainWindow(QMainWindow):
         self.watcher_thread.recording_state_changed.connect(self.update_rec_button)
         self.watcher_thread.recording_state_changed.connect(self.show_recording_notification)
         self.watcher_thread.start()
+
+    def _setup_exception_handlers(self):
+        def exception_hook(exc_type, exc_value, exc_traceback):
+            if issubclass(exc_type, KeyboardInterrupt):
+                sys.__excepthook__(exc_type, exc_value, exc_traceback)
+                return
+            error_msg = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+            print(f"[Exception] {error_msg}", file=sys.stderr)
+            self.fatalErrorOccurred.emit(error_msg)
+
+        sys.excepthook = exception_hook
+
+        def thread_exception_hook(args):
+            error_msg = "".join(traceback.format_exception(args.exc_type, args.exc_value, args.exc_traceback))
+            print(f"[Thread Exception] {error_msg}", file=sys.stderr)
+            self.fatalErrorOccurred.emit(error_msg)
+
+        threading.excepthook = thread_exception_hook
+
+    def show_fatal_error_dialog(self, error_msg):
+        msg_box = QMessageBox(self)
+        msg_box.setIcon(QMessageBox.Icon.Critical)
+        msg_box.setWindowTitle("Fatal Error / 致命的なエラー")
+        msg_box.setText("A fatal error has occurred. The system may be in an unusable state.\nPlease copy the error message below and report it to the developer.\n\n致命的なエラーが発生しました。システムが利用できない状態になっている可能性があります。\n以下のエラーメッセージをコピーして開発者に報告してください。")
+        msg_box.setDetailedText(error_msg)
+        
+        copy_button = msg_box.addButton("Copy Error / エラーをコピー", QMessageBox.ButtonRole.ActionRole)
+        msg_box.addButton(QMessageBox.StandardButton.Close)
+        
+        msg_box.exec()
+        
+        if msg_box.clickedButton() == copy_button:
+            QApplication.clipboard().setText(error_msg)
+            QMessageBox.information(self, "Copied", "Error message copied to clipboard.\nエラーメッセージをクリップボードにコピーしました。")
 
         # アップデート確認スレッドの開始
         api_url = getattr(self.config, 'UPDATE_API_URL', None)
@@ -194,10 +235,9 @@ class MainWindow(QMainWindow):
             self.notification_overlay.show_message("⏹ 録画を終了しました", 3000)
 
     def update_status(self, message: str):
-        # ウィンドウが非アクティブ(ゲーム中など)の時にUIを更新すると、
-        # OSがウィンドウのアクティブ化とみなしゲームのフォーカスを奪うことがあるためスキップする
-        if self.isActiveWindow():
-            self.statusBar().showMessage(message)
+        # ステータスバーのテキスト更新程度ではフォーカスは奪われないため、常に更新する。
+        # これにより「Initializing...」のままになる問題を防止し、エラー等のログを確認できるようにする。
+        self.statusBar().showMessage(message)
 
     def closeEvent(self, event):
         # ウィンドウの閉じるボタンが押された時は非表示にしてトレイに格納する

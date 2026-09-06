@@ -77,6 +77,16 @@ def build_timeline_data(match_info: dict, duration_ms: int, riot_id: str, tag_li
             continue
         
         if target_puuid:
+            killer_puuid = kill.get("killer_puuid")
+            victim_puuid = kill.get("victim_puuid")
+            assistants = kill.get("assistants", [])
+            assistant_puuids = []
+            for ast in assistants:
+                if isinstance(ast, dict):
+                    assistant_puuids.append(ast.get("assistant_puuid", ""))
+                elif isinstance(ast, str):
+                    assistant_puuids.append(ast)
+
             if killer_puuid == target_puuid:
                 events.append({"time": time_in_video, "type": "kill"})
             elif victim_puuid == target_puuid:

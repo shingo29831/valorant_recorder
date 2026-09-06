@@ -230,11 +230,16 @@ class WatcherThread(QThread):
                 if abs(game_start - start_time) < 3600:
                     match_data = api_match_data
                     match_id = match_data['metadata']['matchid']
-                    try:
-                        mmr_change = api.fetch_mmr_change(match_id)
-                    except Exception as e:
-                        self.log_signal.emit(f"[API] MMR fetch skipped (likely not competitive): {e}")
-                        mmr_change = 0
+                    mode = match_data.get('metadata', {}).get('mode', '')
+                    mmr_change = 0
+                    
+                    # デスマッチなどMMRが変動しないモードはスキップして高速化
+                    if mode.lower() not in ['deathmatch', 'custom game', 'escalation', 'snowball fight', 'replication']:
+                        try:
+                            mmr_change = api.fetch_mmr_change(match_id)
+                        except Exception as e:
+                            self.log_signal.emit(f"[API] MMR fetch skipped (likely not competitive): {e}")
+                            
                     self.log_signal.emit("[API] Successfully fetched current match data.")
                     break
             except Exception as e:
@@ -313,6 +318,15 @@ class WatcherThread(QThread):
         for v in videos:
             if v not in handled_videos:
                 v_path = os.path.join(self.config.SAVE_DIR, v)
+                
+                # 0バイトのファイルは録画失敗なので削除してスキップ
+                if os.path.getsize(v_path) == 0:
+                    try:
+                        os.remove(v_path)
+                    except Exception:
+                        pass
+                    continue
+                    
                 if time.time() - os.path.getmtime(v_path) < 60:
                     continue
                     
@@ -379,7 +393,17 @@ class WatcherThread(QThread):
                 try:
                     with open(filepath, 'r', encoding='utf-8') as jf:
                         data = json.load(jf)
-                    if data.get("is_favorite", False):
+                    
+                    # 動画ファイルが存在しない、または0バイトの古いJSONは削除対象にする
+                    video_path = data.get("match_info", data).get("local_video_path", "")
+                    is_broken = False
+                    if not video_path or not os.path.exists(video_path) or os.path.getsize(video_path) == 0:
+                        if time.time() - os.path.getmtime(filepath) > 300: # 5分以上経過していれば壊れていると判定
+                            is_broken = True
+                            
+                    if is_broken:
+                        bases_to_delete.add(f[:-5])
+                    elif data.get("is_favorite", False):
                         bases_to_keep.add(f[:-5])
                     elif os.path.getmtime(filepath) < cutoff:
                         bases_to_delete.add(f[:-5])
@@ -479,11 +503,14 @@ class WatcherThread(QThread):
                     if diff < 3600:
                         self.log_signal.emit(f"[Background] Match found for {os.path.basename(video_path)}.")
                         match_id = api_match_data['metadata']['matchid']
-                        try:
-                            mmr_change = api.fetch_mmr_change(match_id, retries=1, delay=2)
-                        except Exception as e:
-                            self.log_signal.emit(f"[Background] MMR fetch skipped (likely not competitive): {e}")
-                            mmr_change = 0
+                        mode = api_match_data.get('metadata', {}).get('mode', '')
+                        mmr_change = 0
+                        
+                        if mode.lower() not in ['deathmatch', 'custom game', 'escalation', 'snowball fight', 'replication']:
+                            try:
+                                mmr_change = api.fetch_mmr_change(match_id, retries=1, delay=2)
+                            except Exception as e:
+                                self.log_signal.emit(f"[Background] MMR fetch skipped (likely not competitive): {e}")
                         
                         api_match_data['local_video_path'] = video_path
                         filepath = self.store.save_match_metadata(api_match_data, mmr_change)

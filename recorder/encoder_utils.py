@@ -17,11 +17,14 @@ def test_encoder(ffmpeg_path: str, encoder: str) -> tuple[bool, str]:
     try:
         creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
         # text=Trueによるエンコーディングエラー(UnicodeDecodeError等)を防ぐためバイナリで取得
-        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, creationflags=creationflags)
+        # FFmpegがハングアップして初期化がブロックするのを防ぐためタイムアウトを設定
+        res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, creationflags=creationflags, timeout=5.0)
         if res.returncode != 0:
             err_msg = res.stderr.decode('utf-8', errors='replace') if res.stderr else ""
             return False, err_msg.strip()
         return True, ""
+    except subprocess.TimeoutExpired:
+        return False, "Encoder test timed out."
     except Exception as e:
         return False, str(e)
 
