@@ -75,6 +75,16 @@ class Translations:
     checking_update: str
     up_to_date: str
     up_to_date_msg: str
+    mode_all: str
+    mode_competitive: str
+    mode_unrated: str
+    mode_deathmatch: str
+    mode_swiftplay: str
+    all_records: str
+    sort_date_desc: str
+    sort_date_asc: str
+    sort_mmr_desc: str
+    sort_mmr_asc: str
 
 EN = Translations(
     settings_title="APPLICATION SETTINGS",
@@ -149,7 +159,17 @@ EN = Translations(
     check_update="Check for Updates",
     checking_update="Checking...",
     up_to_date="Up to Date",
-    up_to_date_msg="You are using the latest version."
+    up_to_date_msg="You are using the latest version.",
+    mode_all="All",
+    mode_competitive="Competitive",
+    mode_unrated="Unrated",
+    mode_deathmatch="Deathmatch",
+    mode_swiftplay="Swiftplay",
+    all_records="All Records",
+    sort_date_desc="Date (Newest)",
+    sort_date_asc="Date (Oldest)",
+    sort_mmr_desc="MMR Change (Highest)",
+    sort_mmr_asc="MMR Change (Lowest)"
 )
 
 JA = Translations(
@@ -225,7 +245,17 @@ JA = Translations(
     check_update="アップデートを確認",
     checking_update="確認中...",
     up_to_date="最新版です",
-    up_to_date_msg="現在最新バージョンを使用しています。"
+    up_to_date_msg="現在最新バージョンを使用しています。",
+    mode_all="全て",
+    mode_competitive="コンペティティブ",
+    mode_unrated="アンレート",
+    mode_deathmatch="デスマッチ",
+    mode_swiftplay="スイフト",
+    all_records="すべての録画",
+    sort_date_desc="日付 (新しい順)",
+    sort_date_asc="日付 (古い順)",
+    sort_mmr_desc="MMR変動 (高い順)",
+    sort_mmr_asc="MMR変動 (低い順)"
 )
 
 def get_trans(lang_code: str) -> Translations:

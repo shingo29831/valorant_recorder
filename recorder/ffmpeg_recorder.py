@@ -160,7 +160,9 @@ class FFmpegRecorder:
             "-tune", tune,
             "-b:v", "10M",
             "-pix_fmt", "yuv420p",
-            "-r", self.config.RECORD_FPS,
+            "-r", str(self.config.RECORD_FPS),
+            "-g", str(self.config.RECORD_FPS),
+            "-keyint_min", str(self.config.RECORD_FPS),
             "-fps_mode", "cfr",
             "-c:a", "aac",
             "-b:a", "192k",
@@ -289,6 +291,7 @@ class FFmpegRecorder:
                     "-y",
                     "-i", self.temp_filepath,
                     "-c", "copy",
+                    "-movflags", "+faststart",
                     self.current_filepath
                 ]
                 creationflags = 0

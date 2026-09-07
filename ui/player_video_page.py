@@ -6,9 +6,10 @@ from datetime import datetime
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QMessageBox
 from PyQt6.QtCore import Qt, QUrl, QSize, pyqtSignal, QByteArray, QTimer, QThread, QEvent
 from PyQt6.QtGui import QIcon, QPixmap, QPainter
-from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
+from PyQt6.QtMultimedia import QMediaPlayer
 from PyQt6.QtSvg import QSvgRenderer
 from core.config import Config
+from ui.video_player_core import VideoPlayerCore
 from core.i18n import get_trans
 from ui.player_components import ClickableVideoWidget, PlayerContainer
 from ui.volume_widgets import VolumeWidget, MicVolumeWidget
@@ -21,6 +22,7 @@ from PyQt6.QtCore import QPropertyAnimation
 from ui.timeline_builder import build_timeline_data
 from ui.video_playback_controls import PlaybackControlsWidget
 from ui.clip_edit_panel import ClipEditPanel
+from ui.in_app_notification import InAppNotification
 
 BACK_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white">
   <path d="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z" />
@@ -37,69 +39,6 @@ ZOOM_IN_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fi
 ZOOM_OUT_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white">
   <path d="M19 13H5v-2h14v2z"/>
 </svg>"""
-
-class InAppNotification(QLabel):
-    """別ウィンドウを作らず、親ウィジェット内に直接描画する通知ラベル（フォーカススティーリング防止）"""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setStyleSheet("""
-            QLabel {
-                background-color: rgba(15, 25, 35, 220);
-                color: #ECE8E1;
-                border-left: 4px solid #FF4655;
-                padding: 12px 20px;
-                font-family: sans-serif;
-                font-size: 14px;
-                font-weight: bold;
-            }
-        """)
-        self.effect = QGraphicsOpacityEffect(self)
-        self.setGraphicsEffect(self.effect)
-        self.effect.setOpacity(0.0)
-        self.hide()
-        
-        self.timer = QTimer(self)
-        self.timer.setSingleShot(True)
-        self.timer.timeout.connect(self.fade_out)
-        
-        self.opacity_anim = QPropertyAnimation(self.effect, b"opacity")
-        self.opacity_anim.setDuration(300)
-        
-    def show_message(self, message, duration=3000):
-        if self.opacity_anim.state() == QPropertyAnimation.State.Running:
-            self.opacity_anim.stop()
-            try:
-                self.opacity_anim.finished.disconnect(self._on_fade_out_finished)
-            except TypeError:
-                pass
-                
-        self.setText(message)
-        self.adjustSize()
-        
-        if self.parent():
-            parent_rect = self.parent().rect()
-            self.move((parent_rect.width() - self.width()) // 2, 20)
-            
-        self.show()
-        self.raise_()
-        
-        self.opacity_anim.setStartValue(self.effect.opacity())
-        self.opacity_anim.setEndValue(1.0)
-        self.opacity_anim.start()
-        self.timer.start(duration)
-        
-    def fade_out(self):
-        self.opacity_anim.setStartValue(self.effect.opacity())
-        self.opacity_anim.setEndValue(0.0)
-        self.opacity_anim.finished.connect(self._on_fade_out_finished)
-        self.opacity_anim.start()
-        
-    def _on_fade_out_finished(self):
-        try:
-            self.opacity_anim.finished.disconnect(self._on_fade_out_finished)
-        except TypeError:
-            pass
-        self.hide()
 
 class PlayerVideoPage(QWidget):
     backRequested = pyqtSignal()
@@ -146,45 +85,29 @@ class PlayerVideoPage(QWidget):
         self.video_widget.setStyleSheet("background-color: #000000;")
         self.video_widget.clicked.connect(self.toggle_play)
         
-        self.current_sys_volume = float(getattr(self.config, 'PLAYER_SYS_VOLUME', 1.0))
-        self.current_mic_volume = float(getattr(self.config, 'PLAYER_MIC_VOLUME', 1.0))
-
-        self.media_player = QMediaPlayer(self)
-        self.audio_output = QAudioOutput(self)
-        self.audio_output.setVolume(self.current_sys_volume / 2.0)
-        self.media_player.setAudioOutput(self.audio_output)
-        self.media_player.setVideoOutput(self.video_widget)
-        self.media_player.mediaStatusChanged.connect(self._on_media_player_status_changed)
-        
-        # マイク音を同時に再生・独立制御するためのサブプレイヤー
-        self.mic_player = QMediaPlayer(self)
-        self.mic_audio_output = QAudioOutput(self)
-        self.mic_audio_output.setVolume(self.current_mic_volume / 2.0)
-        self.mic_player.setAudioOutput(self.mic_audio_output)
-        self.mic_player.mediaStatusChanged.connect(self._on_mic_player_status_changed)
-        
-        self.media_loaded = False
-        self.mic_loaded = False
+        self.player_core = VideoPlayerCore(self.video_widget, self.config, self)
+        self.player_core.positionChanged.connect(self.position_changed)
+        self.player_core.durationChanged.connect(self.duration_changed)
+        self.player_core.playbackStateChanged.connect(self._on_playback_state_changed)
+        self.player_core.errorOccurred.connect(self.handle_media_error)
         
         self.timeline_overlay = TimelineOverlay()
-        self.timeline_overlay.seekRequested.connect(self.set_position)
+        self.timeline_overlay.seekStarted.connect(self.player_core.on_seek_started)
+        self.timeline_overlay.seekRequested.connect(self.player_core.on_seek_requested)
+        self.timeline_overlay.seekFinished.connect(self.player_core.on_seek_finished)
         self.timeline_overlay.clipRangeChanged.connect(self._on_clip_range_changed)
-        self.media_player.positionChanged.connect(self.position_changed)
-        self.media_player.durationChanged.connect(self.duration_changed)
-        self.media_player.errorOccurred.connect(self.handle_media_error)
-        self.media_player.playbackStateChanged.connect(self._on_playback_state_changed)
         
         controls_widget = QWidget()
         controls_layout = QHBoxLayout(controls_widget)
         controls_layout.setContentsMargins(0, 0, 0, 0)
         
         self.volume_widget = VolumeWidget()
-        self.volume_widget.set_volume(int(self.current_sys_volume * 100))
-        self.volume_widget.volumeChanged.connect(self.on_sys_volume_changed)
+        self.volume_widget.set_volume(int(self.player_core.current_sys_volume * 100))
+        self.volume_widget.volumeChanged.connect(self.player_core.set_sys_volume)
         
         self.mic_volume_widget = MicVolumeWidget()
-        self.mic_volume_widget.set_volume(int(self.current_mic_volume * 100))
-        self.mic_volume_widget.volumeChanged.connect(self.on_mic_volume_changed)
+        self.mic_volume_widget.set_volume(int(self.player_core.current_mic_volume * 100))
+        self.mic_volume_widget.volumeChanged.connect(self.player_core.set_mic_volume)
         
         self.time_label = QLabel("00:00 / 00:00")
         self.time_label.setFixedWidth(100)
@@ -339,8 +262,7 @@ class PlayerVideoPage(QWidget):
     def _apply_playback_rate(self):
         actual_rate = 1.0 if self.is_speed_bypassed else self.target_playback_rate
         
-        self.media_player.setPlaybackRate(actual_rate)
-        self.mic_player.setPlaybackRate(actual_rate)
+        self.player_core.set_playback_rate(actual_rate)
         
         self.playback_controls.set_speed_label(self.target_playback_rate, self.is_speed_bypassed)
             
@@ -358,11 +280,11 @@ class PlayerVideoPage(QWidget):
 
     def zoom_in_timeline(self):
         current_zoom = self.timeline_overlay.zoom_factor
-        self.timeline_overlay.set_zoom(current_zoom * 1.5, center_ms=self.media_player.position())
+        self.timeline_overlay.set_zoom(current_zoom * 1.5, center_ms=self.player_core.position())
 
     def zoom_out_timeline(self):
         current_zoom = self.timeline_overlay.zoom_factor
-        self.timeline_overlay.set_zoom(current_zoom / 1.5, center_ms=self.media_player.position())
+        self.timeline_overlay.set_zoom(current_zoom / 1.5, center_ms=self.player_core.position())
 
     def _toggle_edit_mode(self):
         is_visible = self.edit_panel.isVisible()
@@ -372,31 +294,31 @@ class PlayerVideoPage(QWidget):
         self.zoom_in_btn.setVisible(not is_visible)
         
         if not is_visible:
-            self.clip_start_ms = self.media_player.position()
-            self.clip_end_ms = min(self.media_player.duration(), self.clip_start_ms + 30000)
+            self.clip_start_ms = self.player_core.position()
+            self.clip_end_ms = min(self.player_core.duration(), self.clip_start_ms + 30000)
             self._update_clip_labels()
             self.timeline_overlay.set_edit_mode(True, self.clip_start_ms, self.clip_end_ms)
             self.edit_mode_btn.setStyleSheet("border-radius: 20px; background-color: #FF4655;")
             
             target_view_duration = 60000
-            duration = self.media_player.duration()
+            duration = self.player_core.duration()
             if duration > target_view_duration:
                 zoom = duration / target_view_duration
-                self.timeline_overlay.set_zoom(zoom, center_ms=self.media_player.position())
+                self.timeline_overlay.set_zoom(zoom, center_ms=self.player_core.position())
         else:
             self.timeline_overlay.set_edit_mode(False)
             self.edit_mode_btn.setStyleSheet("border-radius: 20px; background-color: #333333;")
             self.timeline_overlay.set_zoom(1.0)
 
     def _set_clip_start(self):
-        self.clip_start_ms = self.media_player.position()
+        self.clip_start_ms = self.player_core.position()
         if self.clip_start_ms > self.clip_end_ms:
-            self.clip_end_ms = self.media_player.duration()
+            self.clip_end_ms = self.player_core.duration()
         self._update_clip_labels()
         self.timeline_overlay.set_clip_range(self.clip_start_ms, self.clip_end_ms)
 
     def _set_clip_end(self):
-        self.clip_end_ms = self.media_player.position()
+        self.clip_end_ms = self.player_core.position()
         if self.clip_end_ms < self.clip_start_ms:
             self.clip_start_ms = 0
         self._update_clip_labels()
@@ -440,7 +362,7 @@ class PlayerVideoPage(QWidget):
         
         self.edit_panel.set_generate_enabled(False, self.t.generating_clip)
         
-        audio_track_count = len(self.media_player.audioTracks())
+        audio_track_count = self.player_core.audio_track_count()
         
         self.clip_thread = ClipGeneratorThread(
             ffmpeg_path=ffmpeg_path,
@@ -449,8 +371,8 @@ class PlayerVideoPage(QWidget):
             start_ms=self.clip_start_ms,
             end_ms=self.clip_end_ms,
             encoder=encoder,
-            sys_volume=self.current_sys_volume,
-            mic_volume=self.current_mic_volume,
+            sys_volume=self.player_core.current_sys_volume,
+            mic_volume=self.player_core.current_mic_volume,
             audio_track_count=audio_track_count
         )
         self.clip_thread.finished.connect(self._on_clip_finished)
@@ -466,83 +388,17 @@ class PlayerVideoPage(QWidget):
             self.notification.show_message(self.t.clip_failed.format(error=result))
 
     def request_back(self):
-        self.media_player.stop()
-        self.mic_player.stop()
-        self.media_player.setSource(QUrl())
-        self.mic_player.setSource(QUrl())
+        self.player_core.load_source(None)
         self.backRequested.emit()
 
     def cleanup_media(self):
-        # 最小化・非表示時は再生を一時停止するのみとし、ソースと再生位置を保持する
-        if self.media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
-            self.media_player.pause()
-            self.mic_player.pause()
+        self.player_core.pause()
 
     def restore_media(self):
-        # ソースと再生位置を保持しているため、再ロードは行わない
         pass
 
-    def on_sys_volume_changed(self, volume):
-        self.current_sys_volume = volume / 100.0
-        self.audio_output.setVolume(self.current_sys_volume / 2.0)
-        self._save_volume_settings()
-
-    def on_mic_volume_changed(self, volume):
-        self.current_mic_volume = volume / 100.0
-        self.mic_audio_output.setVolume(self.current_mic_volume / 2.0)
-        self._save_volume_settings()
-
-    def _on_media_player_status_changed(self, status):
-        if status == QMediaPlayer.MediaStatus.LoadedMedia:
-            tracks = self.media_player.audioTracks()
-            if len(tracks) >= 3:
-                self.media_player.setActiveAudioTrack(1)
-            elif len(tracks) > 0:
-                self.media_player.setActiveAudioTrack(0)
-            self.media_loaded = True
-            self._check_both_loaded_and_play()
-
-    def _on_mic_player_status_changed(self, status):
-        if status == QMediaPlayer.MediaStatus.LoadedMedia:
-            tracks = self.mic_player.audioTracks()
-            if len(tracks) >= 3:
-                self.mic_player.setActiveAudioTrack(2)
-            elif len(tracks) == 2:
-                self.mic_player.setActiveAudioTrack(1)
-            self.mic_loaded = True
-            self._check_both_loaded_and_play()
-
-    def _check_both_loaded_and_play(self):
-        if getattr(self, 'media_loaded', False) and getattr(self, 'mic_loaded', False):
-            self.media_loaded = False
-            self.mic_loaded = False
-            self.media_player.play()
-            self.mic_player.play()
-            
-            # 再生開始直後のトラック切り替えノイズや大音量を防ぐため、遅延させて音量を復元する
-            QTimer.singleShot(150, self._restore_volume)
-
-    def _restore_volume(self):
-        self.audio_output.setVolume(self.current_sys_volume / 2.0)
-        if len(self.mic_player.audioTracks()) >= 2:
-            self.mic_audio_output.setVolume(self.current_mic_volume / 2.0)
-        else:
-            self.mic_audio_output.setVolume(0)
-
-    def _save_volume_settings(self):
-        self.config.PLAYER_SYS_VOLUME = self.current_sys_volume
-        self.config.PLAYER_MIC_VOLUME = self.current_mic_volume
-        self.config.save()
-
     def load_recording(self, json_filename):
-        # 前の動画のキャッシュや状態を完全にリセットする
-        self.media_player.stop()
-        self.mic_player.stop()
-        self.media_player.setSource(QUrl())
-        self.mic_player.setSource(QUrl())
-        
-        self.media_loaded = False
-        self.mic_loaded = False
+        self.player_core.load_source(None)
         self.current_json_filename = json_filename
         json_path = os.path.join(self.config.SAVE_DIR, json_filename)
         
@@ -552,21 +408,12 @@ class PlayerVideoPage(QWidget):
             with open(json_path, 'r', encoding='utf-8') as f:
                 self.current_match_data = json.load(f)
                 
-            # ロード時およびトラック切り替え時の音漏れ（大音量）を防ぐため、一時的にミュートする
-            self.audio_output.setVolume(0)
-            self.mic_audio_output.setVolume(0)
-                
             video_path = find_video_for_json(self.config.SAVE_DIR, json_filename, self.current_match_data)
             
             if video_path and os.path.exists(video_path):
-                abs_path = os.path.abspath(video_path)
-                url = QUrl.fromLocalFile(abs_path)
-                self.media_player.setSource(url)
-                self.mic_player.setSource(url)
-                # ここではplay()を呼ばず、_check_both_loaded_and_playに任せる
+                self.player_core.load_source(video_path)
             else:
-                self.media_player.setSource(QUrl())
-                self.mic_player.setSource(QUrl())
+                self.player_core.load_source(None)
                 print(f"[PlayerVideoPage] Video file not found for {json_filename}.")
                 self._update_timeline_data(0)
                 
@@ -594,45 +441,40 @@ class PlayerVideoPage(QWidget):
             self.notification.show_message(error_msg, duration=5000)
 
     def toggle_play(self):
-        if self.media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
-            self.media_player.pause()
-            self.mic_player.pause()
-        else:
-            self.media_player.play()
-            self.mic_player.play()
+        self.player_core.toggle_play()
 
     def _on_playback_state_changed(self, state):
-        self.playback_controls.set_playback_state(state == QMediaPlayer.PlaybackState.PlayingState)
+        self.playback_controls.set_playback_state(state == QMediaPlayer.PlaybackState.PlayingState.value)
 
     def skip_backward(self):
-        pos = max(0, self.media_player.position() - 5000)
-        self.set_position(pos)
+        pos = max(0, self.player_core.position() - 5000)
+        self.player_core.set_position_direct(pos)
 
     def skip_forward(self):
-        pos = min(self.media_player.duration(), self.media_player.position() + 5000)
-        self.set_position(pos)
+        pos = min(self.player_core.duration(), self.player_core.position() + 5000)
+        self.player_core.set_position_direct(pos)
 
     def skip_to_prev_round(self):
         if not hasattr(self, 'current_rounds') or not self.current_rounds:
             return
-        current_pos = self.media_player.position()
+        current_pos = self.player_core.position()
         target_pos = 0
         for r in reversed(self.current_rounds):
             if r["start"] < current_pos - 2000:
                 target_pos = r["start"]
                 break
-        self.set_position(target_pos)
+        self.player_core.set_position_direct(target_pos)
 
     def skip_to_next_round(self):
         if not hasattr(self, 'current_rounds') or not self.current_rounds:
             return
-        current_pos = self.media_player.position()
-        target_pos = self.media_player.duration()
+        current_pos = self.player_core.position()
+        target_pos = self.player_core.duration()
         for r in self.current_rounds:
             if r["start"] > current_pos + 2000:
                 target_pos = r["start"]
                 break
-        self.set_position(target_pos)
+        self.player_core.set_position_direct(target_pos)
 
     def format_time(self, ms):
         s = ms // 1000
@@ -642,32 +484,25 @@ class PlayerVideoPage(QWidget):
 
     def position_changed(self, position):
         self.timeline_overlay.set_position(position)
-        duration = self.media_player.duration()
+        duration = self.player_core.duration()
         self.time_label.setText(f"{self.format_time(position)} / {self.format_time(duration)}")
 
     def duration_changed(self, duration):
         self.timeline_overlay.set_duration(duration)
-        position = self.media_player.position()
+        position = self.player_core.position()
         self.time_label.setText(f"{self.format_time(position)} / {self.format_time(duration)}")
         
         if duration > 0:
             self._update_timeline_data(duration)
 
-    def set_position(self, position):
-        self.media_player.setPosition(position)
-        self.mic_player.setPosition(position)
-
     def showEvent(self, event):
         super().showEvent(event)
-        # 設定画面などで変更された最新の音量を読み込んで反映
         sys_vol = float(getattr(self.config, 'PLAYER_SYS_VOLUME', '1.0'))
-        if self.current_sys_volume != sys_vol:
-            self.current_sys_volume = sys_vol
+        if self.player_core.current_sys_volume != sys_vol:
+            self.player_core.set_sys_volume(sys_vol * 100)
             self.volume_widget.set_volume(int(sys_vol * 100))
-            self.audio_output.setVolume(sys_vol / 2.0)
             
         mic_vol = float(getattr(self.config, 'PLAYER_MIC_VOLUME', '1.0'))
-        if self.current_mic_volume != mic_vol:
-            self.current_mic_volume = mic_vol
+        if self.player_core.current_mic_volume != mic_vol:
+            self.player_core.set_mic_volume(mic_vol * 100)
             self.mic_volume_widget.set_volume(int(mic_vol * 100))
-            self.mic_audio_output.setVolume(mic_vol / 2.0)

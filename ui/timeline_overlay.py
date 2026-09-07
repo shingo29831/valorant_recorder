@@ -1,3 +1,4 @@
+import time
 from PyQt6.QtWidgets import QWidget, QSizePolicy
 from PyQt6.QtCore import Qt, pyqtSignal, QRectF, QByteArray
 from PyQt6.QtGui import QColor, QPen, QPainter
@@ -26,7 +27,9 @@ ASSIST_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
 </svg>"""
 
 class TimelineOverlay(QWidget):
+    seekStarted = pyqtSignal()
     seekRequested = pyqtSignal(int)
+    seekFinished = pyqtSignal(int)
 
     clipRangeChanged = pyqtSignal(int, int)
 
@@ -54,6 +57,7 @@ class TimelineOverlay(QWidget):
         self.clip_end = 0
         self.dragging_handle = None
         self.hover_handle = None
+        self.last_seek_time = 0
 
     @property
     def view_duration_ms(self):
@@ -180,7 +184,10 @@ class TimelineOverlay(QWidget):
             if self.is_dragging and self.duration > 0:
                 pos_ms = int(self.x_to_ms(self.hover_x))
                 pos_ms = max(0, min(pos_ms, self.duration))
-                self.seekRequested.emit(pos_ms)
+                current_time = time.time()
+                if current_time - self.last_seek_time > 0.1:
+                    self.seekRequested.emit(pos_ms)
+                    self.last_seek_time = current_time
             else:
                 is_hovering_icon = False
                 if self.duration > 0:
@@ -228,12 +235,18 @@ class TimelineOverlay(QWidget):
             return
 
         self.is_dragging = True
+        self.seekStarted.emit()
         pos_ms = int(self.x_to_ms(x))
         pos_ms = max(0, min(pos_ms, self.duration))
         self.seekRequested.emit(pos_ms)
+        self.last_seek_time = time.time()
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
+            if self.is_dragging and self.duration > 0 and not self.dragging_handle:
+                pos_ms = int(self.x_to_ms(event.position().x()))
+                pos_ms = max(0, min(pos_ms, self.duration))
+                self.seekFinished.emit(pos_ms)
             self.is_dragging = False
             self.dragging_handle = None
         super().mouseReleaseEvent(event)
