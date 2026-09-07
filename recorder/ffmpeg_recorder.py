@@ -14,6 +14,7 @@ class FFmpegRecorder:
         self.config = config
         self.process = None
         self.current_filepath = None
+        self.temp_filepath = None
         self.log_file = None
         self.audio_record_thread = None
         self.audio_write_thread = None
@@ -45,12 +46,20 @@ class FFmpegRecorder:
                     break
                 if self.process and self.process.stdin and not self.process.stdin.closed:
                     self.process.stdin.write(data)
+                    self.process.stdin.flush()
                 else:
                     break
             except queue.Empty:
                 continue
             except (BrokenPipeError, OSError, ValueError):
                 break
+                
+        # 同一スレッド内で安全に stdin を閉じる (別スレッドからの close によるデッドロック防止)
+        if self.process and self.process.stdin and not self.process.stdin.closed:
+            try:
+                self.process.stdin.close()
+            except Exception:
+                pass
 
     def start_recording(self) -> str:
         if self.process is not None:
@@ -58,11 +67,14 @@ class FFmpegRecorder:
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"match_record_{timestamp}.mp4"
+        temp_filename = f"match_record_{timestamp}.mkv"
         self.current_filepath = os.path.join(self.config.SAVE_DIR, filename)
+        self.temp_filepath = os.path.join(self.config.SAVE_DIR, temp_filename)
         os.makedirs(self.config.SAVE_DIR, exist_ok=True)
 
-        preset = "p4" if "nvenc" in self.actual_encoder else "veryfast"
-        tune = "hq" if "nvenc" in self.actual_encoder else "zerolatency"
+        # リアルタイムエンコード向けに低遅延・低負荷なプリセットとチューニングを適用
+        preset = "p2" if "nvenc" in self.actual_encoder else "veryfast"
+        tune = "ull" if "nvenc" in self.actual_encoder else "zerolatency"
 
         cmd = [
             self.ffmpeg_path,
@@ -74,28 +86,34 @@ class FFmpegRecorder:
         
         if self.config.RECORD_VIDEO_FORMAT == "ddagrab":
             cmd.extend([
-                "-thread_queue_size", "1024",
+                "-thread_queue_size", "4096",
                 "-f", "lavfi",
                 "-i", f"ddagrab=framerate={self.config.RECORD_FPS}"
             ])
-            filter_complex += "[0:v]hwdownload,format=bgra[v_out];"
+            # ddagrabのタイムスタンプを0から開始させる
+            filter_complex += "[0:v]hwdownload,format=bgra,setpts=PTS-STARTPTS[v_out];"
             video_map = "[v_out]"
         else:
             cmd.extend([
-                "-thread_queue_size", "1024",
+                "-thread_queue_size", "4096",
+                "-rtbufsize", "1024M",  # キャプチャバッファを増やしてドロップを防ぐ
                 "-use_wallclock_as_timestamps", "1",
                 "-f", self.config.RECORD_VIDEO_FORMAT,
                 "-framerate", self.config.RECORD_FPS,
                 "-video_size", self.config.RECORD_RESOLUTION,
                 "-i", self.config.RECORD_INPUT_SOURCE
             ])
+            # gdigrab等の場合もタイムスタンプを0から開始させる
+            filter_complex += "[0:v]setpts=PTS-STARTPTS[v_out];"
+            video_map = "[v_out]"
             
         gate_level = float(getattr(self.config, 'RECORD_AUDIO_MIC_NOISE_GATE', '0')) / 100.0
         denoise_mode = str(getattr(self.config, 'RECORD_AUDIO_MIC_DENOISE', 'None'))
 
+        # 音声のタイムスタンプも0から開始させ、映像と同期させる
         # a_resをasplit=2で2つのストリームに複製してから、それぞれをpanフィルタに渡す
         # FFmpegの自動ダウンミックスによる音量減衰を防ぐため、ゲイン(1.0*)を明示的に指定
-        filter_complex += "[1:a]asplit=2[a_res1][a_res2];[a_res1]pan=stereo|c0=1.0*c0|c1=1.0*c1[a0];[a_res2]pan=stereo|c0=1.0*c2|c1=1.0*c3[a1]"
+        filter_complex += "[1:a]asetpts=PTS-STARTPTS,asplit=2[a_res1][a_res2];[a_res1]pan=stereo|c0=1.0*c0|c1=1.0*c1[a0];[a_res2]pan=stereo|c0=1.0*c2|c1=1.0*c3[a1]"
         
         mic_filters = []
         
@@ -126,8 +144,8 @@ class FFmpegRecorder:
         filter_complex += f";[a0]asplit=2[a0_mix][a0_out];{mic_map}asplit=2[a1_mix][a1_out];[a0_mix][a1_mix]amix=inputs=2:duration=longest:normalize=0[a_mixed]"
 
         cmd.extend([
-            "-thread_queue_size", "1024",
-            "-use_wallclock_as_timestamps", "1",
+            "-thread_queue_size", "4096",
+            # 音声(pipe:0)に対する wallclock タイムスタンプは、映像との激しい非同期(dup大量発生)を引き起こすため削除
             "-f", "f32le",
             "-ar", "48000",
             "-ac", "4",
@@ -146,9 +164,9 @@ class FFmpegRecorder:
             "-fps_mode", "cfr",
             "-c:a", "aac",
             "-b:a", "192k",
-            "-movflags", "frag_keyframe+empty_moov",
+            "-max_muxing_queue_size", "9999",
             "-shortest",
-            self.current_filepath
+            self.temp_filepath
         ])
 
         error_log_path = os.path.join(self.config.SAVE_DIR, "ffmpeg_error.log")
@@ -174,16 +192,24 @@ class FFmpegRecorder:
         
         self.audio_ready_event.wait(timeout=5.0)
         
-        # CREATE_NO_WINDOW に加え DETACHED_PROCESS (0x00000008) を指定し、
-        # プロセス起動時にOSがコンソール用に一瞬フォーカスを奪う現象を完全に防ぐ
-        creationflags = (subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW | 0x00000008) if os.name == 'nt' else 0
+        # CREATE_NO_WINDOW のみを指定し、CREATE_NEW_PROCESS_GROUP や DETACHED_PROCESS は
+        # 逆にフォーカスを奪う原因になるため除外する。
+        # さらに startupinfo で明示的にウィンドウを非表示(SW_HIDE)に設定する。
+        creationflags = 0
+        startupinfo = None
+        if os.name == 'nt':
+            creationflags = subprocess.CREATE_NO_WINDOW
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = subprocess.SW_HIDE
         
         self.process = subprocess.Popen(
             cmd,
             stdin=subprocess.PIPE,
             stdout=subprocess.DEVNULL,
             stderr=self.log_file,
-            creationflags=creationflags
+            creationflags=creationflags,
+            startupinfo=startupinfo
         )
         
         self.audio_write_thread = threading.Thread(target=self._audio_write_loop, daemon=True)
@@ -194,7 +220,20 @@ class FFmpegRecorder:
     def stop_recording(self):
         self.stop_event.set()
         
-        # 1. 音声キャプチャと書き込みスレッドを先に安全に終了させる
+        if self.process:
+            # 1. FFmpegに終了シグナルを送信して安全に終了させる
+            # stdinは生データ(pipe:0)を受け取っているため、EOFだけでは映像入力(ddagrab等)が終了せずハングアップする。
+            # そのため、明示的にシグナルを送って正常な終了処理(moovアトム書き込み)を開始させる。
+            # スレッドのjoin前にシグナルを送ることで、write()でブロックしているスレッドを解放する。
+            try:
+                if os.name == 'nt':
+                    os.kill(self.process.pid, signal.CTRL_BREAK_EVENT)
+                else:
+                    self.process.send_signal(signal.SIGINT)
+            except Exception:
+                pass
+
+        # 2. 音声キャプチャと書き込みスレッドを安全に終了させる
         if self.audio_record_thread:
             self.audio_record_thread.join(timeout=5)
             self.audio_record_thread = None
@@ -204,25 +243,9 @@ class FFmpegRecorder:
             self.audio_write_thread = None
             
         if self.process:
-            # 2. FFmpegに終了シグナルを送信して安全に終了させる
-            # stdinは生データ(pipe:0)を受け取っているため、EOFだけでは映像入力(ddagrab等)が終了せずハングアップする。
-            # そのため、明示的にシグナルを送って正常な終了処理(moovアトム書き込み)を開始させる。
-            try:
-                if os.name == 'nt':
-                    os.kill(self.process.pid, signal.CTRL_BREAK_EVENT)
-                else:
-                    self.process.send_signal(signal.SIGINT)
-            except Exception:
-                pass
-
-            # 3. stdinを閉じる
-            if self.process.stdin:
-                try:
-                    self.process.stdin.close()
-                except Exception:
-                    pass
+            # stdinのcloseはaudio_write_thread内で安全に行われるため、ここでは行わない
                 
-            # 4. FFmpegが正常終了(moovアトム書き込み等)するのを待機
+            # 3. FFmpegが正常終了(moovアトム書き込み等)するのを待機
             try:
                 self.process.wait(timeout=15.0)
             except subprocess.TimeoutExpired:
@@ -256,14 +279,57 @@ class FFmpegRecorder:
             self.log_file.close()
             self.log_file = None
 
+        # MKVからMP4への再多重化 (Remux)
+        # クラッシュ時でもMKVは正常な状態が保たれるため、ここでMP4に変換することで破損を防ぐ
+        if self.temp_filepath and os.path.exists(self.temp_filepath):
+            try:
+                print(f"[FFmpegRecorder] Remuxing MKV to MP4: {self.temp_filepath} -> {self.current_filepath}")
+                remux_cmd = [
+                    self.ffmpeg_path,
+                    "-y",
+                    "-i", self.temp_filepath,
+                    "-c", "copy",
+                    self.current_filepath
+                ]
+                creationflags = 0
+                startupinfo = None
+                if os.name == 'nt':
+                    creationflags = subprocess.CREATE_NO_WINDOW
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    startupinfo.wShowWindow = subprocess.SW_HIDE
+
+                remux_process = subprocess.run(
+                    remux_cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=creationflags,
+                    startupinfo=startupinfo
+                )
+                if remux_process.returncode == 0:
+                    os.remove(self.temp_filepath)
+                    print("[FFmpegRecorder] Remux completed successfully.")
+                else:
+                    print(f"[FFmpegRecorder] Remux failed with code {remux_process.returncode}")
+            except Exception as e:
+                print(f"[FFmpegRecorder] Remux exception: {e}")
+
     def set_low_priority(self):
-        """FFmpegプロセスの優先度を下げてゲームのFPS低下を防ぐ"""
+        """
+        FFmpegプロセスの優先度を設定する。
+        ※以前は BELOW_NORMAL に下げていたが、OSのスケジューラによって
+        FFmpegにリソースが割り当てられず動画がカクつく原因となっていたため、
+        NORMAL_PRIORITY_CLASS (0x00000020) を維持するように修正。
+        （メソッド名は他ファイルからの呼び出し互換性のために維持）
+        """
         if self.process and self.process.poll() is None:
             try:
                 import ctypes
                 import sys
                 if sys.platform == "win32":
-                    # BELOW_NORMAL_PRIORITY_CLASS = 0x00004000
-                    ctypes.windll.kernel32.SetPriorityClass(int(self.process._handle), 0x00004000)
+                    # NORMAL_PRIORITY_CLASS = 0x00000020
+                    # 録画のフレームドロップを防ぐため NORMAL を明示的に設定する
+                    ctypes.windll.kernel32.SetPriorityClass(int(self.process._handle), 0x00000020)
             except Exception as e:
-                warnings.warn(f"Failed to set low priority: {e}")
+                import warnings
+                warnings.warn(f"Failed to set process priority: {e}")

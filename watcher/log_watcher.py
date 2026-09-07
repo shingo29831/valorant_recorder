@@ -80,7 +80,17 @@ class LogWatcher:
                     log_time = self._parse_log_time(line)
 
                     # メニューに戻った検知（試合終了フェーズのリセット用）
-                    is_menu = "Broadcasting state changed to Menus" in line
+                    is_menu = (
+                        "Broadcasting state changed to Menus" in line or
+                        "Broadcasting state changed to MainMenu" in line or
+                        "Broadcasting state changed to TransitionToMainMenu" in line or
+                        "Transitioning to State: Menus" in line or
+                        "Leaving session" in line or
+                        "State: InGame -> Menus" in line or
+                        "State: InProgress -> Menus" in line or
+                        "Loopstate changed from INGAME to MENUS" in line or
+                        "Loopstate changed from PREGAME to MENUS" in line
+                    )
 
                     # アビリティ使用検知
                     is_ability = "LogAbilitySystem:" in line and "Ability activated" in line
@@ -95,7 +105,7 @@ class LogWatcher:
                     elif is_ability:
                         is_progress = True
                         self.has_entered_in_progress = True
-                    elif "Broadcasting state changed to InGame" in line:
+                    elif "Broadcasting state changed to InGame" in line or "Loopstate changed from PREGAME to INGAME" in line:
                         is_progress = True
                         self.has_entered_in_progress = True
 
@@ -105,18 +115,28 @@ class LogWatcher:
                     # 試合開始の検知 (ピック画面から完全録画するため Pregame を追加)
                     is_start = (
                         "Broadcasting state changed to Pregame" in line or
+                        "Loopstate changed from MENUS to PREGAME" in line or
                         "Match State Changed from WaitingToStart to PreRound" in line or
                         "Match State Changed from WaitingToStart to InProgress" in line or
                         "State: WaitingToStart -> PreRound" in line or
                         "State: WaitingToStart -> InProgress" in line or
-                        "Broadcasting state changed to InGame" in line
+                        "Broadcasting state changed to InGame" in line or
+                        "Loopstate changed from MENUS to INGAME" in line
                     )
                     
                     # 試合終了の検知
                     is_end_log = (
                         "Match State Changed from InProgress to WaitingPostMatch" in line or
                         "State: InProgress -> WaitingPostMatch" in line or
-                        "Broadcasting state changed to PostGame" in line
+                        "Broadcasting state changed to PostGame" in line or
+                        "Match State Changed from InProgress to LeavingMap" in line or
+                        "State: InProgress -> LeavingMap" in line or
+                        "Match State Changed from InProgress to Disconnected" in line or
+                        "LogShooterGame: Match ended" in line or
+                        "State: InGame -> PostGame" in line or
+                        "Transitioning to State: PostGame" in line or
+                        "Transitioning from InGame to TransitionToMainMenu" in line or
+                        "[Map Complete: TRUE | Changed: TRUE]" in line
                     )
                     
                     is_end = False
@@ -124,8 +144,8 @@ class LogWatcher:
                         if is_end_log and self.has_entered_in_progress:
                             # 実際に試合が始まってから終了ログが出た場合のみ終了とみなす
                             is_end = True
-                        elif is_menu and not self.has_entered_in_progress:
-                            # Pregame(エージェント選択)中にメニューに戻った場合はドッジとみなして終了する
+                        elif is_menu:
+                            # メニューに戻った場合は、進行状況に関わらず終了(またはドッジ/強制終了)とみなす
                             is_end = True
 
                     if is_start:

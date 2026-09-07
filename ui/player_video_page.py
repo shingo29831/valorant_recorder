@@ -588,6 +588,10 @@ class PlayerVideoPage(QWidget):
 
     def handle_media_error(self, error, error_string):
         print(f"[PlayerVideoPage] Playback Error: {error_string} (Code: {error})")
+        # Demuxing failed などの ResourceError が発生した場合、ファイル破損の旨を通知する
+        if error == QMediaPlayer.Error.ResourceError:
+            error_msg = getattr(self.t, 'video_corrupted', "動画ファイルが破損しているか、不完全です。")
+            self.notification.show_message(error_msg, duration=5000)
 
     def toggle_play(self):
         if self.media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:

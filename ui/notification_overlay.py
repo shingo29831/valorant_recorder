@@ -17,6 +17,7 @@ class NotificationOverlay(QWidget):
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
@@ -46,6 +47,22 @@ class NotificationOverlay(QWidget):
         # ウィンドウを常に表示状態(透明度0)にしておき、show/hideの切り替えを発生させない
         self.setWindowOpacity(0.0)
         self.show()
+
+        # Windows APIを使用して、OSレベルでフォーカスを奪わない設定を強制する
+        if sys.platform == 'win32':
+            import ctypes
+            try:
+                hwnd = int(self.winId())
+                GWL_EXSTYLE = -20
+                WS_EX_TOPMOST = 0x00000008
+                WS_EX_TOOLWINDOW = 0x00000080
+                WS_EX_NOACTIVATE = 0x08000000
+                WS_EX_TRANSPARENT = 0x00000020
+                user32 = ctypes.windll.user32
+                ex_style = user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+                user32.SetWindowLongW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_NOACTIVATE | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_TOPMOST)
+            except Exception:
+                pass
         
     def show_message(self, message, duration=3000):
         # アニメーション中の場合は一度停止してリセット
@@ -60,27 +77,33 @@ class NotificationOverlay(QWidget):
         self.adjustSize()
         
         # プライマリスクリーンの左上に配置
+        x, y = 30, 30
         screen = QGuiApplication.primaryScreen()
         if screen:
             geom = screen.geometry()
-            self.move(geom.x() + 30, geom.y() + 30)
+            x = geom.x() + 30
+            y = geom.y() + 30
             
-        # Zオーダーが下がっている可能性があるため、確実に最前面へ持ってくる
-        self.raise_()
+        # Zオーダーが下がっている可能性があるため確実に最前面へ持ってくる。
+        # self.move() は内部でアクティブ化を伴う可能性があるため使用せず、
+        # SetWindowPos で位置・サイズ・最前面化を同時に行い、SWP_NOACTIVATE を強制する。
+        # SWP_SHOWWINDOW は既に表示済みのウィンドウに対して呼ぶとフォーカスを奪う原因になるため除外。
         if sys.platform == 'win32':
             import ctypes
             HWND_TOPMOST = -1
-            SWP_NOMOVE = 0x0002
-            SWP_NOSIZE = 0x0001
             SWP_NOACTIVATE = 0x0010
+            SWP_NOOWNERZORDER = 0x0200
+            SWP_NOSENDCHANGING = 0x0400
             try:
                 hwnd = int(self.winId())
                 ctypes.windll.user32.SetWindowPos(
-                    hwnd, HWND_TOPMOST, 0, 0, 0, 0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE
+                    hwnd, HWND_TOPMOST, x, y, self.width(), self.height(),
+                    SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOSENDCHANGING
                 )
             except Exception:
-                pass
+                self.move(x, y)
+        else:
+            self.move(x, y)
             
         self.opacity_anim.setStartValue(self.windowOpacity())
         self.opacity_anim.setEndValue(1.0)

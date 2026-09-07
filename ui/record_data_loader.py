@@ -18,8 +18,16 @@ def _generate_thumbnail(video_path, thumb_path):
             "-ss", "00:00:01", "-vframes", "1",
             "-vf", "scale=240:-1", thumb_path
         ]
-        creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=creationflags)
+        # CREATE_NO_WINDOW に加え、CREATE_NEW_PROCESS_GROUP と DETACHED_PROCESS(0x08) を指定し、
+        # stdinをDEVNULLにすることで、フォーカススティーリングを完全に防ぐ
+        creationflags = (subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP | 0x00000008) if os.name == 'nt' else 0
+        subprocess.run(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=creationflags
+        )
     except Exception:
         pass
 
@@ -120,16 +128,13 @@ class RecordDataLoader:
                         if not (is_fetching_api and file_age < 300):
                             continue
                     
-                    thumb_path = ""
+                    expected_thumb_path = os.path.join(self.config.SAVE_DIR, f.replace('.json', '.jpg'))
+                    thumb_path = expected_thumb_path
+                    
                     if video_path and os.path.exists(video_path) and os.path.getsize(video_path) > 0:
-                        expected_thumb_path = os.path.join(self.config.SAVE_DIR, f.replace('.json', '.jpg'))
-                        if os.path.exists(expected_thumb_path):
-                            thumb_path = expected_thumb_path
-                        else:
+                        if not os.path.exists(expected_thumb_path):
                             # UIスレッドをブロックしないよう、バックグラウンドでサムネイルを生成する
                             _thumb_executor.submit(_generate_thumbnail, video_path, expected_thumb_path)
-                            # 生成完了までは空文字を渡し、デフォルトアイコンを表示させる
-                            thumb_path = ""
                             
                     if date_key not in records_by_date:
                         records_by_date[date_key] = []
@@ -140,14 +145,19 @@ class RecordDataLoader:
                     records_by_date[date_key].append({
                         'filename': f,
                         'display_name': display_name,
-                        'thumb_path': thumb_path if os.path.exists(thumb_path) else "",
+                        'thumb_path': thumb_path,
                         'result': result,
                         'is_favorite': is_favorite,
                         'mmr_change': mmr_change,
                         'party_members': party_members,
-                        'is_fetching_api': is_fetching_api
+                        'is_fetching_api': is_fetching_api,
+                        'mode': mode,
+                        'timestamp': dt.timestamp()
                     })
                     
+                except FileNotFoundError:
+                    # バックグラウンドスレッドによってファイルが削除された場合は安全にスキップ
+                    continue
                 except Exception as e:
                     print(f"[RecordDataLoader] Error loading {f}: {e}")
                     

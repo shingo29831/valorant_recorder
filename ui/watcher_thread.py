@@ -160,20 +160,31 @@ class WatcherThread(QThread):
 
     def _stop_and_process_recording(self):
         self.recording_end_time = time.time()
-        try:
-            self.recorder.stop_recording()
-        except Exception as e:
-            self.log_signal.emit(f"[Error] Failed to stop recording: {e}")
-
-        self.recording_state_changed.emit(False)
         
         video_path = self.current_video_path
         start_time = self.recording_start_time
         end_time = self.recording_end_time
         events = list(self.local_round_events)
         ability_events = list(self.local_ability_events)
-        self.current_video_path = None
+        start_time_ms = getattr(self, 'local_recording_start_time_ms', None)
         
+        # UIフリーズを防ぐため、状態を即座にリセット
+        self.current_video_path = None
+        self.recording_state_changed.emit(False)
+        
+        # 録画停止処理（FFmpegの終了待ちなど）を別スレッドで実行
+        threading.Thread(
+            target=self._async_stop_and_process,
+            args=(video_path, start_time, end_time, events, ability_events, start_time_ms),
+            daemon=True
+        ).start()
+
+    def _async_stop_and_process(self, video_path, start_time, end_time, events, ability_events, start_time_ms):
+        try:
+            self.recorder.stop_recording()
+        except Exception as e:
+            self.log_signal.emit(f"[Error] Failed to stop recording: {e}")
+
         # API取得前に仮のメタデータを保存し、UIに即時表示させる
         temp_match_data = {
             "metadata": {
@@ -193,19 +204,16 @@ class WatcherThread(QThread):
             "local_ability_events": ability_events,
             "is_fetching_api": True
         }
-        if hasattr(self, 'local_recording_start_time_ms'):
-            temp_match_data['local_recording_start_time_ms'] = self.local_recording_start_time_ms
+        if start_time_ms is not None:
+            temp_match_data['local_recording_start_time_ms'] = start_time_ms
             
         temp_filepath = self.store.save_match_metadata(temp_match_data, 0)
         self.match_saved_signal.emit()
         
-        threading.Thread(
-            target=self._fetch_api_and_save,
-            args=(video_path, start_time, end_time, events, ability_events, temp_filepath),
-            daemon=True
-        ).start()
+        # API取得処理へ移行（すでに別スレッド内なので直接呼び出し）
+        self._fetch_api_and_save(video_path, start_time, end_time, events, ability_events, temp_filepath, start_time_ms)
 
-    def _fetch_api_and_save(self, video_path, start_time, end_time, events, ability_events=None, temp_filepath=None):
+    def _fetch_api_and_save(self, video_path, start_time, end_time, events, ability_events=None, temp_filepath=None, start_time_ms=None):
         if ability_events is None:
             ability_events = []
         self.log_signal.emit("[API] Checking for match data...")
@@ -267,7 +275,9 @@ class WatcherThread(QThread):
                 match_data['local_round_events'] = events
                 match_data['local_ability_events'] = ability_events
                 match_data['is_fetching_api'] = False
-                if hasattr(self, 'local_recording_start_time_ms'):
+                if start_time_ms is not None:
+                    match_data['local_recording_start_time_ms'] = start_time_ms
+                elif hasattr(self, 'local_recording_start_time_ms'):
                     match_data['local_recording_start_time_ms'] = self.local_recording_start_time_ms
                         
                 filepath = self.store.save_match_metadata(match_data, mmr_change)
@@ -285,7 +295,7 @@ class WatcherThread(QThread):
                 self.log_signal.emit(f"[Error] Failed to process match metadata: {e}")
         else:
             self.log_signal.emit("[API] Match data not found after retries. Saving as local-only match.")
-            self._create_dummy_metadata(video_path, start_time, end_time, events, temp_filepath)
+            self._create_dummy_metadata(video_path, start_time, end_time, events, temp_filepath, start_time_ms)
 
     def _get_pending_videos(self):
         if not os.path.exists(self.config.SAVE_DIR):
@@ -339,7 +349,7 @@ class WatcherThread(QThread):
                         pass
         return pending
 
-    def _create_dummy_metadata(self, video_path, vid_time, end_time=0, events=None, temp_filepath=None):
+    def _create_dummy_metadata(self, video_path, vid_time, end_time=0, events=None, temp_filepath=None, start_time_ms=None):
         if events is None:
             events = []
         match_data = {
@@ -360,7 +370,9 @@ class WatcherThread(QThread):
             "local_ability_events": [],
             "is_fetching_api": False
         }
-        if hasattr(self, 'local_recording_start_time_ms'):
+        if start_time_ms is not None:
+            match_data['local_recording_start_time_ms'] = start_time_ms
+        elif hasattr(self, 'local_recording_start_time_ms'):
             match_data['local_recording_start_time_ms'] = self.local_recording_start_time_ms
             
         filepath = self.store.save_match_metadata(match_data, 0)
@@ -440,89 +452,109 @@ class WatcherThread(QThread):
     def _background_worker(self):
         self._cleanup_old_records()
         last_cleanup_time = time.time()
+        last_api_check_time = time.time()
         
         while self._is_running:
-            time.sleep(60)
-            
+            time.sleep(1)
             now = time.time()
+            
+            # --- 1. 録画プロセスの死活監視と自動再開 (クラッシュ対策) ---
+            if self.current_video_path is not None and getattr(self.watcher, 'is_in_match', False):
+                if self.recorder.process is not None:
+                    returncode = self.recorder.process.poll()
+                    if returncode is not None:
+                        self.log_signal.emit(f"[Watcher] FFmpeg process crashed (code {returncode}). Auto-restarting recording...")
+                        # 現在の録画を保存処理に回す
+                        self._stop_and_process_recording()
+                        # 少し待機してから再開
+                        time.sleep(2)
+                        # リカバリーモードとして再開
+                        self.handle_match_start(is_range=False, is_recovery=True)
+                        continue
+
+            # --- 2. 定期クリーンアップ (1時間ごと) ---
             if now - last_cleanup_time > 3600:
                 self._cleanup_old_records()
                 last_cleanup_time = now
             
-            if self.watcher.is_in_match:
-                continue
+            # --- 3. 未処理動画のAPIチェック (60秒ごと) ---
+            if now - last_api_check_time > 60:
+                last_api_check_time = now
                 
-            pending_videos = self._get_pending_videos()
-            if not pending_videos:
-                continue
-                
-            self.log_signal.emit(f"[Background] Found {len(pending_videos)} pending video(s). Checking API...")
-            
-            try:
-                if not self.current_riot_id or not self.current_tag_line:
-                    from scripts.get_local_api_info import get_current_player, get_client_region
-                    name, tag = get_current_player()
-                    region = get_client_region()
-                    if name and tag:
-                        self.current_riot_id = name
-                        self.current_tag_line = tag
-                        self.current_region = region if region else self.config.REGION
-                        
-                        # UI側が自分を特定できるようにConfigを更新して保存する
-                        if self.config.RIOT_ID != name or self.config.TAG_LINE != tag or self.config.REGION != self.current_region:
-                            self.config.RIOT_ID = name
-                            self.config.TAG_LINE = tag
-                            self.config.REGION = self.current_region
-                            self.config.save()
-                            
-                        self.log_signal.emit(f"[Background] Player detected: {name}#{tag} (Region: {self.current_region})")
-                    else:
-                        continue
-                        
-                self.log_signal.emit(f"[Background] Fetching match data for {self.current_riot_id}#{self.current_tag_line} (Region: {self.current_region})...")
-                api = HenrikAPI(self.current_region, self.current_riot_id, self.current_tag_line)
-                
-                try:
-                    api_match_data = api.fetch_latest_match(retries=1, delay=2)
-                except Exception as e:
-                    self.log_signal.emit(f"[Background] API fetch error: {e}")
-                    api_match_data = None
-                    
-                if not api_match_data:
-                    for video_path, vid_time in pending_videos:
-                        if time.time() - vid_time > 3600:
-                            self.log_signal.emit(f"[Background] Video {os.path.basename(video_path)} API fetch failed permanently. Saving as local-only.")
-                            self._create_dummy_metadata(video_path, vid_time)
+                if getattr(self.watcher, 'is_in_match', False):
                     continue
                     
-                game_start = api_match_data.get('metadata', {}).get('game_start', 0)
-                
-                for video_path, vid_time in pending_videos:
-                    diff = abs(game_start - vid_time)
+                pending_videos = self._get_pending_videos()
+                if not pending_videos:
+                    continue
                     
-                    if diff < 3600:
-                        self.log_signal.emit(f"[Background] Match found for {os.path.basename(video_path)}.")
-                        match_id = api_match_data['metadata']['matchid']
-                        mode = api_match_data.get('metadata', {}).get('mode', '')
-                        mmr_change = 0
+                self.log_signal.emit(f"[Background] Found {len(pending_videos)} pending video(s). Checking API...")
+                
+                try:
+                    if not self.current_riot_id or not self.current_tag_line:
+                        from scripts.get_local_api_info import get_current_player, get_client_region
+                        name, tag = get_current_player()
+                        region = get_client_region()
+                        if name and tag:
+                            self.current_riot_id = name
+                            self.current_tag_line = tag
+                            self.current_region = region if region else self.config.REGION
+                            
+                            # UI側が自分を特定できるようにConfigを更新して保存する
+                            if self.config.RIOT_ID != name or self.config.TAG_LINE != tag or self.config.REGION != self.current_region:
+                                self.config.RIOT_ID = name
+                                self.config.TAG_LINE = tag
+                                self.config.REGION = self.current_region
+                                self.config.save()
+                                
+                            self.log_signal.emit(f"[Background] Player detected: {name}#{tag} (Region: {self.current_region})")
+                        else:
+                            continue
+                            
+                    self.log_signal.emit(f"[Background] Fetching match data for {self.current_riot_id}#{self.current_tag_line} (Region: {self.current_region})...")
+                    api = HenrikAPI(self.current_region, self.current_riot_id, self.current_tag_line)
+                    
+                    try:
+                        api_match_data = api.fetch_latest_match(retries=1, delay=2)
+                    except Exception as e:
+                        self.log_signal.emit(f"[Background] API fetch error: {e}")
+                        api_match_data = None
                         
-                        if mode.lower() not in ['deathmatch', 'custom game', 'escalation', 'snowball fight', 'replication']:
-                            try:
-                                mmr_change = api.fetch_mmr_change(match_id, retries=1, delay=2)
-                            except Exception as e:
-                                self.log_signal.emit(f"[Background] MMR fetch skipped (likely not competitive): {e}")
+                    if not api_match_data:
+                        for video_path, vid_time in pending_videos:
+                            if time.time() - vid_time > 3600:
+                                self.log_signal.emit(f"[Background] Video {os.path.basename(video_path)} API fetch failed permanently. Saving as local-only.")
+                                self._create_dummy_metadata(video_path, vid_time)
+                        continue
                         
-                        api_match_data['local_video_path'] = video_path
-                        filepath = self.store.save_match_metadata(api_match_data, mmr_change)
-                        self.log_signal.emit(f"[Background] Saved metadata: {filepath}")
-                        self.match_saved_signal.emit()
+                    game_start = api_match_data.get('metadata', {}).get('game_start', 0)
+                    
+                    for video_path, vid_time in pending_videos:
+                        diff = abs(game_start - vid_time)
                         
-                    elif game_start > vid_time + 3600 or time.time() - vid_time > 3600:
-                        self.log_signal.emit(f"[Background] Video {os.path.basename(video_path)} is likely a custom match or API not available. Skipping.")
-                        self._create_dummy_metadata(video_path, vid_time)
-                        
-            except Exception as e:
-                self.log_signal.emit(f"[Background] Error: {e}")
+                        if diff < 3600:
+                            self.log_signal.emit(f"[Background] Match found for {os.path.basename(video_path)}.")
+                            match_id = api_match_data['metadata']['matchid']
+                            mode = api_match_data.get('metadata', {}).get('mode', '')
+                            mmr_change = 0
+                            
+                            if mode.lower() not in ['deathmatch', 'custom game', 'escalation', 'snowball fight', 'replication']:
+                                try:
+                                    mmr_change = api.fetch_mmr_change(match_id, retries=1, delay=2)
+                                except Exception as e:
+                                    self.log_signal.emit(f"[Background] MMR fetch skipped (likely not competitive): {e}")
+                            
+                            api_match_data['local_video_path'] = video_path
+                            filepath = self.store.save_match_metadata(api_match_data, mmr_change)
+                            self.log_signal.emit(f"[Background] Saved metadata: {filepath}")
+                            self.match_saved_signal.emit()
+                            
+                        elif game_start > vid_time + 3600 or time.time() - vid_time > 3600:
+                            self.log_signal.emit(f"[Background] Video {os.path.basename(video_path)} is likely a custom match or API not available. Skipping.")
+                            self._create_dummy_metadata(video_path, vid_time)
+                            
+                except Exception as e:
+                    self.log_signal.emit(f"[Background] Error: {e}")
 
     def run(self):
         self.log_signal.emit("Valorant Recorder App initialized. Watching logs...")

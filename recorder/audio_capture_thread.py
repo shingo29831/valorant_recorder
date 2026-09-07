@@ -190,8 +190,10 @@ class AudioCaptureThread(threading.Thread):
 
                 while not self.stop_event.is_set():
                     try:
-                        # タイムアウトを長くし、一時的なスレッド遅延で無音が誤挿入されるのを防ぐ
-                        spk_data = spk_queue.get(timeout=0.5)
+                        # タイムアウトをバッファ長(2400サンプル=50ms)に合わせる。
+                        # 無音時に0.5秒など長く待つと、FFmpegに送られる音声データが実時間より遅れ、
+                        # 同期を取るために映像フレームが大量にドロップされFPSが極端に低下する。
+                        spk_data = spk_queue.get(timeout=0.05)
                         spk_data = spk_data * system_gain
                     except queue.Empty:
                         spk_data = None

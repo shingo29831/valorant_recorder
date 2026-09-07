@@ -10,6 +10,8 @@ def main():
 
     log_path = os.path.join(local_app_data, 'VALORANT', 'Saved', 'Logs', 'ShooterGame.log')
     output_path = 'filtered_log.txt'
+    potential_path = 'potential_logs.txt'
+    useless_path = 'useless_logs.txt'
 
     if not os.path.exists(log_path):
         print(f"Log file not found: {log_path}")
@@ -167,6 +169,27 @@ def main():
         r"UAresNetDriver Lifetime Stats:",
         r"Log file open,",
         r"Log file closed,",
+        r"LogRGIFriends:",
+        r"LogDataTable:",
+        r"LogActInfoInboxProvider:",
+        r"LogGoldStarManager:",
+        r"This is a placeholder file",
+        r"Time Zone UTC/GMT",
+        r"LogBaseMainMenuPlayerController:",
+        r"BloomlinePlankDefaultModulesLog:",
+        r"LogRankedProgressViewModel:",
+        r"LogCustomGameManager:",
+        r"LogDownedComponent:",
+        r"LogStoryContentTracking:",
+        r"LogStoreManager:",
+        r"LogShooterCharacter:",
+        r"LogVoteControllerComponent:",
+        r"LogUIActionRouter:",
+        r"LogTextFormatter:",
+        r"LogLevelBorderViewModel:",
+        r"LogPlayerTitleViewModel:",
+        r"LogCurrencyViewModel:",
+        r"LogAgentViewModel:",
         # JSONダンプや複数行にわたる不要な出力を除外
         r"^\s*\{",
         r"^\s*\}",
@@ -184,19 +207,40 @@ def main():
         r"LogMapLoadModel:",
         r"LogGameFlowStateManager:",
         r"LogPlatformSessionManager:",
+        r"Match State Changed",
+        r"State:\s*\w+\s*->",
+        r"Broadcasting state changed",
+        r"Transitioning to State",
+        r"Leaving session",
+        r"Match ended",
+        r"LogShooterGame:",
+    ]
+
+    # ==========================================
+    # 3. カスタムマッチ終了など、使えそうなログを抽出するためのキーワード
+    # ==========================================
+    POTENTIAL_KEYWORDS = [
+        r"Match", r"State", r"End", r"Transition", r"Custom", 
+        r"Game", r"Phase", r"Victory", r"Defeat", r"Score", 
+        r"Leave", r"Exit", r"Stop", r"Quit", r"Result"
     ]
 
     compiled_exclude = [re.compile(pattern) for pattern in EXCLUDE_PATTERNS]
     compiled_known = [re.compile(pattern) for pattern in KNOWN_PATTERNS]
+    compiled_potential = [re.compile(pattern, re.IGNORECASE) for pattern in POTENTIAL_KEYWORDS]
     
     print(f"Reading log from: {log_path}")
     print("Filtering...")
 
     kept_lines_count = 0
+    potential_lines_count = 0
+    useless_lines_count = 0
     total_lines_count = 0
 
     with open(log_path, 'r', encoding='utf-8', errors='replace') as infile, \
-         open(output_path, 'w', encoding='utf-8') as outfile:
+         open(output_path, 'w', encoding='utf-8') as outfile, \
+         open(potential_path, 'w', encoding='utf-8') as pot_file, \
+         open(useless_path, 'w', encoding='utf-8') as useless_file:
         
         for line in infile:
             total_lines_count += 1
@@ -205,13 +249,25 @@ def main():
             if any(pattern.search(line) for pattern in compiled_exclude):
                 continue
                 
-            # 既知の必要なログにマッチする場合のみ出力
+            # 既知の必要なログにマッチする場合は filtered_log.txt に出力
             if any(pattern.search(line) for pattern in compiled_known):
                 outfile.write(line)
                 kept_lines_count += 1
+            else:
+                # 未知のログの中で、使えそうなキーワードを含むものは potential_logs.txt に出力
+                if any(pattern.search(line) for pattern in compiled_potential):
+                    pot_file.write(line)
+                    potential_lines_count += 1
+                else:
+                    # それ以外は useless_logs.txt に出力
+                    useless_file.write(line)
+                    useless_lines_count += 1
 
-    print(f"Done! Filtered log saved to: {output_path}")
-    print(f"Total lines: {total_lines_count} -> Known (required) lines: {kept_lines_count}")
+    print(f"Done! Logs have been categorized and saved.")
+    print(f"Total lines: {total_lines_count}")
+    print(f" -> Known (required) lines saved to {output_path}: {kept_lines_count}")
+    print(f" -> Potential lines saved to {potential_path}: {potential_lines_count}")
+    print(f" -> Useless lines saved to {useless_path}: {useless_lines_count}")
 
 if __name__ == "__main__":
     main()
