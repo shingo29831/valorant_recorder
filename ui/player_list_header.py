@@ -27,7 +27,7 @@ class PlayerListHeader(QWidget):
         self.setStyleSheet("background-color: transparent; border: none;")
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 10)
-        layout.setSpacing(10)
+        layout.setSpacing(5)
         
         self.tab_buttons = {}
         modes = [
@@ -121,12 +121,13 @@ class PlayerListHeader(QWidget):
                 btn.setChecked(True)
                 btn.setStyleSheet("""
                     QPushButton {
-                        background-color: #FF4655;
+                        background-color: transparent;
                         color: white;
                         border: none;
-                        border-radius: 4px;
-                        padding: 5px 15px;
+                        border-bottom: 3px solid #FF4655;
+                        padding: 8px 16px;
                         font-weight: bold;
+                        font-size: 14px;
                     }
                 """)
             else:
@@ -135,13 +136,14 @@ class PlayerListHeader(QWidget):
                     QPushButton {
                         background-color: transparent;
                         color: #888888;
-                        border: 1px solid #555555;
-                        border-radius: 4px;
-                        padding: 5px 15px;
+                        border: none;
+                        border-bottom: 3px solid transparent;
+                        padding: 8px 16px;
+                        font-size: 14px;
                     }
                     QPushButton:hover {
-                        background-color: rgba(255, 255, 255, 0.1);
                         color: white;
+                        border-bottom: 3px solid #555555;
                     }
                 """)
 
