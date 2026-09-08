@@ -31,10 +31,12 @@ class VideoPlayerCore(QObject):
         self.mic_loaded = False
         self.was_playing_before_seek = False
         self.is_seeking = False
+        self.pending_play_after_seek = False
         
-        self._resume_timer = QTimer(self)
-        self._resume_timer.setSingleShot(True)
-        self._resume_timer.timeout.connect(self.play)
+        # positionChanged が発火しなかった場合のフェールセーフ（保険）タイマー
+        self._failsafe_play_timer = QTimer(self)
+        self._failsafe_play_timer.setSingleShot(True)
+        self._failsafe_play_timer.timeout.connect(self._force_play_if_pending)
         
         self.media_player.mediaStatusChanged.connect(self._on_media_player_status_changed)
         self.mic_player.mediaStatusChanged.connect(self._on_mic_player_status_changed)
@@ -44,8 +46,18 @@ class VideoPlayerCore(QObject):
         self.media_player.playbackStateChanged.connect(self._on_playback_state_changed)
         self.media_player.errorOccurred.connect(self._on_error_occurred)
         
+    def _force_play_if_pending(self):
+        if self.pending_play_after_seek:
+            self.pending_play_after_seek = False
+            self.play()
+
     def _on_position_changed(self, pos):
         self.positionChanged.emit(pos)
+        # シーク完了を検知したら、即座に再生を再開する
+        if self.pending_play_after_seek:
+            self.pending_play_after_seek = False
+            self._failsafe_play_timer.stop()
+            self.play()
 
     def _on_duration_changed(self, duration):
         self.durationChanged.emit(duration)
@@ -154,10 +166,11 @@ class VideoPlayerCore(QObject):
 
     def on_seek_started(self):
         self.is_seeking = True
-        self.was_playing_before_seek = (self.media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState) or self._resume_timer.isActive()
+        self.was_playing_before_seek = (self.media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState) or self.pending_play_after_seek
         if self.was_playing_before_seek:
             self.pause()
-            self._resume_timer.stop()
+            self.pending_play_after_seek = False
+            self._failsafe_play_timer.stop()
 
     def on_seek_requested(self, position):
         # ドラッグ中は pause 状態のまま setPosition のみ行う
@@ -166,20 +179,23 @@ class VideoPlayerCore(QObject):
 
     def on_seek_finished(self, position):
         self.is_seeking = False
+        if self.was_playing_before_seek:
+            self.pending_play_after_seek = True
+            self._failsafe_play_timer.start(500)
         self.media_player.setPosition(position)
         self.mic_player.setPosition(position)
-        if self.was_playing_before_seek:
-            # シーク処理（デコード）が完了する前に再生が始まると時間が進んでしまうため、
-            # わずかに遅延させてから再生を再開する
-            self._resume_timer.start(150)
 
     def set_position_direct(self, position):
         # スキップボタンなどからの直接シーク用
-        was_playing = (self.media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState) or self._resume_timer.isActive()
+        was_playing = (self.media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState) or self.pending_play_after_seek
         if was_playing:
             self.pause()
-            self._resume_timer.stop()
+            self.pending_play_after_seek = False
+            self._failsafe_play_timer.stop()
+            
+        if was_playing:
+            self.pending_play_after_seek = True
+            self._failsafe_play_timer.start(500)
+            
         self.media_player.setPosition(position)
         self.mic_player.setPosition(position)
-        if was_playing:
-            self._resume_timer.start(150)

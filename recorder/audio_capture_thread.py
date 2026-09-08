@@ -187,6 +187,10 @@ class AudioCaptureThread(threading.Thread):
 
                 # マイクの連続的な波形を保持するバッファ（キュー破棄によるポツ音防止）
                 mic_buffer = np.zeros((0, 2), dtype=np.float32)
+                
+                # 2倍増幅時のクリッピング防止用リミッターゲイン
+                current_spk_limiter_gain = 1.0
+                current_mic_limiter_gain = 1.0
 
                 while not self.stop_event.is_set():
                     try:
@@ -194,7 +198,8 @@ class AudioCaptureThread(threading.Thread):
                         # 無音時に0.5秒など長く待つと、FFmpegに送られる音声データが実時間より遅れ、
                         # 同期を取るために映像フレームが大量にドロップされFPSが極端に低下する。
                         spk_data = spk_queue.get(timeout=0.05)
-                        spk_data = spk_data * system_gain
+                        # システム音を2倍の音量で保存する
+                        spk_data = spk_data * (system_gain * 2.0)
                     except queue.Empty:
                         spk_data = None
 
@@ -223,9 +228,30 @@ class AudioCaptureThread(threading.Thread):
                                 mic_data = np.concatenate((mic_buffer, pad), axis=0)
                                 mic_buffer = np.zeros((0, 2), dtype=np.float32)
                                 
-                            mic_data = mic_data * mic_gain
+                            # マイク音もシステム音と同様に2倍の音量で保存する
+                            mic_data = mic_data * (mic_gain * 2.0)
                         else:
                             mic_data = np.zeros((frames_to_process, 2), dtype=np.float32)
+                            
+                        # スピーカー音のソフトリミッター（2倍増幅による音割れ防止）
+                        peak_spk = np.max(np.abs(spk_data))
+                        target_gain_spk = 0.99 / peak_spk if peak_spk > 0.99 else 1.0
+                        if current_spk_limiter_gain != target_gain_spk:
+                            gains = np.linspace(current_spk_limiter_gain, target_gain_spk, len(spk_data), dtype=np.float32).reshape(-1, 1)
+                            spk_data = spk_data * gains
+                            current_spk_limiter_gain = target_gain_spk
+                        elif target_gain_spk < 1.0:
+                            spk_data = spk_data * target_gain_spk
+                            
+                        # マイク音のソフトリミッター（2倍増幅による音割れ防止）
+                        peak_mic = np.max(np.abs(mic_data))
+                        target_gain_mic = 0.99 / peak_mic if peak_mic > 0.99 else 1.0
+                        if current_mic_limiter_gain != target_gain_mic:
+                            gains = np.linspace(current_mic_limiter_gain, target_gain_mic, len(mic_data), dtype=np.float32).reshape(-1, 1)
+                            mic_data = mic_data * gains
+                            current_mic_limiter_gain = target_gain_mic
+                        elif target_gain_mic < 1.0:
+                            mic_data = mic_data * target_gain_mic
                         
                         combined = np.concatenate((spk_data, mic_data), axis=1)
                         combined = np.clip(combined, -1.0, 1.0)

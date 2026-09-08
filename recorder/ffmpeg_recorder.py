@@ -141,7 +141,8 @@ class FFmpegRecorder:
         # 2. システム音単独 (編集用)
         # 3. マイク音単独 (編集用)
         # の3つのオーディオトラックを生成する
-        filter_complex += f";[a0]asplit=2[a0_mix][a0_out];{mic_map}asplit=2[a1_mix][a1_out];[a0_mix][a1_mix]amix=inputs=2:duration=longest:normalize=0[a_mixed]"
+        # 録音時に2倍に増幅しているため、ミックス時にクリップしないよう alimiter を適用する
+        filter_complex += f";[a0]asplit=2[a0_mix][a0_out];{mic_map}asplit=2[a1_mix][a1_out];[a0_mix][a1_mix]amix=inputs=2:duration=longest:normalize=0,alimiter=limit=0.99[a_mixed]"
 
         cmd.extend([
             "-thread_queue_size", "4096",
