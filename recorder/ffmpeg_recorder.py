@@ -215,6 +215,14 @@ class FFmpegRecorder:
             startupinfo=startupinfo
         )
         
+        # FFmpegプロセス起動完了までの間にキャプチャされた古い音声データを破棄する。
+        # これを行わないと、映像キャプチャ開始前の音声が先頭に挿入され、音声が先行する音ズレが発生する。
+        while not self.audio_queue.empty():
+            try:
+                self.audio_queue.get_nowait()
+            except queue.Empty:
+                break
+        
         self.audio_write_thread = threading.Thread(target=self._audio_write_loop, daemon=True)
         self.audio_write_thread.start()
         

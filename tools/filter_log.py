@@ -204,16 +204,24 @@ def main():
     # 2. すでに用途が確定している必要なログのパターン
     # ==========================================
     KNOWN_PATTERNS = [
-        r"LogMapLoadModel:",
-        r"LogGameFlowStateManager:",
-        r"LogPlatformSessionManager:",
+        r"LogMapLoadModel:.*Transitioning to State",
+        r"LogGameFlowStateManager:.*Match State Changed",
+        r"LogGameFlowStateManager:.*State:\s*\w+\s*->",
+        r"LogGameFlowStateManager:.*Broadcasting state changed",
+        r"LogGameFlowStateManager:.*Transitioning to State",
+        r"LogPlatformSessionManager:.*Leaving session",
         r"Match State Changed",
         r"State:\s*\w+\s*->",
-        r"Broadcasting state changed",
         r"Transitioning to State",
-        r"Leaving session",
         r"Match ended",
-        r"LogShooterGame:",
+        r"Phase Changed",
+        r"Round Phase",
+        r"RoundState",
+        r"MatchState",
+        r"Buy Phase",
+        r"Combat Phase",
+        r"Round Start",
+        r"Round End",
     ]
 
     # ==========================================
@@ -245,23 +253,24 @@ def main():
         for line in infile:
             total_lines_count += 1
             
-            # 不要なログにマッチする場合はスキップ
-            if any(pattern.search(line) for pattern in compiled_exclude):
-                continue
-                
-            # 既知の必要なログにマッチする場合は filtered_log.txt に出力
+            # 1. 最優先: 既知の必要なログ（状態遷移など）にマッチする場合は filtered_log.txt に出力
             if any(pattern.search(line) for pattern in compiled_known):
                 outfile.write(line)
                 kept_lines_count += 1
+                continue
+                
+            # 2. 不要なログにマッチする場合はスキップ
+            if any(pattern.search(line) for pattern in compiled_exclude):
+                continue
+                
+            # 3. 未知のログの中で、使えそうなキーワードを含むものは potential_logs.txt に出力
+            if any(pattern.search(line) for pattern in compiled_potential):
+                pot_file.write(line)
+                potential_lines_count += 1
             else:
-                # 未知のログの中で、使えそうなキーワードを含むものは potential_logs.txt に出力
-                if any(pattern.search(line) for pattern in compiled_potential):
-                    pot_file.write(line)
-                    potential_lines_count += 1
-                else:
-                    # それ以外は useless_logs.txt に出力
-                    useless_file.write(line)
-                    useless_lines_count += 1
+                # 4. それ以外は useless_logs.txt に出力
+                useless_file.write(line)
+                useless_lines_count += 1
 
     print(f"Done! Logs have been categorized and saved.")
     print(f"Total lines: {total_lines_count}")

@@ -1,0 +1,433 @@
+[2026.09.08-09.52.56:109][  0]LogMapLoadModel: Update: [Map Name: Init | Changed: TRUE] [Local World: FALSE | Changed: FALSE] [Match Setup: FALSE | Changed: FALSE] [Map Ready: FALSE | Changed: FALSE] [Map Complete: FALSE | Changed: FALSE] [URL: /Game/Maps/Init/Init?Name=Player]
+[2026.09.08-09.52.56:109][  0]LogGameFlowStateManager: Reconcile called with the current state: Initialization. No action taken.
+[2026.09.08-09.52.56:110][  0]LogMapLoadModel: Update: [Map Name: Init | Changed: FALSE] [Local World: FALSE | Changed: FALSE] [Match Setup: FALSE | Changed: FALSE] [Map Ready: TRUE | Changed: TRUE] [Map Complete: FALSE | Changed: FALSE] [URL: /Game/Maps/Init/Init?Name=Player]
+[2026.09.08-09.52.56:110][  0]LogGameFlowStateManager: Reconcile called with the current state: Initialization. No action taken.
+[2026.09.08-09.53.00:640][ 65]LogPlatformSessionManager: Loopstate changed from INVALID to MENUS
+[2026.09.08-09.53.00:640][ 65]LogGameFlowStateManager: Reconcile called with the current state: Initialization. No action taken.
+[2026.09.08-09.53.02:898][132]LogGameFlowStateManager: Reconcile called with the current state: Initialization. No action taken.
+[2026.09.08-09.53.02:900][132]LogGameFlowStateManager: Reconcile called with the current state: Initialization. No action taken.
+[2026.09.08-09.53.03:599][153]LogGameFlowStateManager: Reconcile called with state: Initialization and new state: TransitionToMainMenu. Changing state.
+[2026.09.08-09.53.03:599][153]LogGameFlowStateManager: [PlatformTime: 7740.327171] Transitioning from Initialization to TransitionToMainMenu
+[2026.09.08-09.53.03:599][153]LogGameFlowStateManager: [PlatformTime: 7740.327174] Current state Initialization exiting to TransitionToMainMenu
+[2026.09.08-09.53.03:599][153]LogGameFlowStateManager: [PlatformTime: 7740.327175] Current state TransitionToMainMenu entering from Initialization
+[2026.09.08-09.53.03:599][153]LogGameFlowStateManager: Reconcile called with the current state: TransitionToMainMenu. No action taken.
+[2026.09.08-09.53.04:735][180]LogMapLoadModel: Update: [Map Name: MainMenuV2 | Changed: TRUE] [Local World: FALSE | Changed: FALSE] [Match Setup: FALSE | Changed: FALSE] [Map Ready: FALSE | Changed: TRUE] [Map Complete: FALSE | Changed: FALSE] [URL: /Game/Maps/Menu/MainMenuV2?Name=shingo ?SubjectBase64=ZGIxYmE0YTYtMjI0Ni01ZmZkLTgyOTctMmY1OGJkZjNiNDlj#7445]
+[2026.09.08-09.53.04:735][180]LogGameFlowStateManager: Reconcile called with the current state: TransitionToMainMenu. No action taken.
+[2026.09.08-09.53.05:748][180]LogMapLoadModel: Update: [Map Name: MainMenuV2 | Changed: FALSE] [Local World: FALSE | Changed: FALSE] [Match Setup: FALSE | Changed: FALSE] [Map Ready: TRUE | Changed: TRUE] [Map Complete: FALSE | Changed: FALSE] [URL: /Game/Maps/Menu/MainMenuV2?Name=shingo ?SubjectBase64=ZGIxYmE0YTYtMjI0Ni01ZmZkLTgyOTctMmY1OGJkZjNiNDlj#7445]
+[2026.09.08-09.53.05:748][180]LogGameFlowStateManager: Reconcile called with state: TransitionToMainMenu and new state: MainMenu. Changing state.
+[2026.09.08-09.53.05:748][180]LogGameFlowStateManager: [PlatformTime: 7742.476738] Transitioning from TransitionToMainMenu to MainMenu
+[2026.09.08-09.53.05:748][180]LogGameFlowStateManager: [PlatformTime: 7742.476740] Current state TransitionToMainMenu exiting to MainMenu
+[2026.09.08-09.53.05:748][180]LogGameFlowStateManager: [PlatformTime: 7742.476850] Current state MainMenu entering from TransitionToMainMenu
+[2026.09.08-09.53.05:949][180]LogGameFlowStateManager: Reconcile called with the current state: MainMenu. No action taken.
+[2026.09.08-09.58.29:355][225]LogGameFlowStateManager: Reconcile called with the current state: MainMenu. No action taken.
+[2026.09.08-09.58.34:355][525]LogGameFlowStateManager: Reconcile called with the current state: MainMenu. No action taken.
+[2026.09.08-09.58.34:621][541]LogPlatformSessionManager: Loopstate changed from MENUS to PREGAME
+[2026.09.08-09.58.34:621][541]LogGameFlowStateManager: Reconcile called with state: MainMenu and new state: TransitionToPregame. Changing state.
+[2026.09.08-09.58.34:621][541]LogGameFlowStateManager: [PlatformTime: 8071.350291] Transitioning from MainMenu to TransitionToPregame
+[2026.09.08-09.58.34:621][541]LogGameFlowStateManager: [PlatformTime: 8071.350295] Current state MainMenu exiting to TransitionToPregame
+[2026.09.08-09.58.34:621][541]LogGameFlowStateManager: [PlatformTime: 8071.350296] Current state TransitionToPregame entering from MainMenu
+[2026.09.08-09.58.34:627][541]LogGameFlowStateManager: Reconcile called with the current state: TransitionToPregame. No action taken.
+[2026.09.08-09.58.34:755][549]LogGameFlowStateManager: Reconcile called with the current state: TransitionToPregame. No action taken.
+[2026.09.08-09.58.35:789][602]LogMapLoadModel: Update: [Map Name: CharacterSelectPersistentLevel | Changed: TRUE] [Local World: FALSE | Changed: FALSE] [Match Setup: FALSE | Changed: FALSE] [Map Ready: FALSE | Changed: TRUE] [Map Complete: FALSE | Changed: FALSE] [URL: :7777/Game/Maps/Init/Init]
+[2026.09.08-09.58.35:789][602]LogGameFlowStateManager: Reconcile called with the current state: TransitionToPregame. No action taken.
+[2026.09.08-09.58.36:567][602]LogMapLoadModel: Update: [Map Name: CharacterSelectPersistentLevel | Changed: FALSE] [Local World: FALSE | Changed: FALSE] [Match Setup: FALSE | Changed: FALSE] [Map Ready: TRUE | Changed: TRUE] [Map Complete: FALSE | Changed: FALSE] [URL: /Game/Maps/PregameV2/CharacterSelectPersistentLevel?Name=shingo ?SubjectBase64=ZGIxYmE0YTYtMjI0Ni01ZmZkLTgyOTctMmY1OGJkZjNiNDlj#7445]
+[2026.09.08-09.58.36:567][602]LogGameFlowStateManager: Reconcile called with state: TransitionToPregame and new state: Pregame. Changing state.
+[2026.09.08-09.58.36:567][602]LogGameFlowStateManager: [PlatformTime: 8073.295610] Transitioning from TransitionToPregame to Pregame
+[2026.09.08-09.58.36:567][602]LogGameFlowStateManager: [PlatformTime: 8073.295613] Current state TransitionToPregame exiting to Pregame
+[2026.09.08-09.58.36:567][602]LogGameFlowStateManager: [PlatformTime: 8073.295640] Current state Pregame entering from TransitionToPregame
+[2026.09.08-09.58.36:604][602]LogGameFlowStateManager: Reconcile called with the current state: Pregame. No action taken.
+[2026.09.08-09.58.36:644][603]LogGameFlowStateManager: Reconcile called with the current state: Pregame. No action taken.
+[2026.09.08-09.58.45:703][889]LogGameFlowStateManager: Reconcile called with the current state: Pregame. No action taken.
+[2026.09.08-09.58.46:733][951]LogGameFlowStateManager: Reconcile called with the current state: Pregame. No action taken.
+[2026.09.08-09.58.52:199][279]LogGameFlowStateManager: Reconcile called with the current state: Pregame. No action taken.
+[2026.09.08-09.58.52:250][282]LogPlatformSessionManager: Loopstate changed from PREGAME to INGAME
+[2026.09.08-09.58.52:252][282]LogGameFlowStateManager: Reconcile called with state: Pregame and new state: TransitionToInGame. Changing state.
+[2026.09.08-09.58.52:252][282]LogGameFlowStateManager: [PlatformTime: 8088.980654] Transitioning from Pregame to TransitionToInGame
+[2026.09.08-09.58.52:252][282]LogGameFlowStateManager: [PlatformTime: 8088.980657] Current state Pregame exiting to TransitionToInGame
+[2026.09.08-09.58.52:252][282]LogGameFlowStateManager: [PlatformTime: 8088.980693] Current state TransitionToInGame entering from Pregame
+[2026.09.08-09.58.52:255][282]LogGameFlowStateManager: Reconcile called with the current state: TransitionToInGame. No action taken.
+[2026.09.08-09.58.52:255][282]LogGameFlowStateManager: Reconcile called with the current state: TransitionToInGame. No action taken.
+[2026.09.08-09.58.52:366][289]LogGameFlowStateManager: Reconcile called with the current state: TransitionToInGame. No action taken.
+[2026.09.08-09.58.52:366][289]LogGameFlowStateManager: Reconcile called with the current state: TransitionToInGame. No action taken.
+[2026.09.08-09.58.52:500][297]LogGameFlowStateManager: Reconcile called with the current state: TransitionToInGame. No action taken.
+[2026.09.08-09.58.56:029][503]LogMapLoadModel: Update: [Map Name: Ascent | Changed: TRUE] [Local World: FALSE | Changed: FALSE] [Match Setup: FALSE | Changed: FALSE] [Map Ready: FALSE | Changed: TRUE] [Map Complete: FALSE | Changed: FALSE] [URL: :7777/Game/Maps/Menu/Init]
+[2026.09.08-09.58.56:029][503]LogGameFlowStateManager: Reconcile called with the current state: TransitionToInGame. No action taken.
+[2026.09.08-09.58.56:981][505]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: FALSE] [MatchLoadInCompleted: FALSE] [PlayerCameraReady: FALSE]
+[2026.09.08-09.58.57:013][505]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: FALSE] [PlayerCameraReady: FALSE]
+[2026.09.08-09.58.57:013][505]LogMapLoadModel: Update: [Map Name: Ascent | Changed: FALSE] [Local World: TRUE | Changed: TRUE] [Match Setup: FALSE | Changed: FALSE] [Map Ready: FALSE | Changed: FALSE] [Map Complete: FALSE | Changed: FALSE] [URL: 43.229.65.1:7400/Game/Maps/Ascent/Ascent?Name=shingo ?SubjectBase64=ZGIxYmE0YTYtMjI0Ni01ZmZkLTgyOTctMmY1OGJkZjNiNDlj?game=/Game/GameModes/Bomb/BombGameMode.BombGameMode_C#7445]
+[2026.09.08-09.58.57:014][505]LogGameFlowStateManager: Reconcile called with the current state: TransitionToInGame. No action taken.
+[2026.09.08-09.58.57:064][506]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: FALSE] [PlayerCameraReady: FALSE]
+[2026.09.08-09.58.57:376][506]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: FALSE] [PlayerCameraReady: FALSE]
+[2026.09.08-09.58.57:378][506]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: FALSE] [PlayerCameraReady: FALSE]
+[2026.09.08-09.59.05:897][666]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: FALSE]
+[2026.09.08-09.59.05:897][666]LogMapLoadModel: Update: [Map Name: Ascent | Changed: FALSE] [Local World: TRUE | Changed: FALSE] [Match Setup: TRUE | Changed: TRUE] [Map Ready: FALSE | Changed: FALSE] [Map Complete: FALSE | Changed: FALSE] [URL: 43.229.65.1:7400/Game/Maps/Ascent/Ascent?Name=shingo ?SubjectBase64=ZGIxYmE0YTYtMjI0Ni01ZmZkLTgyOTctMmY1OGJkZjNiNDlj?game=/Game/GameModes/Bomb/BombGameMode.BombGameMode_C#7445]
+[2026.09.08-09.59.05:897][666]LogGameFlowStateManager: Reconcile called with the current state: TransitionToInGame. No action taken.
+[2026.09.08-09.59.05:903][668]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: FALSE]
+[2026.09.08-09.59.06:128][705]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: FALSE]
+[2026.09.08-09.59.06:142][705]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-09.59.06:142][705]LogMapLoadModel: Update: [Map Name: Ascent | Changed: FALSE] [Local World: TRUE | Changed: FALSE] [Match Setup: TRUE | Changed: FALSE] [Map Ready: TRUE | Changed: TRUE] [Map Complete: FALSE | Changed: FALSE] [URL: 43.229.65.1:7400/Game/Maps/Ascent/Ascent?Name=shingo ?SubjectBase64=ZGIxYmE0YTYtMjI0Ni01ZmZkLTgyOTctMmY1OGJkZjNiNDlj?game=/Game/GameModes/Bomb/BombGameMode.BombGameMode_C#7445]
+[2026.09.08-09.59.06:142][705]LogGameFlowStateManager: Reconcile called with state: TransitionToInGame and new state: InGame. Changing state.
+[2026.09.08-09.59.06:142][705]LogGameFlowStateManager: [PlatformTime: 8102.870176] Transitioning from TransitionToInGame to InGame
+[2026.09.08-09.59.06:142][705]LogGameFlowStateManager: [PlatformTime: 8102.870179] Current state TransitionToInGame exiting to InGame
+[2026.09.08-09.59.06:142][705]LogGameFlowStateManager: [PlatformTime: 8102.870272] Current state InGame entering from TransitionToInGame
+[2026.09.08-09.59.06:142][705]LogGameFlowStateManager: Reconcile called with the current state: InGame. No action taken.
+[2026.09.08-09.59.50:897][ 19]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-10.01.09:875][462]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-10.01.16:971][404]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-10.01.30:895][619]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-10.01.37:896][812]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-10.01.37:914][812]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-10.01.43:613][ 82]LogGameFlowStateManager: Reconcile called with state: InGame and new state: TransitionToInGame. Changing state.
+[2026.09.08-10.01.43:613][ 82]LogGameFlowStateManager: [PlatformTime: 8260.341353] Transitioning from InGame to TransitionToInGame
+[2026.09.08-10.01.43:613][ 82]LogGameFlowStateManager: [PlatformTime: 8260.341356] Current state InGame exiting to TransitionToInGame
+[2026.09.08-10.01.43:613][ 82]LogGameFlowStateManager: [PlatformTime: 8260.341358] Current state TransitionToInGame entering from InGame
+[2026.09.08-10.01.43:617][ 82]LogGameFlowStateManager: Reconcile called with the current state: TransitionToInGame. No action taken.
+[2026.09.08-10.01.43:617][ 82]LogGameFlowStateManager: Reconcile called with state: TransitionToInGame and new state: TransitionToMainMenu. Changing state.
+[2026.09.08-10.01.43:617][ 82]LogGameFlowStateManager: [PlatformTime: 8260.345818] Transitioning from TransitionToInGame to TransitionToMainMenu
+[2026.09.08-10.01.43:617][ 82]LogGameFlowStateManager: [PlatformTime: 8260.345819] Current state TransitionToInGame exiting to TransitionToMainMenu
+[2026.09.08-10.01.43:617][ 82]LogGameFlowStateManager: [PlatformTime: 8260.345824] Current state TransitionToMainMenu entering from TransitionToInGame
+[2026.09.08-10.01.43:620][ 82]LogGameFlowStateManager: Reconcile called with the current state: TransitionToMainMenu. No action taken.
+[2026.09.08-10.01.43:958][ 82]LogMapLoadModel: Update: [Map Name: Init | Changed: TRUE] [Local World: FALSE | Changed: TRUE] [Match Setup: FALSE | Changed: TRUE] [Map Ready: FALSE | Changed: TRUE] [Map Complete: FALSE | Changed: FALSE] [URL: /Game/Maps/Init/Init]
+[2026.09.08-10.01.43:958][ 82]LogGameFlowStateManager: Reconcile called with the current state: TransitionToMainMenu. No action taken.
+[2026.09.08-10.01.43:961][ 82]LogMapLoadModel: Update: [Map Name: Init | Changed: FALSE] [Local World: FALSE | Changed: FALSE] [Match Setup: FALSE | Changed: FALSE] [Map Ready: TRUE | Changed: TRUE] [Map Complete: FALSE | Changed: FALSE] [URL: /Game/Maps/Init/Init]
+[2026.09.08-10.01.43:961][ 82]LogGameFlowStateManager: Reconcile called with the current state: TransitionToMainMenu. No action taken.
+[2026.09.08-10.01.43:975][ 83]LogPlatformSessionManager: Loopstate changed from INGAME to MENUS
+[2026.09.08-10.01.43:976][ 83]LogGameFlowStateManager: Reconcile called with the current state: TransitionToMainMenu. No action taken.
+[2026.09.08-10.01.43:976][ 83]LogGameFlowStateManager: Reconcile called with the current state: TransitionToMainMenu. No action taken.
+[2026.09.08-10.01.43:976][ 83]LogGameFlowStateManager: Reconcile called with the current state: TransitionToMainMenu. No action taken.
+[2026.09.08-10.01.44:135][ 86]LogGameFlowStateManager: Reconcile called with the current state: TransitionToMainMenu. No action taken.
+[2026.09.08-10.01.44:747][116]LogMapLoadModel: Update: [Map Name: MainMenuV2 | Changed: TRUE] [Local World: FALSE | Changed: FALSE] [Match Setup: FALSE | Changed: FALSE] [Map Ready: FALSE | Changed: TRUE] [Map Complete: FALSE | Changed: FALSE] [URL: /Game/Maps/Menu/MainMenuV2?Name=shingo ?SubjectBase64=ZGIxYmE0YTYtMjI0Ni01ZmZkLTgyOTctMmY1OGJkZjNiNDlj#7445]
+[2026.09.08-10.01.44:748][116]LogGameFlowStateManager: Reconcile called with the current state: TransitionToMainMenu. No action taken.
+[2026.09.08-10.01.45:604][116]LogMapLoadModel: Update: [Map Name: MainMenuV2 | Changed: FALSE] [Local World: FALSE | Changed: FALSE] [Match Setup: FALSE | Changed: FALSE] [Map Ready: TRUE | Changed: TRUE] [Map Complete: FALSE | Changed: FALSE] [URL: /Game/Maps/Menu/MainMenuV2?Name=shingo ?SubjectBase64=ZGIxYmE0YTYtMjI0Ni01ZmZkLTgyOTctMmY1OGJkZjNiNDlj#7445]
+[2026.09.08-10.01.45:604][116]LogGameFlowStateManager: Reconcile called with state: TransitionToMainMenu and new state: MainMenu. Changing state.
+[2026.09.08-10.01.45:604][116]LogGameFlowStateManager: [PlatformTime: 8262.332615] Transitioning from TransitionToMainMenu to MainMenu
+[2026.09.08-10.01.45:604][116]LogGameFlowStateManager: [PlatformTime: 8262.332619] Current state TransitionToMainMenu exiting to MainMenu
+[2026.09.08-10.01.45:604][116]LogGameFlowStateManager: [PlatformTime: 8262.332626] Current state MainMenu entering from TransitionToMainMenu
+[2026.09.08-10.01.45:610][116]LogGameFlowStateManager: Reconcile called with the current state: MainMenu. No action taken.
+[2026.09.08-10.11.40:313][811]LogPlatformSessionManager: Error: Attempting to parse unhandled loopstate string INVALID
+[2026.09.08-10.11.40:329][811]LogPlatformSessionManager: Error: Attempting to parse unhandled loopstate string INVALID
+[2026.09.08-10.29.14:904][445]LogGameFlowStateManager: Reconcile called with the current state: MainMenu. No action taken.
+[2026.09.08-10.32.14:635][837]LogGameFlowStateManager: Reconcile called with the current state: MainMenu. No action taken.
+[2026.09.08-10.33.00:888][464]LogGameFlowStateManager: Reconcile called with the current state: MainMenu. No action taken.
+[2026.09.08-10.33.00:922][466]LogGameFlowStateManager: Reconcile called with the current state: MainMenu. No action taken.
+[2026.09.08-10.33.00:922][466]LogGameFlowStateManager: Reconcile called with the current state: MainMenu. No action taken.
+[2026.09.08-10.33.00:923][466]LogGameFlowStateManager: Reconcile called with the current state: MainMenu. No action taken.
+[2026.09.08-10.33.00:940][467]LogGameFlowStateManager: Reconcile called with the current state: MainMenu. No action taken.
+[2026.09.08-10.33.00:943][467]LogGameFlowStateManager: Reconcile called with the current state: MainMenu. No action taken.
+[2026.09.08-10.33.00:944][467]LogGameFlowStateManager: Reconcile called with the current state: MainMenu. No action taken.
+[2026.09.08-10.33.01:005][471]LogGameFlowStateManager: Reconcile called with the current state: MainMenu. No action taken.
+[2026.09.08-10.33.01:022][472]LogGameFlowStateManager: Reconcile called with the current state: MainMenu. No action taken.
+[2026.09.08-10.33.01:971][529]LogGameFlowStateManager: Reconcile called with the current state: MainMenu. No action taken.
+[2026.09.08-10.33.11:488][100]LogGameFlowStateManager: Reconcile called with the current state: MainMenu. No action taken.
+[2026.09.08-10.33.11:671][111]LogPlatformSessionManager: Loopstate changed from MENUS to PREGAME
+[2026.09.08-10.33.11:672][111]LogGameFlowStateManager: Reconcile called with state: MainMenu and new state: TransitionToPregame. Changing state.
+[2026.09.08-10.33.11:672][111]LogGameFlowStateManager: [PlatformTime: 10148.399874] Transitioning from MainMenu to TransitionToPregame
+[2026.09.08-10.33.11:672][111]LogGameFlowStateManager: [PlatformTime: 10148.399877] Current state MainMenu exiting to TransitionToPregame
+[2026.09.08-10.33.11:672][111]LogGameFlowStateManager: [PlatformTime: 10148.399879] Current state TransitionToPregame entering from MainMenu
+[2026.09.08-10.33.11:678][111]LogGameFlowStateManager: Reconcile called with the current state: TransitionToPregame. No action taken.
+[2026.09.08-10.33.11:755][116]LogGameFlowStateManager: Reconcile called with the current state: TransitionToPregame. No action taken.
+[2026.09.08-10.33.12:863][172]LogMapLoadModel: Update: [Map Name: CharacterSelectPersistentLevel | Changed: TRUE] [Local World: FALSE | Changed: FALSE] [Match Setup: FALSE | Changed: FALSE] [Map Ready: FALSE | Changed: TRUE] [Map Complete: FALSE | Changed: FALSE] [URL: :7777/Game/Maps/Init/Init]
+[2026.09.08-10.33.12:863][172]LogGameFlowStateManager: Reconcile called with the current state: TransitionToPregame. No action taken.
+[2026.09.08-10.33.13:273][172]LogMapLoadModel: Update: [Map Name: CharacterSelectPersistentLevel | Changed: FALSE] [Local World: FALSE | Changed: FALSE] [Match Setup: FALSE | Changed: FALSE] [Map Ready: TRUE | Changed: TRUE] [Map Complete: FALSE | Changed: FALSE] [URL: /Game/Maps/PregameV2/CharacterSelectPersistentLevel?Name=shingo ?SubjectBase64=ZGIxYmE0YTYtMjI0Ni01ZmZkLTgyOTctMmY1OGJkZjNiNDlj#7445]
+[2026.09.08-10.33.13:275][172]LogGameFlowStateManager: Reconcile called with state: TransitionToPregame and new state: Pregame. Changing state.
+[2026.09.08-10.33.13:275][172]LogGameFlowStateManager: [PlatformTime: 10150.002950] Transitioning from TransitionToPregame to Pregame
+[2026.09.08-10.33.13:275][172]LogGameFlowStateManager: [PlatformTime: 10150.002957] Current state TransitionToPregame exiting to Pregame
+[2026.09.08-10.33.13:275][172]LogGameFlowStateManager: [PlatformTime: 10150.003024] Current state Pregame entering from TransitionToPregame
+[2026.09.08-10.33.13:309][172]LogGameFlowStateManager: Reconcile called with the current state: Pregame. No action taken.
+[2026.09.08-10.33.13:350][173]LogGameFlowStateManager: Reconcile called with the current state: Pregame. No action taken.
+[2026.09.08-10.33.39:793][421]LogGameFlowStateManager: Reconcile called with the current state: Pregame. No action taken.
+[2026.09.08-10.33.40:307][452]LogGameFlowStateManager: Reconcile called with the current state: Pregame. No action taken.
+[2026.09.08-10.33.45:821][783]LogPlatformSessionManager: Loopstate changed from PREGAME to INGAME
+[2026.09.08-10.33.45:824][783]LogGameFlowStateManager: Reconcile called with state: Pregame and new state: TransitionToInGame. Changing state.
+[2026.09.08-10.33.45:824][783]LogGameFlowStateManager: [PlatformTime: 10182.552782] Transitioning from Pregame to TransitionToInGame
+[2026.09.08-10.33.45:824][783]LogGameFlowStateManager: [PlatformTime: 10182.552787] Current state Pregame exiting to TransitionToInGame
+[2026.09.08-10.33.45:825][783]LogGameFlowStateManager: [PlatformTime: 10182.552832] Current state TransitionToInGame entering from Pregame
+[2026.09.08-10.33.45:827][783]LogGameFlowStateManager: Reconcile called with the current state: TransitionToInGame. No action taken.
+[2026.09.08-10.33.45:827][783]LogGameFlowStateManager: Reconcile called with the current state: TransitionToInGame. No action taken.
+[2026.09.08-10.33.45:921][789]LogGameFlowStateManager: Reconcile called with the current state: TransitionToInGame. No action taken.
+[2026.09.08-10.33.45:938][790]LogGameFlowStateManager: Reconcile called with the current state: TransitionToInGame. No action taken.
+[2026.09.08-10.33.46:039][796]LogGameFlowStateManager: Reconcile called with the current state: TransitionToInGame. No action taken.
+[2026.09.08-10.33.50:281][ 44]LogMapLoadModel: Update: [Map Name: Ascent | Changed: TRUE] [Local World: FALSE | Changed: FALSE] [Match Setup: FALSE | Changed: FALSE] [Map Ready: FALSE | Changed: TRUE] [Map Complete: FALSE | Changed: FALSE] [URL: :7777/Game/Maps/Menu/Init]
+[2026.09.08-10.33.50:281][ 44]LogGameFlowStateManager: Reconcile called with the current state: TransitionToInGame. No action taken.
+[2026.09.08-10.33.50:997][ 46]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: FALSE] [MatchLoadInCompleted: FALSE] [PlayerCameraReady: FALSE]
+[2026.09.08-10.33.51:013][ 46]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: FALSE] [PlayerCameraReady: FALSE]
+[2026.09.08-10.33.51:014][ 46]LogMapLoadModel: Update: [Map Name: Ascent | Changed: FALSE] [Local World: TRUE | Changed: TRUE] [Match Setup: FALSE | Changed: FALSE] [Map Ready: FALSE | Changed: FALSE] [Map Complete: FALSE | Changed: FALSE] [URL: 151.106.248.1:7333/Game/Maps/Ascent/Ascent?Name=shingo ?SubjectBase64=ZGIxYmE0YTYtMjI0Ni01ZmZkLTgyOTctMmY1OGJkZjNiNDlj?game=/Game/GameModes/Bomb/BombGameMode.BombGameMode_C#7445]
+[2026.09.08-10.33.51:014][ 46]LogGameFlowStateManager: Reconcile called with the current state: TransitionToInGame. No action taken.
+[2026.09.08-10.33.51:270][ 47]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: FALSE] [PlayerCameraReady: FALSE]
+[2026.09.08-10.33.51:274][ 47]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: FALSE] [PlayerCameraReady: FALSE]
+[2026.09.08-10.33.51:293][ 48]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: FALSE] [PlayerCameraReady: FALSE]
+[2026.09.08-10.34.00:013][198]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: FALSE]
+[2026.09.08-10.34.00:013][198]LogMapLoadModel: Update: [Map Name: Ascent | Changed: FALSE] [Local World: TRUE | Changed: FALSE] [Match Setup: TRUE | Changed: TRUE] [Map Ready: FALSE | Changed: FALSE] [Map Complete: FALSE | Changed: FALSE] [URL: 151.106.248.1:7333/Game/Maps/Ascent/Ascent?Name=shingo ?SubjectBase64=ZGIxYmE0YTYtMjI0Ni01ZmZkLTgyOTctMmY1OGJkZjNiNDlj?game=/Game/GameModes/Bomb/BombGameMode.BombGameMode_C#7445]
+[2026.09.08-10.34.00:013][198]LogGameFlowStateManager: Reconcile called with the current state: TransitionToInGame. No action taken.
+[2026.09.08-10.34.00:019][199]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: FALSE]
+[2026.09.08-10.34.00:240][234]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: FALSE]
+[2026.09.08-10.34.00:256][234]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-10.34.00:256][234]LogMapLoadModel: Update: [Map Name: Ascent | Changed: FALSE] [Local World: TRUE | Changed: FALSE] [Match Setup: TRUE | Changed: FALSE] [Map Ready: TRUE | Changed: TRUE] [Map Complete: FALSE | Changed: FALSE] [URL: 151.106.248.1:7333/Game/Maps/Ascent/Ascent?Name=shingo ?SubjectBase64=ZGIxYmE0YTYtMjI0Ni01ZmZkLTgyOTctMmY1OGJkZjNiNDlj?game=/Game/GameModes/Bomb/BombGameMode.BombGameMode_C#7445]
+[2026.09.08-10.34.00:256][234]LogGameFlowStateManager: Reconcile called with state: TransitionToInGame and new state: InGame. Changing state.
+[2026.09.08-10.34.00:256][234]LogGameFlowStateManager: [PlatformTime: 10196.984840] Transitioning from TransitionToInGame to InGame
+[2026.09.08-10.34.00:256][234]LogGameFlowStateManager: [PlatformTime: 10196.984844] Current state TransitionToInGame exiting to InGame
+[2026.09.08-10.34.00:256][234]LogGameFlowStateManager: [PlatformTime: 10196.984933] Current state InGame entering from TransitionToInGame
+[2026.09.08-10.34.00:256][234]LogGameFlowStateManager: Reconcile called with the current state: InGame. No action taken.
+[2026.09.08-10.34.45:006][269]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-10.35.09:216][946]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-10.35.11:570][508]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-10.35.14:724][401]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-10.35.21:819][235]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-10.35.26:397][520]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-10.35.28:388][  0]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-10.35.30:557][611]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-10.35.35:617][980]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-10.35.37:795][610]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-10.35.44:890][525]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-10.35.47:229][206]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-10.35.54:322][989]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-10.36.04:705][ 83]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-10.36.11:798][989]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-10.36.25:011][551]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-10.36.32:013][257]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-10.36.32:037][257]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-10.36.36:774][287]LogGameFlowStateManager: Reconcile called with state: InGame and new state: TransitionToInGame. Changing state.
+[2026.09.08-10.36.36:774][287]LogGameFlowStateManager: [PlatformTime: 10353.502733] Transitioning from InGame to TransitionToInGame
+[2026.09.08-10.36.36:774][287]LogGameFlowStateManager: [PlatformTime: 10353.502739] Current state InGame exiting to TransitionToInGame
+[2026.09.08-10.36.36:774][287]LogGameFlowStateManager: [PlatformTime: 10353.502742] Current state TransitionToInGame entering from InGame
+[2026.09.08-10.36.36:780][287]LogGameFlowStateManager: Reconcile called with the current state: TransitionToInGame. No action taken.
+[2026.09.08-10.36.36:780][287]LogGameFlowStateManager: Reconcile called with state: TransitionToInGame and new state: TransitionToMainMenu. Changing state.
+[2026.09.08-10.36.36:781][287]LogGameFlowStateManager: [PlatformTime: 10353.508445] Transitioning from TransitionToInGame to TransitionToMainMenu
+[2026.09.08-10.36.36:781][287]LogGameFlowStateManager: [PlatformTime: 10353.508447] Current state TransitionToInGame exiting to TransitionToMainMenu
+[2026.09.08-10.36.36:781][287]LogGameFlowStateManager: [PlatformTime: 10353.508457] Current state TransitionToMainMenu entering from TransitionToInGame
+[2026.09.08-10.36.36:785][287]LogGameFlowStateManager: Reconcile called with the current state: TransitionToMainMenu. No action taken.
+[2026.09.08-10.36.36:785][287]LogPlatformSessionManager: Loopstate changed from INGAME to MENUS
+[2026.09.08-10.36.36:787][287]LogGameFlowStateManager: Reconcile called with the current state: TransitionToMainMenu. No action taken.
+[2026.09.08-10.36.36:788][287]LogGameFlowStateManager: Reconcile called with the current state: TransitionToMainMenu. No action taken.
+[2026.09.08-10.36.36:788][287]LogGameFlowStateManager: Reconcile called with the current state: TransitionToMainMenu. No action taken.
+[2026.09.08-10.36.37:142][287]LogMapLoadModel: Update: [Map Name: Init | Changed: TRUE] [Local World: FALSE | Changed: TRUE] [Match Setup: FALSE | Changed: TRUE] [Map Ready: FALSE | Changed: TRUE] [Map Complete: FALSE | Changed: FALSE] [URL: /Game/Maps/Init/Init]
+[2026.09.08-10.36.37:142][287]LogGameFlowStateManager: Reconcile called with the current state: TransitionToMainMenu. No action taken.
+[2026.09.08-10.36.37:144][287]LogMapLoadModel: Update: [Map Name: Init | Changed: FALSE] [Local World: FALSE | Changed: FALSE] [Match Setup: FALSE | Changed: FALSE] [Map Ready: TRUE | Changed: TRUE] [Map Complete: FALSE | Changed: FALSE] [URL: /Game/Maps/Init/Init]
+[2026.09.08-10.36.37:144][287]LogGameFlowStateManager: Reconcile called with the current state: TransitionToMainMenu. No action taken.
+[2026.09.08-10.36.37:265][292]LogGameFlowStateManager: Reconcile called with the current state: TransitionToMainMenu. No action taken.
+[2026.09.08-10.36.37:930][324]LogMapLoadModel: Update: [Map Name: MainMenuV2 | Changed: TRUE] [Local World: FALSE | Changed: FALSE] [Match Setup: FALSE | Changed: FALSE] [Map Ready: FALSE | Changed: TRUE] [Map Complete: FALSE | Changed: FALSE] [URL: /Game/Maps/Menu/MainMenuV2?Name=shingo ?SubjectBase64=ZGIxYmE0YTYtMjI0Ni01ZmZkLTgyOTctMmY1OGJkZjNiNDlj#7445]
+[2026.09.08-10.36.37:930][324]LogGameFlowStateManager: Reconcile called with the current state: TransitionToMainMenu. No action taken.
+[2026.09.08-10.36.38:869][324]LogMapLoadModel: Update: [Map Name: MainMenuV2 | Changed: FALSE] [Local World: FALSE | Changed: FALSE] [Match Setup: FALSE | Changed: FALSE] [Map Ready: TRUE | Changed: TRUE] [Map Complete: FALSE | Changed: FALSE] [URL: /Game/Maps/Menu/MainMenuV2?Name=shingo ?SubjectBase64=ZGIxYmE0YTYtMjI0Ni01ZmZkLTgyOTctMmY1OGJkZjNiNDlj#7445]
+[2026.09.08-10.36.38:869][324]LogGameFlowStateManager: Reconcile called with state: TransitionToMainMenu and new state: MainMenu. Changing state.
+[2026.09.08-10.36.38:869][324]LogGameFlowStateManager: [PlatformTime: 10355.596975] Transitioning from TransitionToMainMenu to MainMenu
+[2026.09.08-10.36.38:869][324]LogGameFlowStateManager: [PlatformTime: 10355.596980] Current state TransitionToMainMenu exiting to MainMenu
+[2026.09.08-10.36.38:869][324]LogGameFlowStateManager: [PlatformTime: 10355.596986] Current state MainMenu entering from TransitionToMainMenu
+[2026.09.08-10.36.38:876][324]LogGameFlowStateManager: Reconcile called with the current state: MainMenu. No action taken.
+[2026.09.08-10.53.08:637][385]LogGameFlowStateManager: Reconcile called with the current state: MainMenu. No action taken.
+[2026.09.08-10.53.08:638][385]LogPlatformSessionManager: Loopstate changed from MENUS to PREGAME
+[2026.09.08-10.53.08:639][385]LogGameFlowStateManager: Reconcile called with state: MainMenu and new state: TransitionToPregame. Changing state.
+[2026.09.08-10.53.08:639][385]LogGameFlowStateManager: [PlatformTime: 11345.367559] Transitioning from MainMenu to TransitionToPregame
+[2026.09.08-10.53.08:639][385]LogGameFlowStateManager: [PlatformTime: 11345.367563] Current state MainMenu exiting to TransitionToPregame
+[2026.09.08-10.53.08:639][385]LogGameFlowStateManager: [PlatformTime: 11345.367564] Current state TransitionToPregame entering from MainMenu
+[2026.09.08-10.53.08:646][385]LogGameFlowStateManager: Reconcile called with the current state: TransitionToPregame. No action taken.
+[2026.09.08-10.53.08:871][399]LogGameFlowStateManager: Reconcile called with the current state: TransitionToPregame. No action taken.
+[2026.09.08-10.53.09:804][445]LogMapLoadModel: Update: [Map Name: CharacterSelectPersistentLevel | Changed: TRUE] [Local World: FALSE | Changed: FALSE] [Match Setup: FALSE | Changed: FALSE] [Map Ready: FALSE | Changed: TRUE] [Map Complete: FALSE | Changed: FALSE] [URL: :7777/Game/Maps/Init/Init]
+[2026.09.08-10.53.09:804][445]LogGameFlowStateManager: Reconcile called with the current state: TransitionToPregame. No action taken.
+[2026.09.08-10.53.10:205][445]LogMapLoadModel: Update: [Map Name: CharacterSelectPersistentLevel | Changed: FALSE] [Local World: FALSE | Changed: FALSE] [Match Setup: FALSE | Changed: FALSE] [Map Ready: TRUE | Changed: TRUE] [Map Complete: FALSE | Changed: FALSE] [URL: /Game/Maps/PregameV2/CharacterSelectPersistentLevel?Name=shingo ?SubjectBase64=ZGIxYmE0YTYtMjI0Ni01ZmZkLTgyOTctMmY1OGJkZjNiNDlj#7445]
+[2026.09.08-10.53.10:205][445]LogGameFlowStateManager: Reconcile called with state: TransitionToPregame and new state: Pregame. Changing state.
+[2026.09.08-10.53.10:205][445]LogGameFlowStateManager: [PlatformTime: 11346.933572] Transitioning from TransitionToPregame to Pregame
+[2026.09.08-10.53.10:205][445]LogGameFlowStateManager: [PlatformTime: 11346.933575] Current state TransitionToPregame exiting to Pregame
+[2026.09.08-10.53.10:205][445]LogGameFlowStateManager: [PlatformTime: 11346.933604] Current state Pregame entering from TransitionToPregame
+[2026.09.08-10.53.10:250][445]LogGameFlowStateManager: Reconcile called with the current state: Pregame. No action taken.
+[2026.09.08-10.53.10:298][446]LogGameFlowStateManager: Reconcile called with the current state: Pregame. No action taken.
+[2026.09.08-10.53.16:841][830]LogGameFlowStateManager: Reconcile called with the current state: Pregame. No action taken.
+[2026.09.08-10.53.17:730][884]LogGameFlowStateManager: Reconcile called with the current state: Pregame. No action taken.
+[2026.09.08-10.53.23:245][215]LogPlatformSessionManager: Loopstate changed from PREGAME to INGAME
+[2026.09.08-10.53.23:246][215]LogGameFlowStateManager: Reconcile called with state: Pregame and new state: TransitionToInGame. Changing state.
+[2026.09.08-10.53.23:247][215]LogGameFlowStateManager: [PlatformTime: 11359.974940] Transitioning from Pregame to TransitionToInGame
+[2026.09.08-10.53.23:247][215]LogGameFlowStateManager: [PlatformTime: 11359.974943] Current state Pregame exiting to TransitionToInGame
+[2026.09.08-10.53.23:247][215]LogGameFlowStateManager: [PlatformTime: 11359.974980] Current state TransitionToInGame entering from Pregame
+[2026.09.08-10.53.23:249][215]LogGameFlowStateManager: Reconcile called with the current state: TransitionToInGame. No action taken.
+[2026.09.08-10.53.23:250][215]LogGameFlowStateManager: Reconcile called with the current state: TransitionToInGame. No action taken.
+[2026.09.08-10.53.23:361][222]LogGameFlowStateManager: Reconcile called with the current state: TransitionToInGame. No action taken.
+[2026.09.08-10.53.23:361][222]LogGameFlowStateManager: Reconcile called with the current state: TransitionToInGame. No action taken.
+[2026.09.08-10.53.23:462][228]LogGameFlowStateManager: Reconcile called with the current state: TransitionToInGame. No action taken.
+[2026.09.08-10.53.27:227][447]LogMapLoadModel: Update: [Map Name: Ascent | Changed: TRUE] [Local World: FALSE | Changed: FALSE] [Match Setup: FALSE | Changed: FALSE] [Map Ready: FALSE | Changed: TRUE] [Map Complete: FALSE | Changed: FALSE] [URL: :7777/Game/Maps/Menu/Init]
+[2026.09.08-10.53.27:227][447]LogGameFlowStateManager: Reconcile called with the current state: TransitionToInGame. No action taken.
+[2026.09.08-10.53.28:066][449]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: FALSE] [MatchLoadInCompleted: FALSE] [PlayerCameraReady: FALSE]
+[2026.09.08-10.53.28:084][449]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: FALSE] [PlayerCameraReady: FALSE]
+[2026.09.08-10.53.28:084][449]LogMapLoadModel: Update: [Map Name: Ascent | Changed: FALSE] [Local World: TRUE | Changed: TRUE] [Match Setup: FALSE | Changed: FALSE] [Map Ready: FALSE | Changed: FALSE] [Map Complete: FALSE | Changed: FALSE] [URL: 151.106.248.1:7241/Game/Maps/Ascent/Ascent?Name=shingo ?SubjectBase64=ZGIxYmE0YTYtMjI0Ni01ZmZkLTgyOTctMmY1OGJkZjNiNDlj?game=/Game/GameModes/Bomb/BombGameMode.BombGameMode_C#7445]
+[2026.09.08-10.53.28:084][449]LogGameFlowStateManager: Reconcile called with the current state: TransitionToInGame. No action taken.
+[2026.09.08-10.53.28:128][450]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: FALSE] [PlayerCameraReady: FALSE]
+[2026.09.08-10.53.28:372][450]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: FALSE] [PlayerCameraReady: FALSE]
+[2026.09.08-10.53.28:372][450]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: FALSE] [PlayerCameraReady: FALSE]
+[2026.09.08-10.53.37:082][ 17]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: FALSE]
+[2026.09.08-10.53.37:083][ 17]LogMapLoadModel: Update: [Map Name: Ascent | Changed: FALSE] [Local World: TRUE | Changed: FALSE] [Match Setup: TRUE | Changed: TRUE] [Map Ready: FALSE | Changed: FALSE] [Map Complete: FALSE | Changed: FALSE] [URL: 151.106.248.1:7241/Game/Maps/Ascent/Ascent?Name=shingo ?SubjectBase64=ZGIxYmE0YTYtMjI0Ni01ZmZkLTgyOTctMmY1OGJkZjNiNDlj?game=/Game/GameModes/Bomb/BombGameMode.BombGameMode_C#7445]
+[2026.09.08-10.53.37:083][ 17]LogGameFlowStateManager: Reconcile called with the current state: TransitionToInGame. No action taken.
+[2026.09.08-10.53.37:087][ 18]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: FALSE]
+[2026.09.08-10.53.37:303][ 42]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: FALSE]
+[2026.09.08-10.53.37:323][ 42]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-10.53.37:323][ 42]LogMapLoadModel: Update: [Map Name: Ascent | Changed: FALSE] [Local World: TRUE | Changed: FALSE] [Match Setup: TRUE | Changed: FALSE] [Map Ready: TRUE | Changed: TRUE] [Map Complete: FALSE | Changed: FALSE] [URL: 151.106.248.1:7241/Game/Maps/Ascent/Ascent?Name=shingo ?SubjectBase64=ZGIxYmE0YTYtMjI0Ni01ZmZkLTgyOTctMmY1OGJkZjNiNDlj?game=/Game/GameModes/Bomb/BombGameMode.BombGameMode_C#7445]
+[2026.09.08-10.53.37:323][ 42]LogGameFlowStateManager: Reconcile called with state: TransitionToInGame and new state: InGame. Changing state.
+[2026.09.08-10.53.37:323][ 42]LogGameFlowStateManager: [PlatformTime: 11374.051183] Transitioning from TransitionToInGame to InGame
+[2026.09.08-10.53.37:323][ 42]LogGameFlowStateManager: [PlatformTime: 11374.051188] Current state TransitionToInGame exiting to InGame
+[2026.09.08-10.53.37:323][ 42]LogGameFlowStateManager: [PlatformTime: 11374.051314] Current state InGame entering from TransitionToInGame
+[2026.09.08-10.53.37:324][ 42]LogGameFlowStateManager: Reconcile called with the current state: InGame. No action taken.
+[2026.09.08-10.54.22:076][902]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-10.56.02:079][862]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-10.56.09:081][556]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-10.56.09:101][556]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-10.56.39:065][796]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-10.58.19:061][775]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-10.58.26:063][719]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-10.58.26:086][719]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-10.58.56:052][719]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-10.59.57:359][588]LogGameFlowStateManager: Reconcile called with state: InGame and new state: TransitionToInGame. Changing state.
+[2026.09.08-10.59.57:359][588]LogGameFlowStateManager: [PlatformTime: 11754.087347] Transitioning from InGame to TransitionToInGame
+[2026.09.08-10.59.57:359][588]LogGameFlowStateManager: [PlatformTime: 11754.087349] Current state InGame exiting to TransitionToInGame
+[2026.09.08-10.59.57:359][588]LogGameFlowStateManager: [PlatformTime: 11754.087351] Current state TransitionToInGame entering from InGame
+[2026.09.08-10.59.57:365][588]LogGameFlowStateManager: Reconcile called with the current state: TransitionToInGame. No action taken.
+[2026.09.08-10.59.57:365][588]LogGameFlowStateManager: Reconcile called with state: TransitionToInGame and new state: TransitionToMainMenu. Changing state.
+[2026.09.08-10.59.57:366][588]LogGameFlowStateManager: [PlatformTime: 11754.093878] Transitioning from TransitionToInGame to TransitionToMainMenu
+[2026.09.08-10.59.57:366][588]LogGameFlowStateManager: [PlatformTime: 11754.093880] Current state TransitionToInGame exiting to TransitionToMainMenu
+[2026.09.08-10.59.57:366][588]LogGameFlowStateManager: [PlatformTime: 11754.093893] Current state TransitionToMainMenu entering from TransitionToInGame
+[2026.09.08-10.59.57:370][588]LogGameFlowStateManager: Reconcile called with the current state: TransitionToMainMenu. No action taken.
+[2026.09.08-10.59.57:370][588]LogPlatformSessionManager: Loopstate changed from INGAME to MENUS
+[2026.09.08-10.59.57:372][588]LogGameFlowStateManager: Reconcile called with the current state: TransitionToMainMenu. No action taken.
+[2026.09.08-10.59.57:372][588]LogGameFlowStateManager: Reconcile called with the current state: TransitionToMainMenu. No action taken.
+[2026.09.08-10.59.57:372][588]LogGameFlowStateManager: Reconcile called with the current state: TransitionToMainMenu. No action taken.
+[2026.09.08-10.59.57:754][588]LogMapLoadModel: Update: [Map Name: Init | Changed: TRUE] [Local World: FALSE | Changed: TRUE] [Match Setup: FALSE | Changed: TRUE] [Map Ready: FALSE | Changed: TRUE] [Map Complete: FALSE | Changed: FALSE] [URL: /Game/Maps/Init/Init]
+[2026.09.08-10.59.57:754][588]LogGameFlowStateManager: Reconcile called with the current state: TransitionToMainMenu. No action taken.
+[2026.09.08-10.59.57:756][588]LogMapLoadModel: Update: [Map Name: Init | Changed: FALSE] [Local World: FALSE | Changed: FALSE] [Match Setup: FALSE | Changed: FALSE] [Map Ready: TRUE | Changed: TRUE] [Map Complete: FALSE | Changed: FALSE] [URL: /Game/Maps/Init/Init]
+[2026.09.08-10.59.57:756][588]LogGameFlowStateManager: Reconcile called with the current state: TransitionToMainMenu. No action taken.
+[2026.09.08-10.59.57:946][592]LogGameFlowStateManager: Reconcile called with the current state: TransitionToMainMenu. No action taken.
+[2026.09.08-10.59.58:498][619]LogMapLoadModel: Update: [Map Name: MainMenuV2 | Changed: TRUE] [Local World: FALSE | Changed: FALSE] [Match Setup: FALSE | Changed: FALSE] [Map Ready: FALSE | Changed: TRUE] [Map Complete: FALSE | Changed: FALSE] [URL: /Game/Maps/Menu/MainMenuV2?Name=shingo ?SubjectBase64=ZGIxYmE0YTYtMjI0Ni01ZmZkLTgyOTctMmY1OGJkZjNiNDlj#7445]
+[2026.09.08-10.59.58:498][619]LogGameFlowStateManager: Reconcile called with the current state: TransitionToMainMenu. No action taken.
+[2026.09.08-10.59.59:513][619]LogMapLoadModel: Update: [Map Name: MainMenuV2 | Changed: FALSE] [Local World: FALSE | Changed: FALSE] [Match Setup: FALSE | Changed: FALSE] [Map Ready: TRUE | Changed: TRUE] [Map Complete: FALSE | Changed: FALSE] [URL: /Game/Maps/Menu/MainMenuV2?Name=shingo ?SubjectBase64=ZGIxYmE0YTYtMjI0Ni01ZmZkLTgyOTctMmY1OGJkZjNiNDlj#7445]
+[2026.09.08-10.59.59:513][619]LogGameFlowStateManager: Reconcile called with state: TransitionToMainMenu and new state: MainMenu. Changing state.
+[2026.09.08-10.59.59:513][619]LogGameFlowStateManager: [PlatformTime: 11756.242052] Transitioning from TransitionToMainMenu to MainMenu
+[2026.09.08-10.59.59:513][619]LogGameFlowStateManager: [PlatformTime: 11756.242058] Current state TransitionToMainMenu exiting to MainMenu
+[2026.09.08-10.59.59:514][619]LogGameFlowStateManager: [PlatformTime: 11756.242070] Current state MainMenu entering from TransitionToMainMenu
+[2026.09.08-10.59.59:521][619]LogGameFlowStateManager: Reconcile called with the current state: MainMenu. No action taken.
+[2026.09.08-11.12.35:322][650]LogGameFlowStateManager: Reconcile called with the current state: MainMenu. No action taken.
+[2026.09.08-11.12.35:323][650]LogPlatformSessionManager: Loopstate changed from MENUS to PREGAME
+[2026.09.08-11.12.35:325][650]LogGameFlowStateManager: Reconcile called with state: MainMenu and new state: TransitionToPregame. Changing state.
+[2026.09.08-11.12.35:325][650]LogGameFlowStateManager: [PlatformTime: 12512.052939] Transitioning from MainMenu to TransitionToPregame
+[2026.09.08-11.12.35:325][650]LogGameFlowStateManager: [PlatformTime: 12512.052945] Current state MainMenu exiting to TransitionToPregame
+[2026.09.08-11.12.35:325][650]LogGameFlowStateManager: [PlatformTime: 12512.052946] Current state TransitionToPregame entering from MainMenu
+[2026.09.08-11.12.35:331][650]LogGameFlowStateManager: Reconcile called with the current state: TransitionToPregame. No action taken.
+[2026.09.08-11.12.35:589][666]LogGameFlowStateManager: Reconcile called with the current state: TransitionToPregame. No action taken.
+[2026.09.08-11.12.36:478][711]LogMapLoadModel: Update: [Map Name: CharacterSelectPersistentLevel | Changed: TRUE] [Local World: FALSE | Changed: FALSE] [Match Setup: FALSE | Changed: FALSE] [Map Ready: FALSE | Changed: TRUE] [Map Complete: FALSE | Changed: FALSE] [URL: :7777/Game/Maps/Init/Init]
+[2026.09.08-11.12.36:478][711]LogGameFlowStateManager: Reconcile called with the current state: TransitionToPregame. No action taken.
+[2026.09.08-11.12.36:966][711]LogMapLoadModel: Update: [Map Name: CharacterSelectPersistentLevel | Changed: FALSE] [Local World: FALSE | Changed: FALSE] [Match Setup: FALSE | Changed: FALSE] [Map Ready: TRUE | Changed: TRUE] [Map Complete: FALSE | Changed: FALSE] [URL: /Game/Maps/PregameV2/CharacterSelectPersistentLevel?Name=shingo ?SubjectBase64=ZGIxYmE0YTYtMjI0Ni01ZmZkLTgyOTctMmY1OGJkZjNiNDlj#7445]
+[2026.09.08-11.12.36:966][711]LogGameFlowStateManager: Reconcile called with state: TransitionToPregame and new state: Pregame. Changing state.
+[2026.09.08-11.12.36:966][711]LogGameFlowStateManager: [PlatformTime: 12513.694909] Transitioning from TransitionToPregame to Pregame
+[2026.09.08-11.12.36:966][711]LogGameFlowStateManager: [PlatformTime: 12513.694913] Current state TransitionToPregame exiting to Pregame
+[2026.09.08-11.12.36:966][711]LogGameFlowStateManager: [PlatformTime: 12513.694944] Current state Pregame entering from TransitionToPregame
+[2026.09.08-11.12.37:010][711]LogGameFlowStateManager: Reconcile called with the current state: Pregame. No action taken.
+[2026.09.08-11.12.37:056][712]LogGameFlowStateManager: Reconcile called with the current state: Pregame. No action taken.
+[2026.09.08-11.12.45:519][213]LogGameFlowStateManager: Reconcile called with the current state: Pregame. No action taken.
+[2026.09.08-11.12.45:926][236]LogGameFlowStateManager: Reconcile called with the current state: Pregame. No action taken.
+[2026.09.08-11.12.46:864][293]LogGameFlowStateManager: Reconcile called with the current state: Pregame. No action taken.
+[2026.09.08-11.12.52:129][609]LogPlatformSessionManager: Loopstate changed from PREGAME to INGAME
+[2026.09.08-11.12.52:130][609]LogGameFlowStateManager: Reconcile called with state: Pregame and new state: TransitionToInGame. Changing state.
+[2026.09.08-11.12.52:130][609]LogGameFlowStateManager: [PlatformTime: 12528.859128] Transitioning from Pregame to TransitionToInGame
+[2026.09.08-11.12.52:130][609]LogGameFlowStateManager: [PlatformTime: 12528.859132] Current state Pregame exiting to TransitionToInGame
+[2026.09.08-11.12.52:130][609]LogGameFlowStateManager: [PlatformTime: 12528.859175] Current state TransitionToInGame entering from Pregame
+[2026.09.08-11.12.52:133][609]LogGameFlowStateManager: Reconcile called with the current state: TransitionToInGame. No action taken.
+[2026.09.08-11.12.52:135][609]LogGameFlowStateManager: Reconcile called with the current state: TransitionToInGame. No action taken.
+[2026.09.08-11.12.52:147][610]LogGameFlowStateManager: Reconcile called with the current state: TransitionToInGame. No action taken.
+[2026.09.08-11.12.52:246][616]LogGameFlowStateManager: Reconcile called with the current state: TransitionToInGame. No action taken.
+[2026.09.08-11.12.52:363][623]LogGameFlowStateManager: Reconcile called with the current state: TransitionToInGame. No action taken.
+[2026.09.08-11.12.56:318][853]LogMapLoadModel: Update: [Map Name: Ascent | Changed: TRUE] [Local World: FALSE | Changed: FALSE] [Match Setup: FALSE | Changed: FALSE] [Map Ready: FALSE | Changed: TRUE] [Map Complete: FALSE | Changed: FALSE] [URL: :7777/Game/Maps/Menu/Init]
+[2026.09.08-11.12.56:318][853]LogGameFlowStateManager: Reconcile called with the current state: TransitionToInGame. No action taken.
+[2026.09.08-11.12.57:137][855]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: FALSE] [MatchLoadInCompleted: FALSE] [PlayerCameraReady: FALSE]
+[2026.09.08-11.12.57:151][855]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: FALSE] [PlayerCameraReady: FALSE]
+[2026.09.08-11.12.57:153][855]LogMapLoadModel: Update: [Map Name: Ascent | Changed: FALSE] [Local World: TRUE | Changed: TRUE] [Match Setup: FALSE | Changed: FALSE] [Map Ready: FALSE | Changed: FALSE] [Map Complete: FALSE | Changed: FALSE] [URL: 151.106.248.1:7324/Game/Maps/Ascent/Ascent?Name=shingo ?SubjectBase64=ZGIxYmE0YTYtMjI0Ni01ZmZkLTgyOTctMmY1OGJkZjNiNDlj?game=/Game/GameModes/Bomb/BombGameMode.BombGameMode_C#7445]
+[2026.09.08-11.12.57:153][855]LogGameFlowStateManager: Reconcile called with the current state: TransitionToInGame. No action taken.
+[2026.09.08-11.12.57:197][856]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: FALSE] [PlayerCameraReady: FALSE]
+[2026.09.08-11.12.57:439][856]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: FALSE] [PlayerCameraReady: FALSE]
+[2026.09.08-11.12.57:440][856]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: FALSE] [PlayerCameraReady: FALSE]
+[2026.09.08-11.13.06:162][334]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: FALSE]
+[2026.09.08-11.13.06:162][334]LogMapLoadModel: Update: [Map Name: Ascent | Changed: FALSE] [Local World: TRUE | Changed: FALSE] [Match Setup: TRUE | Changed: TRUE] [Map Ready: FALSE | Changed: FALSE] [Map Complete: FALSE | Changed: FALSE] [URL: 151.106.248.1:7324/Game/Maps/Ascent/Ascent?Name=shingo ?SubjectBase64=ZGIxYmE0YTYtMjI0Ni01ZmZkLTgyOTctMmY1OGJkZjNiNDlj?game=/Game/GameModes/Bomb/BombGameMode.BombGameMode_C#7445]
+[2026.09.08-11.13.06:162][334]LogGameFlowStateManager: Reconcile called with the current state: TransitionToInGame. No action taken.
+[2026.09.08-11.13.06:167][335]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: FALSE]
+[2026.09.08-11.13.06:390][360]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: FALSE]
+[2026.09.08-11.13.06:408][360]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.13.06:408][360]LogMapLoadModel: Update: [Map Name: Ascent | Changed: FALSE] [Local World: TRUE | Changed: FALSE] [Match Setup: TRUE | Changed: FALSE] [Map Ready: TRUE | Changed: TRUE] [Map Complete: FALSE | Changed: FALSE] [URL: 151.106.248.1:7324/Game/Maps/Ascent/Ascent?Name=shingo ?SubjectBase64=ZGIxYmE0YTYtMjI0Ni01ZmZkLTgyOTctMmY1OGJkZjNiNDlj?game=/Game/GameModes/Bomb/BombGameMode.BombGameMode_C#7445]
+[2026.09.08-11.13.06:408][360]LogGameFlowStateManager: Reconcile called with state: TransitionToInGame and new state: InGame. Changing state.
+[2026.09.08-11.13.06:408][360]LogGameFlowStateManager: [PlatformTime: 12543.136734] Transitioning from TransitionToInGame to InGame
+[2026.09.08-11.13.06:408][360]LogGameFlowStateManager: [PlatformTime: 12543.136739] Current state TransitionToInGame exiting to InGame
+[2026.09.08-11.13.06:408][360]LogGameFlowStateManager: [PlatformTime: 12543.136866] Current state InGame entering from TransitionToInGame
+[2026.09.08-11.13.06:408][360]LogGameFlowStateManager: Reconcile called with the current state: InGame. No action taken.
+[2026.09.08-11.13.51:158][827]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.31:156][579]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.38:159][443]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.38:183][443]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.54:862][957]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.55:075][998]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.55:251][ 34]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.55:271][ 34]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.55:419][ 49]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.55:576][ 75]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.55:768][109]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.55:788][109]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.55:910][124]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.56:087][160]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.56:278][195]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.56:300][195]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.56:449][215]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.56:631][251]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.56:818][286]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.56:840][286]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.57:189][351]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.57:380][389]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.57:578][425]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.57:600][425]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.57:760][441]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.57:958][479]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.58:161][520]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.58:181][520]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.58:326][540]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.58:525][575]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.58:718][610]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.58:739][610]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.58:911][632]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.59:094][668]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.59:297][707]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.59:318][707]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.59:489][730]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.59:658][763]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.59:848][797]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.15.59:869][797]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.16.00:023][816]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.16.00:212][851]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.16.00:391][884]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.16.00:410][884]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.16.00:571][905]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.16.00:766][941]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.16.00:947][976]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.16.00:951][976]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.16.00:974][978]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.16.01:129][994]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.16.01:313][ 27]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.16.01:487][ 57]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.16.01:508][ 57]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.16.31:473][826]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.16.56:206][161]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.17.03:299][843]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.17.30:626][909]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.17.33:170][506]LogMapLoadModel: Display: UpdateMapReady: [PlayerCharacterLoaded: TRUE] [MatchLoadInCompleted: TRUE] [PlayerCameraReady: TRUE]
+[2026.09.08-11.17.33:171][506]LogMapLoadModel: Update: [Map Name: Ascent | Changed: FALSE] [Local World: TRUE | Changed: FALSE] [Match Setup: TRUE | Changed: FALSE] [Map Ready: TRUE | Changed: FALSE] [Map Complete: TRUE | Changed: TRUE] [URL: 151.106.248.1:7324/Game/Maps/Ascent/Ascent?Name=shingo ?SubjectBase64=ZGIxYmE0YTYtMjI0Ni01ZmZkLTgyOTctMmY1OGJkZjNiNDlj?game=/Game/GameModes/Bomb/BombGameMode.BombGameMode_C#7445]
+[2026.09.08-11.17.33:171][506]LogGameFlowStateManager: Reconcile called with state: InGame. Scheduling a reconcile in 4.000000 seconds.
+[2026.09.08-11.17.39:326][888]LogGameFlowStateManager: Reconcile called with state: InGame and new state: TransitionToMainMenu. Changing state.
+[2026.09.08-11.17.39:326][888]LogGameFlowStateManager: [PlatformTime: 12816.054588] Transitioning from InGame to TransitionToMainMenu
+[2026.09.08-11.17.39:327][888]LogGameFlowStateManager: [PlatformTime: 12816.054592] Current state InGame exiting to TransitionToMainMenu
+[2026.09.08-11.17.39:327][888]LogGameFlowStateManager: [PlatformTime: 12816.054596] Current state TransitionToMainMenu entering from InGame
+[2026.09.08-11.17.39:332][888]LogGameFlowStateManager: Reconcile called with the current state: TransitionToMainMenu. No action taken.
+[2026.09.08-11.17.39:333][888]LogGameFlowStateManager: Reconcile called with state: TransitionToMainMenu and new state: TransitionToMainMenu. Changing state.
+[2026.09.08-11.17.39:752][983]LogGameFlowStateManager: Reconcile called with the current state: TransitionToMainMenu. No action taken.
+[2026.09.08-11.17.40:796][123]LogMapLoadModel: Update: [Map Name: MainMenuV2 | Changed: TRUE] [Local World: FALSE | Changed: TRUE] [Match Setup: FALSE | Changed: TRUE] [Map Ready: FALSE | Changed: TRUE] [Map Complete: FALSE | Changed: TRUE] [URL: /Game/Maps/Menu/MainMenuV2?Name=shingo ?SubjectBase64=ZGIxYmE0YTYtMjI0Ni01ZmZkLTgyOTctMmY1OGJkZjNiNDlj#7445]
+[2026.09.08-11.17.40:796][123]LogGameFlowStateManager: Reconcile called with the current state: TransitionToMainMenu. No action taken.
+[2026.09.08-11.17.41:322][123]LogMapLoadModel: Update: [Map Name: MainMenuV2 | Changed: FALSE] [Local World: FALSE | Changed: FALSE] [Match Setup: FALSE | Changed: FALSE] [Map Ready: TRUE | Changed: TRUE] [Map Complete: FALSE | Changed: FALSE] [URL: /Game/Maps/Menu/MainMenuV2?Name=shingo ?SubjectBase64=ZGIxYmE0YTYtMjI0Ni01ZmZkLTgyOTctMmY1OGJkZjNiNDlj#7445]
+[2026.09.08-11.17.41:322][123]LogGameFlowStateManager: Reconcile called with state: TransitionToMainMenu and new state: MainMenu. Changing state.
+[2026.09.08-11.17.41:322][123]LogGameFlowStateManager: [PlatformTime: 12818.050150] Transitioning from TransitionToMainMenu to MainMenu
+[2026.09.08-11.17.41:322][123]LogGameFlowStateManager: [PlatformTime: 12818.050153] Current state TransitionToMainMenu exiting to MainMenu
+[2026.09.08-11.17.41:322][123]LogGameFlowStateManager: [PlatformTime: 12818.050159] Current state MainMenu entering from TransitionToMainMenu
+[2026.09.08-11.17.41:326][123]LogGameFlowStateManager: Reconcile called with the current state: MainMenu. No action taken.
+[2026.09.08-11.17.42:661][180]LogGameFlowStateManager: Reconcile called with the current state: MainMenu. No action taken.
+[2026.09.08-11.17.43:673][229]LogGameFlowStateManager: Reconcile called with the current state: MainMenu. No action taken.
+[2026.09.08-11.17.43:855][240]LogPlatformSessionManager: Loopstate changed from INGAME to MENUS
+[2026.09.08-11.17.43:856][240]LogGameFlowStateManager: Reconcile called with the current state: MainMenu. No action taken.
+[2026.09.08-11.17.43:856][240]LogGameFlowStateManager: Reconcile called with the current state: MainMenu. No action taken.
+[2026.09.08-11.17.43:856][240]LogGameFlowStateManager: Reconcile called with the current state: MainMenu. No action taken.

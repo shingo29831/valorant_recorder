@@ -19,8 +19,9 @@ class LogWatcher:
         self.is_match_ending = False
         self.has_entered_in_progress = False
         self.is_range = False
-        self.phase_pattern_1 = re.compile(r"State:\s*\w+\s*->\s*(PreRound|InProgress|PostRound)")
-        self.phase_pattern_2 = re.compile(r"Match State Changed from\s*\w+\s*to\s*(PreRound|InProgress|PostRound)")
+        self.current_map_name = "Unknown"
+        self.map_name_pattern = re.compile(r"Map Name:\s*(.*?)\s*\|")
+        self.state_transition_pattern = re.compile(r"(?:State:|Match State Changed from)\s*(\w+)\s*(?:->|to)\s*(\w+)")
         self.time_pattern = re.compile(r"^\[(\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2}:\d{3})\]")
 
     def _parse_log_time(self, line: str) -> float:
@@ -70,14 +71,26 @@ class LogWatcher:
                     if not line:
                         continue
 
-                    # マップロード時に射撃訓練場(Range)かどうかを判定
+                    # マップロード時に射撃訓練場(Range)かどうかを判定し、マップ名も抽出
                     if "LogMapLoadModel: Update:" in line and "Map Name:" in line:
+                        map_match = self.map_name_pattern.search(line)
+                        if map_match:
+                            self.current_map_name = map_match.group(1).strip()
+                            
                         if "Range" in line or "Poveglia" in line:
                             self.is_range = True
                         else:
                             self.is_range = False
 
                     log_time = self._parse_log_time(line)
+
+                    # 状態遷移パターンの検索
+                    transition_match = self.state_transition_pattern.search(line)
+                    to_state = None
+                    from_state = None
+                    if transition_match:
+                        from_state = transition_match.group(1)
+                        to_state = transition_match.group(2)
 
                     # メニューに戻った検知（試合終了フェーズのリセット用）
                     is_menu = (
@@ -86,10 +99,9 @@ class LogWatcher:
                         "Broadcasting state changed to TransitionToMainMenu" in line or
                         "Transitioning to State: Menus" in line or
                         "Leaving session" in line or
-                        "State: InGame -> Menus" in line or
-                        "State: InProgress -> Menus" in line or
                         "Loopstate changed from INGAME to MENUS" in line or
-                        "Loopstate changed from PREGAME to MENUS" in line
+                        "Loopstate changed from PREGAME to MENUS" in line or
+                        (to_state == "Menus")
                     )
 
                     # アビリティ使用検知
@@ -97,10 +109,12 @@ class LogWatcher:
                     
                     # 試合中（途中復帰用）およびラウンドフェーズ検知
                     is_progress = False
-                    match_phase = self.phase_pattern_1.search(line) or self.phase_pattern_2.search(line)
-                    if match_phase:
+                    round_phase = None
+                    
+                    if to_state in ["PreRound", "InProgress", "PostRound"]:
                         is_progress = True
-                        if match_phase.group(1) == "InProgress":
+                        round_phase = to_state
+                        if to_state == "InProgress":
                             self.has_entered_in_progress = True
                     elif is_ability:
                         is_progress = True
@@ -116,27 +130,19 @@ class LogWatcher:
                     is_start = (
                         "Broadcasting state changed to Pregame" in line or
                         "Loopstate changed from MENUS to PREGAME" in line or
-                        "Match State Changed from WaitingToStart to PreRound" in line or
-                        "Match State Changed from WaitingToStart to InProgress" in line or
-                        "State: WaitingToStart -> PreRound" in line or
-                        "State: WaitingToStart -> InProgress" in line or
                         "Broadcasting state changed to InGame" in line or
-                        "Loopstate changed from MENUS to INGAME" in line
+                        "Loopstate changed from MENUS to INGAME" in line or
+                        (to_state in ["PreRound", "InProgress"] and from_state == "WaitingToStart")
                     )
                     
                     # 試合終了の検知
                     is_end_log = (
-                        "Match State Changed from InProgress to WaitingPostMatch" in line or
-                        "State: InProgress -> WaitingPostMatch" in line or
                         "Broadcasting state changed to PostGame" in line or
-                        "Match State Changed from InProgress to LeavingMap" in line or
-                        "State: InProgress -> LeavingMap" in line or
-                        "Match State Changed from InProgress to Disconnected" in line or
                         "LogShooterGame: Match ended" in line or
-                        "State: InGame -> PostGame" in line or
                         "Transitioning to State: PostGame" in line or
                         "Transitioning from InGame to TransitionToMainMenu" in line or
-                        "[Map Complete: TRUE | Changed: TRUE]" in line
+                        "[Map Complete: TRUE | Changed: TRUE]" in line or
+                        (to_state in ["WaitingPostMatch", "LeavingMap", "Disconnected", "PostGame"])
                     )
                     
                     is_end = False
@@ -166,8 +172,8 @@ class LogWatcher:
                         self.on_match_end(self.is_range)
                         
                     # ラウンドフェーズの記録
-                    if self.is_in_match and match_phase and self.on_round_phase_changed:
-                        self.on_round_phase_changed(match_phase.group(1), log_time)
+                    if self.is_in_match and round_phase and self.on_round_phase_changed:
+                        self.on_round_phase_changed(round_phase, log_time)
 
                     # ウルト発動マーカー (LogAbilitySystem)
                     if self.is_in_match and self.on_ability_used and is_ability:

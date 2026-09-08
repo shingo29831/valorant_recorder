@@ -123,29 +123,36 @@ def build_timeline_data(match_info: dict, duration_ms: int, riot_id: str, tag_li
             events.append({"time": time_in_video, "type": "ult"})
             
     if local_round_events:
-        for i in range(len(local_round_events)):
-            ev = local_round_events[i]
+        current_round_start = None
+        
+        for i, ev in enumerate(local_round_events):
             phase = ev["phase"]
-            
             t_local = ev["time_ms"]
             if t_local < 1000000000000:
                 t_local += recording_start_ms
-            start_time = int(t_local - recording_start_ms)
+            time_in_video = int(t_local - recording_start_ms)
             
+            if time_in_video < 0:
+                time_in_video = 0
+                
+            if phase == "PreRound" or (phase == "InProgress" and current_round_start is None):
+                if current_round_start is not None:
+                    end_time = min(time_in_video, duration_ms)
+                    if current_round_start < end_time:
+                        rounds.append({"start": current_round_start, "end": end_time, "phase": "Round"})
+                current_round_start = time_in_video
+                
+            elif phase == "PostRound":
+                if current_round_start is not None:
+                    end_time = min(time_in_video, duration_ms)
+                    if current_round_start < end_time:
+                        rounds.append({"start": current_round_start, "end": end_time, "phase": "Round"})
+                    current_round_start = None
+                    
+        if current_round_start is not None:
             end_time = duration_ms
-            if i + 1 < len(local_round_events):
-                next_t_local = local_round_events[i+1]["time_ms"]
-                if next_t_local < 1000000000000:
-                    next_t_local += recording_start_ms
-                end_time = int(next_t_local - recording_start_ms)
-                
-            if start_time < 0:
-                start_time = 0
-            if end_time > duration_ms:
-                end_time = duration_ms
-                
-            if start_time < end_time and phase in ["PreRound", "InProgress", "PostRound"]:
-                rounds.append({"start": start_time, "end": end_time, "phase": phase})
+            if current_round_start < end_time:
+                rounds.append({"start": current_round_start, "end": end_time, "phase": "Round"})
     else:
         if api_round_starts:
             for i, r_start in enumerate(api_round_starts):
@@ -168,6 +175,6 @@ def build_timeline_data(match_info: dict, duration_ms: int, riot_id: str, tag_li
                     end_time = duration_ms
                     
                 if start_time < end_time:
-                    rounds.append({"start": start_time, "end": end_time, "phase": "InProgress"})
+                    rounds.append({"start": start_time, "end": end_time, "phase": "Round"})
                     
     return rounds, events

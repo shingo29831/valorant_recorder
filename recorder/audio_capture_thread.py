@@ -191,13 +191,15 @@ class AudioCaptureThread(threading.Thread):
                 # 2倍増幅時のクリッピング防止用リミッターゲイン
                 current_spk_limiter_gain = 1.0
                 current_mic_limiter_gain = 1.0
+                
+                import time
+                last_spk_time = time.perf_counter()
 
                 while not self.stop_event.is_set():
                     try:
-                        # タイムアウトをバッファ長(2400サンプル=50ms)に合わせる。
-                        # 無音時に0.5秒など長く待つと、FFmpegに送られる音声データが実時間より遅れ、
-                        # 同期を取るために映像フレームが大量にドロップされFPSが極端に低下する。
-                        spk_data = spk_queue.get(timeout=0.05)
+                        # タイムアウトを少し長め(0.1秒)にし、OSのスケジューリング遅延による誤爆を防ぐ。
+                        spk_data = spk_queue.get(timeout=0.1)
+                        last_spk_time = time.perf_counter()
                         # システム音を2倍の音量で保存する
                         spk_data = spk_data * (system_gain * 2.0)
                     except queue.Empty:
@@ -257,22 +259,28 @@ class AudioCaptureThread(threading.Thread):
                         combined = np.clip(combined, -1.0, 1.0)
                         
                         try:
-                            self.audio_queue.put_nowait(combined.astype(np.float32).tobytes())
+                            # put_nowait だと一時的なキュー詰まりでデータが欠落し音声が先行する原因になるため、少し待つ
+                            self.audio_queue.put(combined.astype(np.float32).tobytes(), timeout=0.1)
                         except queue.Full:
                             pass
                             
                     else:
-                        # 無音時（タイムアウト）：スピーカーからのデータが0.5秒以上来ない場合、
-                        # 録画の進行を止めないために1バッファ分の無音を挿入する。
-                        # 実時間との厳密な同期（ドリフト補正）は、かえってジッターを引き起こすため廃止。
-                        pad_spk = np.zeros((frames_per_buffer, 2), dtype=np.float32)
-                        pad_mic = np.zeros((frames_per_buffer, 2), dtype=np.float32)
-                        combined_pad = np.concatenate((pad_spk, pad_mic), axis=1)
-                        
-                        try:
-                            self.audio_queue.put_nowait(combined_pad.astype(np.float32).tobytes())
-                        except queue.Full:
-                            pass
+                        # 無音時（タイムアウト）：スピーカーからのデータが来ない場合
+                        current_time = time.perf_counter()
+                        # 最後にデータを受け取ってから 0.1秒 以上経過している場合のみ無音を挿入する。
+                        # これにより、単なるスケジューリング遅延による無音の二重挿入（音声遅延・音ズレ）を防ぐ。
+                        if current_time - last_spk_time > 0.1:
+                            pad_spk = np.zeros((frames_per_buffer, 2), dtype=np.float32)
+                            pad_mic = np.zeros((frames_per_buffer, 2), dtype=np.float32)
+                            combined_pad = np.concatenate((pad_spk, pad_mic), axis=1)
+                            
+                            try:
+                                self.audio_queue.put(combined_pad.astype(np.float32).tobytes(), timeout=0.1)
+                            except queue.Full:
+                                pass
+                                
+                            # 無音を挿入した分、最終取得時間を進める（50ms分）
+                            last_spk_time += (frames_per_buffer / samplerate)
 
                 worker_stop.set()
                 if mic_thread is not None:

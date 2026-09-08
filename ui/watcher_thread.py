@@ -185,11 +185,16 @@ class WatcherThread(QThread):
         except Exception as e:
             self.log_signal.emit(f"[Error] Failed to stop recording: {e}")
 
+        # ローカルログから取得したマップ名を使用
+        map_name = getattr(self.watcher, 'current_map_name', 'Fetching...')
+        if map_name == "Unknown":
+            map_name = "Fetching..."
+
         # API取得前に仮のメタデータを保存し、UIに即時表示させる
         temp_match_data = {
             "metadata": {
                 "matchid": f"pending_{int(start_time)}",
-                "map": "Fetching...",
+                "map": map_name,
                 "game_start": int(start_time),
                 "game_length": int(end_time - start_time) if end_time > start_time else 0,
                 "mode": "Unknown"
@@ -352,10 +357,15 @@ class WatcherThread(QThread):
     def _create_dummy_metadata(self, video_path, vid_time, end_time=0, events=None, temp_filepath=None, start_time_ms=None):
         if events is None:
             events = []
+            
+        map_name = getattr(self.watcher, 'current_map_name', 'Custom / Unknown')
+        if map_name == "Unknown":
+            map_name = "Custom / Unknown"
+            
         match_data = {
             "metadata": {
                 "matchid": f"custom_{int(vid_time)}",
-                "map": "Custom / Unknown",
+                "map": map_name,
                 "game_start": int(vid_time),
                 "game_length": int(end_time - vid_time) if end_time > vid_time else 0,
                 "mode": "Custom"
