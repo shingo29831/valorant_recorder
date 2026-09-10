@@ -170,10 +170,10 @@ class TimelineOverlay(QWidget):
             else:
                 start_x = self.ms_to_x(self.clip_start)
                 end_x = self.ms_to_x(self.clip_end)
-                if abs(self.hover_x - start_x) <= 5 and (round_y - 4) <= y <= (round_y + 12 + 4):
+                if abs(self.hover_x - start_x) <= 5 and 0 <= y <= height:
                     self.hover_handle = 'start'
                     self.setCursor(Qt.CursorShape.SizeHorCursor)
-                elif abs(self.hover_x - end_x) <= 5 and (round_y - 4) <= y <= (round_y + 12 + 4):
+                elif abs(self.hover_x - end_x) <= 5 and 0 <= y <= height:
                     self.hover_handle = 'end'
                     self.setCursor(Qt.CursorShape.SizeHorCursor)
                 else:
@@ -311,6 +311,28 @@ class TimelineOverlay(QWidget):
             if 0 <= x <= width:
                 painter.drawLine(int(x), round_y, int(x), round_y + round_h)
             
+        if self.edit_mode and self.duration > 0:
+            start_x = self.ms_to_x(self.clip_start)
+            end_x = self.ms_to_x(self.clip_end)
+            
+            if start_x > 0:
+                painter.fillRect(0, 0, int(min(start_x, width)), height, QColor(0, 0, 0, 150))
+            if end_x < width:
+                painter.fillRect(int(max(0, end_x)), 0, int(width - max(0, end_x)), height, QColor(0, 0, 0, 150))
+            
+            painter.setPen(QPen(QColor("#00A2FF"), 2))
+            draw_start = max(0, start_x)
+            draw_end = min(width, end_x)
+            if draw_end > draw_start:
+                painter.drawRect(int(draw_start), round_y, int(draw_end - draw_start), round_h)
+            
+            painter.setBrush(QColor("#00A2FF"))
+            painter.setPen(Qt.PenStyle.NoPen)
+            if 0 <= start_x <= width:
+                painter.drawRect(int(start_x) - 2, 0, 4, height)
+            if 0 <= end_x <= width:
+                painter.drawRect(int(end_x) - 2, 0, 4, height)
+
         for ev in self.events:
             if not self.filters.get(ev['type'], True):
                 continue
@@ -356,25 +378,3 @@ class TimelineOverlay(QWidget):
             
             painter.setPen(QColor("#FFFFFF"))
             painter.drawText(int(self.hover_x) - 15, round_y - 38, time_str)
-            
-        if self.edit_mode and self.duration > 0:
-            start_x = self.ms_to_x(self.clip_start)
-            end_x = self.ms_to_x(self.clip_end)
-            
-            if start_x > 0:
-                painter.fillRect(0, round_y, int(min(start_x, width)), round_h, QColor(0, 0, 0, 150))
-            if end_x < width:
-                painter.fillRect(int(max(0, end_x)), round_y, int(width - max(0, end_x)), round_h, QColor(0, 0, 0, 150))
-            
-            painter.setPen(QPen(QColor("#00A2FF"), 2))
-            draw_start = max(0, start_x)
-            draw_end = min(width, end_x)
-            if draw_end > draw_start:
-                painter.drawRect(int(draw_start), round_y, int(draw_end - draw_start), round_h)
-            
-            painter.setBrush(QColor("#00A2FF"))
-            painter.setPen(Qt.PenStyle.NoPen)
-            if 0 <= start_x <= width:
-                painter.drawRect(int(start_x) - 2, round_y - 4, 4, round_h + 8)
-            if 0 <= end_x <= width:
-                painter.drawRect(int(end_x) - 2, round_y - 4, 4, round_h + 8)
