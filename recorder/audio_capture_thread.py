@@ -197,30 +197,32 @@ class AudioCaptureThread(threading.Thread):
 
                 while not self.stop_event.is_set():
                     try:
-                        # タイムアウトを少し長め(0.1秒)にし、OSのスケジューリング遅延による誤爆を防ぐ。
-                        spk_data = spk_queue.get(timeout=0.1)
+                        # タイムアウトを50ms(バッファサイズ)に設定し、実時間とのズレを最小限にする
+                        spk_data = spk_queue.get(timeout=0.05)
                         last_spk_time = time.perf_counter()
                         # システム音を2倍の音量で保存する
                         spk_data = spk_data * (system_gain * 2.0)
                     except queue.Empty:
                         spk_data = None
 
+                    # スピーカーのデータ有無に関わらず、マイクのデータは常にキューから取り出して消費する
+                    # これを怠ると、スピーカー無音時にマイクのキューが無限に肥大化しメモリリーク(後半のカクつき)を引き起こす
+                    if mic_rec is not None:
+                        while True:
+                            try:
+                                chunk = mic_queue.get_nowait()
+                                mic_buffer = np.concatenate((mic_buffer, chunk), axis=0)
+                            except queue.Empty:
+                                break
+                        
+                        # バッファが溜まりすぎた場合（1秒以上）は古いデータを捨てる
+                        if mic_buffer.shape[0] > samplerate * 1.0:
+                            mic_buffer = mic_buffer[-int(samplerate * 0.5):]
+
                     if spk_data is not None:
                         frames_to_process = spk_data.shape[0]
                         
                         if mic_rec is not None:
-                            # キューから利用可能なすべてのデータをバッファに追加し、波形の連続性を保つ
-                            while True:
-                                try:
-                                    chunk = mic_queue.get_nowait()
-                                    mic_buffer = np.concatenate((mic_buffer, chunk), axis=0)
-                                except queue.Empty:
-                                    break
-                            
-                            # ドリフトによりバッファが極端に溜まりすぎた場合（例: 3秒以上）のみ、古いデータを捨てる
-                            if mic_buffer.shape[0] > samplerate * 3.0:
-                                mic_buffer = mic_buffer[-int(samplerate * 0.5):]
-                                
                             if mic_buffer.shape[0] >= frames_to_process:
                                 mic_data = mic_buffer[:frames_to_process]
                                 mic_buffer = mic_buffer[frames_to_process:]
@@ -259,28 +261,59 @@ class AudioCaptureThread(threading.Thread):
                         combined = np.clip(combined, -1.0, 1.0)
                         
                         try:
-                            # put_nowait だと一時的なキュー詰まりでデータが欠落し音声が先行する原因になるため、少し待つ
-                            self.audio_queue.put(combined.astype(np.float32).tobytes(), timeout=0.1)
+                            self.audio_queue.put_nowait(combined.astype(np.float32).tobytes())
                         except queue.Full:
                             pass
                             
                     else:
                         # 無音時（タイムアウト）：スピーカーからのデータが来ない場合
                         current_time = time.perf_counter()
-                        # 最後にデータを受け取ってから 0.1秒 以上経過している場合のみ無音を挿入する。
-                        # これにより、単なるスケジューリング遅延による無音の二重挿入（音声遅延・音ズレ）を防ぐ。
-                        if current_time - last_spk_time > 0.1:
-                            pad_spk = np.zeros((frames_per_buffer, 2), dtype=np.float32)
-                            pad_mic = np.zeros((frames_per_buffer, 2), dtype=np.float32)
-                            combined_pad = np.concatenate((pad_spk, pad_mic), axis=1)
+                        elapsed = current_time - last_spk_time
+                        
+                        # 0.05秒(50ms)以上データが来ていない場合、実時間に合わせて足りない分を無音で埋める
+                        # これにより、FFmpeg側で音声ストリームが遅延して映像フレームが無限にバッファリングされるのを防ぐ
+                        if elapsed >= 0.05:
+                            frames_to_pad = int(elapsed * samplerate)
                             
-                            try:
-                                self.audio_queue.put(combined_pad.astype(np.float32).tobytes(), timeout=0.1)
-                            except queue.Full:
-                                pass
+                            # 異常な遅延（PCスリープ復帰など）で大量のメモリを消費しないよう、最大0.5秒分に制限
+                            if frames_to_pad > samplerate // 2:
+                                frames_to_pad = samplerate // 2
+                                last_spk_time = current_time
+                            else:
+                                last_spk_time += (frames_to_pad / samplerate)
                                 
-                            # 無音を挿入した分、最終取得時間を進める（50ms分）
-                            last_spk_time += (frames_per_buffer / samplerate)
+                            if frames_to_pad > 0:
+                                pad_spk = np.zeros((frames_to_pad, 2), dtype=np.float32)
+                                
+                                if mic_rec is not None:
+                                    if mic_buffer.shape[0] >= frames_to_pad:
+                                        mic_data = mic_buffer[:frames_to_pad]
+                                        mic_buffer = mic_buffer[frames_to_pad:]
+                                    else:
+                                        pad = np.zeros((frames_to_pad - mic_buffer.shape[0], 2), dtype=np.float32)
+                                        mic_data = np.concatenate((mic_buffer, pad), axis=0)
+                                        mic_buffer = np.zeros((0, 2), dtype=np.float32)
+                                        
+                                    mic_data = mic_data * (mic_gain * 2.0)
+                                    
+                                    peak_mic = np.max(np.abs(mic_data))
+                                    target_gain_mic = 0.99 / peak_mic if peak_mic > 0.99 else 1.0
+                                    if current_mic_limiter_gain != target_gain_mic:
+                                        gains = np.linspace(current_mic_limiter_gain, target_gain_mic, len(mic_data), dtype=np.float32).reshape(-1, 1)
+                                        mic_data = mic_data * gains
+                                        current_mic_limiter_gain = target_gain_mic
+                                    elif target_gain_mic < 1.0:
+                                        mic_data = mic_data * target_gain_mic
+                                else:
+                                    mic_data = np.zeros((frames_to_pad, 2), dtype=np.float32)
+                                    
+                                combined_pad = np.concatenate((pad_spk, mic_data), axis=1)
+                                combined_pad = np.clip(combined_pad, -1.0, 1.0)
+                                
+                                try:
+                                    self.audio_queue.put_nowait(combined_pad.astype(np.float32).tobytes())
+                                except queue.Full:
+                                    pass
 
                 worker_stop.set()
                 if mic_thread is not None:

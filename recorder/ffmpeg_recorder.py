@@ -19,7 +19,9 @@ class FFmpegRecorder:
         self.audio_record_thread = None
         self.audio_write_thread = None
         self.stop_event = threading.Event()
-        self.audio_queue = queue.Queue(maxsize=200)
+        # maxsize=0 (無制限) に設定し、高負荷時に音声データが欠落して
+        # FFmpegのA/V同期が崩れ、映像がバッファリングされてカクつく現象を根本から防ぐ
+        self.audio_queue = queue.Queue(maxsize=0)
         
         # Nuitkaの実行時一時ディレクトリではなく、永続的なディレクトリにダウンロードする
         app_data_dir = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'ValoReco')
@@ -86,7 +88,7 @@ class FFmpegRecorder:
         
         if self.config.RECORD_VIDEO_FORMAT == "ddagrab":
             cmd.extend([
-                "-thread_queue_size", "4096",
+                "-thread_queue_size", "16384",
                 "-f", "lavfi",
                 "-i", f"ddagrab=framerate={self.config.RECORD_FPS}"
             ])
@@ -95,7 +97,7 @@ class FFmpegRecorder:
             video_map = "[v_out]"
         else:
             cmd.extend([
-                "-thread_queue_size", "4096",
+                "-thread_queue_size", "16384",
                 "-rtbufsize", "1024M",  # キャプチャバッファを増やしてドロップを防ぐ
                 "-use_wallclock_as_timestamps", "1",
                 "-f", self.config.RECORD_VIDEO_FORMAT,
@@ -145,7 +147,7 @@ class FFmpegRecorder:
         filter_complex += f";[a0]asplit=2[a0_mix][a0_out];{mic_map}asplit=2[a1_mix][a1_out];[a0_mix][a1_mix]amix=inputs=2:duration=longest:normalize=0,alimiter=limit=0.99[a_mixed]"
 
         cmd.extend([
-            "-thread_queue_size", "4096",
+            "-thread_queue_size", "16384",
             # 音声(pipe:0)に対する wallclock タイムスタンプは、映像との激しい非同期(dup大量発生)を引き起こすため削除
             "-f", "f32le",
             "-ar", "48000",

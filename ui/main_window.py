@@ -227,16 +227,35 @@ class MainWindow(QMainWindow):
             self.rec_button.setText("🔴 Start Recording")
 
     def show_recording_notification(self, is_recording):
-        # Windowsのトースト通知はフルスクリーンゲームのフォーカスを奪うため使用せず、
-        # フォーカスを奪わないカスタムオーバーレイを使用して左上に通知を表示する
-        if is_recording:
-            self.notification_overlay.show_message("🔴 録画を開始しました", 3000)
+        # ゲーム中（試合中）かどうかを取得
+        is_in_match = getattr(self.watcher_thread.watcher, 'is_in_match', False)
+        # 手動操作による録画の中断・再開かどうかを取得
+        is_manual = getattr(self.watcher_thread, '_is_manual_action', False)
+        
+        # 試合中に「手動で」録画を中断・再開した場合のみ、フォーカス奪取を防ぐためビープ音にする
+        if is_in_match and is_manual:
+            import threading
+            import winsound
+            def play_beep():
+                if is_recording:
+                    winsound.Beep(1000, 200)  # 開始時は高めの音
+                else:
+                    winsound.Beep(500, 200)   # 終了時は低めの音
+            
+            # UIスレッドをブロックしないよう別スレッドで音を鳴らす
+            threading.Thread(target=play_beep, daemon=True).start()
         else:
-            self.notification_overlay.show_message("⏹ 録画を終了しました", 3000)
+            # 試合開始時の自動録画や、ゲーム外での操作の場合は通常通りポップアップを表示（ビープ音は鳴らさない）
+            if is_recording:
+                self.notification_overlay.show_message("🔴 録画を開始しました", 3000)
+            else:
+                self.notification_overlay.show_message("⏹ 録画を終了しました", 3000)
 
     def update_status(self, message: str):
-        # ステータスバーのテキスト更新程度ではフォーカスは奪われないため、常に更新する。
-        # これにより「Initializing...」のままになる問題を防止し、エラー等のログを確認できるようにする。
+        # バックグラウンドでの頻繁なUI更新はフルスクリーンゲームのフォーカスを奪う原因になるため、
+        # ウィンドウが非表示または最小化されている場合はステータスバーの更新をスキップする。
+        if self.isHidden() or self.isMinimized():
+            return
         self.statusBar().showMessage(message)
 
     def closeEvent(self, event):

@@ -46,6 +46,7 @@ class NotificationOverlay(QWidget):
         # フォーカススティーリング(ゲームが裏画面に行く現象)を完全に防ぐため、
         # ウィンドウを常に表示状態(透明度0)にしておき、show/hideの切り替えを発生させない
         self.setWindowOpacity(0.0)
+        self.move(-9999, -9999)
         self.show()
 
         # Windows APIを使用して、OSレベルでフォーカスを奪わない設定を強制する
@@ -124,4 +125,21 @@ class NotificationOverlay(QWidget):
             self.opacity_anim.finished.disconnect(self._on_fade_out_finished)
         except TypeError:
             pass
-        # hide()を呼ばず、透明度0のまま待機させる
+        # hide()を呼ばず透明度0のまま待機させるが、
+        # マウスクリックを吸収してゲームが裏画面に行くのを防ぐため、完全に画面外へ移動させる
+        if sys.platform == 'win32':
+            import ctypes
+            HWND_TOPMOST = -1
+            SWP_NOACTIVATE = 0x0010
+            SWP_NOOWNERZORDER = 0x0200
+            SWP_NOSENDCHANGING = 0x0400
+            try:
+                hwnd = int(self.winId())
+                ctypes.windll.user32.SetWindowPos(
+                    hwnd, HWND_TOPMOST, -9999, -9999, self.width(), self.height(),
+                    SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_NOSENDCHANGING
+                )
+            except Exception:
+                self.move(-9999, -9999)
+        else:
+            self.move(-9999, -9999)

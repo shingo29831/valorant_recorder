@@ -17,6 +17,7 @@ def build_timeline_data(match_info: dict, duration_ms: int, riot_id: str, tag_li
     kills_data = match_info.get("kills", [])
     local_round_events = match_info.get("local_round_events", [])
     local_ability_events = match_info.get("local_ability_events", [])
+    real_match_end_time_ms = match_info.get("local_real_match_end_time_ms")
     
     api_round_starts = []
     for k in kills_data:
@@ -35,6 +36,8 @@ def build_timeline_data(match_info: dict, duration_ms: int, riot_id: str, tag_li
                 t += recording_start_ms
             local_round_starts.append(t)
             
+    # オフセットの決定ロジック
+    # 優先度1: ローカルのラウンドイベントとAPIのラウンドイベントの突き合わせ
     if api_round_starts and local_round_starts:
         best_offset = api_to_local_offset
         min_diff = float('inf')
@@ -49,6 +52,13 @@ def build_timeline_data(match_info: dict, duration_ms: int, riot_id: str, tag_li
                     
         if min_diff != float('inf'):
             api_to_local_offset = best_offset
+    # 優先度2: 記録された実際の試合終了時間とAPIの試合時間から逆算
+    elif real_match_end_time_ms:
+        game_length = match_info.get("metadata", {}).get("game_length", 0)
+        # game_length が 300,000 未満なら秒単位とみなしてミリ秒に変換
+        gl_ms = game_length if game_length > 300000 else game_length * 1000
+        if gl_ms > 0:
+            api_to_local_offset = real_match_end_time_ms - gl_ms
 
     events = []
     rounds = []
@@ -161,18 +171,25 @@ def build_timeline_data(match_info: dict, duration_ms: int, riot_id: str, tag_li
                 
                 if i + 1 < len(api_round_starts):
                     next_t_local = api_round_starts[i+1] + api_to_local_offset
-                    end_time = int(next_t_local - recording_start_ms)
+                    # 次のラウンド開始の30秒前を終了時間とする（購入フェーズ等を考慮）
+                    end_time = int(next_t_local - recording_start_ms) - 30000
                 else:
-                    game_length = match_info.get("metadata", {}).get("game_length", 0)
-                    if game_length > 0:
-                        end_time = int((game_length * 1000 + api_to_local_offset) - recording_start_ms)
+                    if real_match_end_time_ms:
+                        end_time = int(real_match_end_time_ms - recording_start_ms)
                     else:
-                        end_time = duration_ms
+                        game_length = match_info.get("metadata", {}).get("game_length", 0)
+                        gl_ms = game_length if game_length > 300000 else game_length * 1000
+                        if gl_ms > 0:
+                            end_time = int((gl_ms + api_to_local_offset) - recording_start_ms)
+                        else:
+                            end_time = duration_ms
                 
                 if start_time < 0:
                     start_time = 0
                 if end_time > duration_ms:
                     end_time = duration_ms
+                if end_time < start_time:
+                    end_time = start_time + 10000 # 最低10秒の長さを確保
                     
                 if start_time < end_time:
                     rounds.append({"start": start_time, "end": end_time, "phase": "Round"})

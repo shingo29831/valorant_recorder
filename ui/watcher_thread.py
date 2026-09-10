@@ -39,6 +39,7 @@ class WatcherThread(QThread):
         self.current_tag_line = None
         self.current_region = self.config.REGION
         self._stop_timer = None
+        self._is_manual_action = False
 
     def _update_current_player(self):
         from scripts.get_local_api_info import get_current_player, get_client_region
@@ -71,7 +72,9 @@ class WatcherThread(QThread):
         try:
             self.current_video_path = self.recorder.start_recording()
             self.log_signal.emit(f"[Manual] Recording to: {self.current_video_path}")
+            self._is_manual_action = True
             self.recording_state_changed.emit(True)
+            self._is_manual_action = False
         except Exception as e:
             self.log_signal.emit(f"[Error] Failed to start manual recording: {e}")
 
@@ -79,7 +82,9 @@ class WatcherThread(QThread):
         if self.current_video_path is None:
             return
         self.log_signal.emit("[Manual] Stopping manual recording...")
+        self._is_manual_action = True
         self._stop_and_process_recording()
+        self._is_manual_action = False
 
     def handle_real_match_end(self):
         self.log_signal.emit("[Recorder] Real match end verified in logs.")
@@ -91,6 +96,8 @@ class WatcherThread(QThread):
         if is_range:
             self.log_signal.emit("[Recorder] 射撃訓練場(Range)を検知しました。録画とAPI取得をスキップします。")
             return
+            
+        self.real_match_end_time_ms = None
 
         # 遅延停止タイマーが動いている間に次の試合が始まった場合、タイマーをキャンセルして即座に前の録画を終了する
         if self._stop_timer is not None:
@@ -145,6 +152,8 @@ class WatcherThread(QThread):
         if self.current_video_path is None:
             return
 
+        # 実際の試合終了時間を記録
+        self.real_match_end_time_ms = int(time.time() * 1000)
         self.log_signal.emit("[Recorder] Match ended. Waiting 15 seconds to capture result screen...")
         
         if self._stop_timer is not None:
@@ -167,6 +176,7 @@ class WatcherThread(QThread):
         events = list(self.local_round_events)
         ability_events = list(self.local_ability_events)
         start_time_ms = getattr(self, 'local_recording_start_time_ms', None)
+        real_match_end_time_ms = getattr(self, 'real_match_end_time_ms', None)
         
         # UIフリーズを防ぐため、状態を即座にリセット
         self.current_video_path = None
@@ -175,11 +185,11 @@ class WatcherThread(QThread):
         # 録画停止処理（FFmpegの終了待ちなど）を別スレッドで実行
         threading.Thread(
             target=self._async_stop_and_process,
-            args=(video_path, start_time, end_time, events, ability_events, start_time_ms),
+            args=(video_path, start_time, end_time, events, ability_events, start_time_ms, real_match_end_time_ms),
             daemon=True
         ).start()
 
-    def _async_stop_and_process(self, video_path, start_time, end_time, events, ability_events, start_time_ms):
+    def _async_stop_and_process(self, video_path, start_time, end_time, events, ability_events, start_time_ms, real_match_end_time_ms=None):
         try:
             self.recorder.stop_recording()
         except Exception as e:
@@ -211,21 +221,23 @@ class WatcherThread(QThread):
         }
         if start_time_ms is not None:
             temp_match_data['local_recording_start_time_ms'] = start_time_ms
+        if real_match_end_time_ms is not None:
+            temp_match_data['local_real_match_end_time_ms'] = real_match_end_time_ms
             
         temp_filepath = self.store.save_match_metadata(temp_match_data, 0)
         self.match_saved_signal.emit()
         
         # API取得処理へ移行（すでに別スレッド内なので直接呼び出し）
-        self._fetch_api_and_save(video_path, start_time, end_time, events, ability_events, temp_filepath, start_time_ms)
+        self._fetch_api_and_save(video_path, start_time, end_time, events, ability_events, temp_filepath, start_time_ms, real_match_end_time_ms)
 
-    def _fetch_api_and_save(self, video_path, start_time, end_time, events, ability_events=None, temp_filepath=None, start_time_ms=None):
+    def _fetch_api_and_save(self, video_path, start_time, end_time, events, ability_events=None, temp_filepath=None, start_time_ms=None, real_match_end_time_ms=None):
         if ability_events is None:
             ability_events = []
         self.log_signal.emit("[API] Checking for match data...")
         
         if not self.current_riot_id or not self.current_tag_line:
             self.log_signal.emit("[API] No player ID detected. Saving as local-only match.")
-            self._create_dummy_metadata(video_path, start_time, end_time, events, temp_filepath)
+            self._create_dummy_metadata(video_path, start_time, end_time, events, temp_filepath, start_time_ms, real_match_end_time_ms)
             return
             
         self.log_signal.emit(f"[API] Fetching match data for {self.current_riot_id}#{self.current_tag_line} (Region: {self.current_region})...")
@@ -284,6 +296,8 @@ class WatcherThread(QThread):
                     match_data['local_recording_start_time_ms'] = start_time_ms
                 elif hasattr(self, 'local_recording_start_time_ms'):
                     match_data['local_recording_start_time_ms'] = self.local_recording_start_time_ms
+                if real_match_end_time_ms is not None:
+                    match_data['local_real_match_end_time_ms'] = real_match_end_time_ms
                         
                 filepath = self.store.save_match_metadata(match_data, mmr_change)
                 
@@ -300,7 +314,7 @@ class WatcherThread(QThread):
                 self.log_signal.emit(f"[Error] Failed to process match metadata: {e}")
         else:
             self.log_signal.emit("[API] Match data not found after retries. Saving as local-only match.")
-            self._create_dummy_metadata(video_path, start_time, end_time, events, temp_filepath, start_time_ms)
+            self._create_dummy_metadata(video_path, start_time, end_time, events, temp_filepath, start_time_ms, real_match_end_time_ms)
 
     def _get_pending_videos(self):
         if not os.path.exists(self.config.SAVE_DIR):
@@ -354,7 +368,7 @@ class WatcherThread(QThread):
                         pass
         return pending
 
-    def _create_dummy_metadata(self, video_path, vid_time, end_time=0, events=None, temp_filepath=None, start_time_ms=None):
+    def _create_dummy_metadata(self, video_path, vid_time, end_time=0, events=None, temp_filepath=None, start_time_ms=None, real_match_end_time_ms=None):
         if events is None:
             events = []
             
@@ -384,6 +398,8 @@ class WatcherThread(QThread):
             match_data['local_recording_start_time_ms'] = start_time_ms
         elif hasattr(self, 'local_recording_start_time_ms'):
             match_data['local_recording_start_time_ms'] = self.local_recording_start_time_ms
+        if real_match_end_time_ms is not None:
+            match_data['local_real_match_end_time_ms'] = real_match_end_time_ms
             
         filepath = self.store.save_match_metadata(match_data, 0)
         
