@@ -1,42 +1,32 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
-  <!-- 背景 (Valorant ダークブルー) -->
-  <rect width="256" height="256" rx="48" fill="#0F1923" />
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <defs>
+    <!-- 背景の微細なグラデーション -->
+    <linearGradient id="bg-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1F2326"/>
+      <stop offset="100%" stop-color="#0F1923"/>
+    </linearGradient>
+    
+    <!-- 録画ボタンの発光エフェクト -->
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="6" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
   
-  <!-- Valorant風 Vロゴ (上部) -->
-  <g transform="translate(0, -10)">
-    <!-- 左パーツ (Valorant レッド) -->
-    <polygon points="116,140 64,88 64,56 116,108" fill="#FF4655" />
-    <!-- 右パーツ (Valorant レッド) -->
-    <polygon points="132,156 200,88 200,56 132,124" fill="#FF4655" />
+  <!-- アプリアイコンのベース（角丸） -->
+  <rect width="256" height="256" rx="56" fill="url(#bg-grad)"/>
+  
+  <!-- VALORANT風のシャープなV字ロゴ -->
+  <g transform="translate(0, -15)">
+    <polygon points="115,165 50,80 90,80 135,138" fill="#FF4655"/>
+    <polygon points="145,165 160,145 205,80 165,80" fill="#FF4655"/>
   </g>
-
-  <!-- フィルムロール (下部) -->
-  <g transform="translate(28, 164)">
-    <!-- フィルム背景 -->
-    <rect width="200" height="64" rx="4" fill="#111111" stroke="#333333" stroke-width="2"/>
-    
-    <!-- 上部のパーフォレーション (穴) -->
-    <g fill="#FFFFFF">
-      <rect x="12" y="6" width="16" height="12" rx="2" />
-      <rect x="44" y="6" width="16" height="12" rx="2" />
-      <rect x="76" y="6" width="16" height="12" rx="2" />
-      <rect x="108" y="6" width="16" height="12" rx="2" />
-      <rect x="140" y="6" width="16" height="12" rx="2" />
-      <rect x="172" y="6" width="16" height="12" rx="2" />
-    </g>
-    
-    <!-- 下部のパーフォレーション (穴) -->
-    <g fill="#FFFFFF">
-      <rect x="12" y="46" width="16" height="12" rx="2" />
-      <rect x="44" y="46" width="16" height="12" rx="2" />
-      <rect x="76" y="46" width="16" height="12" rx="2" />
-      <rect x="108" y="46" width="16" height="12" rx="2" />
-      <rect x="140" y="46" width="16" height="12" rx="2" />
-      <rect x="172" y="46" width="16" height="12" rx="2" />
-    </g>
-
-    <!-- 中央の録画インジケーター (赤丸) -->
-    <circle cx="100" cy="32" r="10" fill="#FF4655" />
-    <circle cx="100" cy="32" r="14" fill="none" stroke="#FF4655" stroke-width="2" opacity="0.5" />
+  
+  <!-- モダンなRECインジケーター -->
+  <g transform="translate(128, 195)">
+    <!-- 外側のパルス（波紋） -->
+    <circle r="22" fill="none" stroke="#FF4655" stroke-width="3" opacity="0.4"/>
+    <!-- 中央の録画ドット（発光） -->
+    <circle r="12" fill="#FF4655" filter="url(#glow)"/>
   </g>
 </svg>

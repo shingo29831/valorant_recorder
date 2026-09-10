@@ -1,7 +1,7 @@
 import os
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel, QMenu, QPushButton
 from PyQt6.QtCore import Qt, pyqtSignal, QByteArray, QTimer
-from PyQt6.QtGui import QPixmap, QPainter, QColor, QPen
+from PyQt6.QtGui import QPixmap, QPainter, QColor, QPen, QPixmapCache
 from PyQt6.QtSvg import QSvgRenderer
 
 STAR_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="gold" stroke="black" stroke-width="1">
@@ -150,9 +150,18 @@ class RecordItemWidget(QWidget):
         self.checkbox.hide()
 
     def _load_thumbnail(self):
+        # PyQt組み込みのQPixmapCacheを使用し、メモリ制限を超えたら自動破棄させる
+        cached_pixmap = QPixmapCache.find(self.thumb_path)
+        if cached_pixmap is not None:
+            self.thumb_label.setPixmap(cached_pixmap)
+            self.thumb_label.setStyleSheet("")
+            return
+
         pixmap = QPixmap(self.thumb_path)
         if not pixmap.isNull():
-            self.thumb_label.setPixmap(pixmap.scaled(240, 135, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation))
+            scaled_pixmap = pixmap.scaled(240, 135, Qt.AspectRatioMode.KeepAspectRatioByExpanding, Qt.TransformationMode.SmoothTransformation)
+            QPixmapCache.insert(self.thumb_path, scaled_pixmap)
+            self.thumb_label.setPixmap(scaled_pixmap)
             self.thumb_label.setStyleSheet("")
         else:
             self.thumb_label.setText("No Thumbnail")
