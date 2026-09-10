@@ -460,7 +460,7 @@ class PlayerVideoPage(QWidget):
         current_pos = self.player_core.position()
         target_pos = 0
         for r in reversed(self.current_rounds):
-            if r["start"] < current_pos - 2000:
+            if r["start"] < current_pos - 100:
                 target_pos = r["start"]
                 break
         self.player_core.set_position_direct(target_pos)
@@ -471,7 +471,7 @@ class PlayerVideoPage(QWidget):
         current_pos = self.player_core.position()
         target_pos = self.player_core.duration()
         for r in self.current_rounds:
-            if r["start"] > current_pos + 2000:
+            if r["start"] > current_pos + 100:
                 target_pos = r["start"]
                 break
         self.player_core.set_position_direct(target_pos)

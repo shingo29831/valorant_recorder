@@ -93,7 +93,8 @@ class WatcherThread(QThread):
             self._stop_and_process_recording()
 
     def handle_match_start(self, is_range: bool, match_start_timestamp: float = None, is_recovery: bool = False):
-        if is_range:
+        map_name = getattr(self.watcher, 'current_map_name', '').lower()
+        if is_range or map_name in ['the range', 'range', 'poveglia']:
             self.log_signal.emit("[Recorder] 射撃訓練場(Range)を検知しました。録画とAPI取得をスキップします。")
             return
             
@@ -146,7 +147,8 @@ class WatcherThread(QThread):
             self.recorder.set_low_priority()
 
     def handle_match_end(self, is_range: bool):
-        if is_range:
+        map_name = getattr(self.watcher, 'current_map_name', '').lower()
+        if is_range or map_name in ['the range', 'range', 'poveglia']:
             return
 
         if self.current_video_path is None:

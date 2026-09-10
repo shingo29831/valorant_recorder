@@ -185,7 +185,8 @@ class AudioCaptureThread(threading.Thread):
                 spk_thread = threading.Thread(target=spk_worker, daemon=True)
                 spk_thread.start()
 
-                # マイクの連続的な波形を保持するバッファ（キュー破棄によるポツ音防止）
+                # スピーカーとマイクの連続的な波形を保持するバッファ
+                spk_buffer = np.zeros((0, 2), dtype=np.float32)
                 mic_buffer = np.zeros((0, 2), dtype=np.float32)
                 
                 # 2倍増幅時のクリッピング防止用リミッターゲイン
@@ -193,20 +194,20 @@ class AudioCaptureThread(threading.Thread):
                 current_mic_limiter_gain = 1.0
                 
                 import time
-                last_spk_time = time.perf_counter()
+                start_time = time.perf_counter()
+                total_sent_frames = 0
 
                 while not self.stop_event.is_set():
+                    # 1. スピーカーのデータを取得してバッファに追加
                     try:
-                        # タイムアウトを50ms(バッファサイズ)に設定し、実時間とのズレを最小限にする
-                        spk_data = spk_queue.get(timeout=0.05)
-                        last_spk_time = time.perf_counter()
-                        # システム音を2倍の音量で保存する
+                        # タイムアウトを短くしてループを高頻度で回し、実時間との同期精度を上げる
+                        spk_data = spk_queue.get(timeout=0.02)
                         spk_data = spk_data * (system_gain * 2.0)
+                        spk_buffer = np.concatenate((spk_buffer, spk_data), axis=0)
                     except queue.Empty:
-                        spk_data = None
+                        pass
 
-                    # スピーカーのデータ有無に関わらず、マイクのデータは常にキューから取り出して消費する
-                    # これを怠ると、スピーカー無音時にマイクのキューが無限に肥大化しメモリリーク(後半のカクつき)を引き起こす
+                    # 2. マイクのデータを取得してバッファに追加
                     if mic_rec is not None:
                         while True:
                             try:
@@ -214,106 +215,88 @@ class AudioCaptureThread(threading.Thread):
                                 mic_buffer = np.concatenate((mic_buffer, chunk), axis=0)
                             except queue.Empty:
                                 break
-                        
-                        # バッファが溜まりすぎた場合（1秒以上）は古いデータを捨てる
-                        if mic_buffer.shape[0] > samplerate * 1.0:
-                            mic_buffer = mic_buffer[-int(samplerate * 0.5):]
 
-                    if spk_data is not None:
-                        frames_to_process = spk_data.shape[0]
-                        
+                    # バッファが溜まりすぎた場合（ハードウェアクロックが速い場合の遅延蓄積防止）
+                    if spk_buffer.shape[0] > samplerate:
+                        spk_buffer = spk_buffer[-samplerate // 2:]
+                    if mic_buffer.shape[0] > samplerate:
+                        mic_buffer = mic_buffer[-samplerate // 2:]
+
+                    # 3. 実時間に基づいて、現在までに送るべき総フレーム数を計算
+                    current_time = time.perf_counter()
+                    elapsed = current_time - start_time
+                    expected_total_frames = int(elapsed * samplerate)
+                    
+                    # 今回送るべきフレーム数
+                    frames_to_send = expected_total_frames - total_sent_frames
+                    
+                    if frames_to_send > 0:
+                        # 異常な遅延（スリープ復帰など）への対策
+                        if frames_to_send > samplerate // 2:
+                            # 追いつけないほどの遅延が発生した場合は、基準時間をリセットしてスキップ
+                            start_time = current_time - (total_sent_frames / samplerate)
+                            spk_buffer = np.zeros((0, 2), dtype=np.float32)
+                            mic_buffer = np.zeros((0, 2), dtype=np.float32)
+                            continue
+
+                        # スピーカーデータの準備
+                        if spk_buffer.shape[0] >= frames_to_send:
+                            spk_out = spk_buffer[:frames_to_send]
+                            spk_buffer = spk_buffer[frames_to_send:]
+                        else:
+                            # データが足りない場合は無音でパディング（クロックドリフト補正）
+                            pad = np.zeros((frames_to_send - spk_buffer.shape[0], 2), dtype=np.float32)
+                            spk_out = np.concatenate((spk_buffer, pad), axis=0)
+                            spk_buffer = np.zeros((0, 2), dtype=np.float32)
+
+                        # マイクデータの準備
                         if mic_rec is not None:
-                            if mic_buffer.shape[0] >= frames_to_process:
-                                mic_data = mic_buffer[:frames_to_process]
-                                mic_buffer = mic_buffer[frames_to_process:]
+                            if mic_buffer.shape[0] >= frames_to_send:
+                                mic_out = mic_buffer[:frames_to_send]
+                                mic_buffer = mic_buffer[frames_to_send:]
                             else:
-                                # データが足りない場合はゼロパディング
-                                pad = np.zeros((frames_to_process - mic_buffer.shape[0], 2), dtype=np.float32)
-                                mic_data = np.concatenate((mic_buffer, pad), axis=0)
+                                pad = np.zeros((frames_to_send - mic_buffer.shape[0], 2), dtype=np.float32)
+                                mic_out = np.concatenate((mic_buffer, pad), axis=0)
                                 mic_buffer = np.zeros((0, 2), dtype=np.float32)
                                 
-                            # マイク音もシステム音と同様に2倍の音量で保存する
-                            mic_data = mic_data * (mic_gain * 2.0)
+                            mic_out = mic_out * (mic_gain * 2.0)
                         else:
-                            mic_data = np.zeros((frames_to_process, 2), dtype=np.float32)
-                            
-                        # スピーカー音のソフトリミッター（2倍増幅による音割れ防止）
-                        peak_spk = np.max(np.abs(spk_data))
+                            mic_out = np.zeros((frames_to_send, 2), dtype=np.float32)
+
+                        # スピーカー音のソフトリミッター
+                        peak_spk = np.max(np.abs(spk_out))
                         target_gain_spk = 0.99 / peak_spk if peak_spk > 0.99 else 1.0
                         if current_spk_limiter_gain != target_gain_spk:
-                            gains = np.linspace(current_spk_limiter_gain, target_gain_spk, len(spk_data), dtype=np.float32).reshape(-1, 1)
-                            spk_data = spk_data * gains
+                            gains = np.linspace(current_spk_limiter_gain, target_gain_spk, len(spk_out), dtype=np.float32).reshape(-1, 1)
+                            spk_out = spk_out * gains
                             current_spk_limiter_gain = target_gain_spk
                         elif target_gain_spk < 1.0:
-                            spk_data = spk_data * target_gain_spk
+                            spk_out = spk_out * target_gain_spk
                             
-                        # マイク音のソフトリミッター（2倍増幅による音割れ防止）
-                        peak_mic = np.max(np.abs(mic_data))
+                        # マイク音のソフトリミッター
+                        peak_mic = np.max(np.abs(mic_out))
                         target_gain_mic = 0.99 / peak_mic if peak_mic > 0.99 else 1.0
                         if current_mic_limiter_gain != target_gain_mic:
-                            gains = np.linspace(current_mic_limiter_gain, target_gain_mic, len(mic_data), dtype=np.float32).reshape(-1, 1)
-                            mic_data = mic_data * gains
+                            gains = np.linspace(current_mic_limiter_gain, target_gain_mic, len(mic_out), dtype=np.float32).reshape(-1, 1)
+                            mic_out = mic_out * gains
                             current_mic_limiter_gain = target_gain_mic
                         elif target_gain_mic < 1.0:
-                            mic_data = mic_data * target_gain_mic
+                            mic_out = mic_out * target_gain_mic
                         
-                        combined = np.concatenate((spk_data, mic_data), axis=1)
+                        combined = np.concatenate((spk_out, mic_out), axis=1)
                         combined = np.clip(combined, -1.0, 1.0)
                         
                         try:
                             self.audio_queue.put_nowait(combined.astype(np.float32).tobytes())
+                            total_sent_frames += frames_to_send
                         except queue.Full:
-                            pass
-                            
-                    else:
-                        # 無音時（タイムアウト）：スピーカーからのデータが来ない場合
-                        current_time = time.perf_counter()
-                        elapsed = current_time - last_spk_time
-                        
-                        # 0.05秒(50ms)以上データが来ていない場合、実時間に合わせて足りない分を無音で埋める
-                        # これにより、FFmpeg側で音声ストリームが遅延して映像フレームが無限にバッファリングされるのを防ぐ
-                        if elapsed >= 0.05:
-                            frames_to_pad = int(elapsed * samplerate)
-                            
-                            # 異常な遅延（PCスリープ復帰など）で大量のメモリを消費しないよう、最大0.5秒分に制限
-                            if frames_to_pad > samplerate // 2:
-                                frames_to_pad = samplerate // 2
-                                last_spk_time = current_time
-                            else:
-                                last_spk_time += (frames_to_pad / samplerate)
-                                
-                            if frames_to_pad > 0:
-                                pad_spk = np.zeros((frames_to_pad, 2), dtype=np.float32)
-                                
-                                if mic_rec is not None:
-                                    if mic_buffer.shape[0] >= frames_to_pad:
-                                        mic_data = mic_buffer[:frames_to_pad]
-                                        mic_buffer = mic_buffer[frames_to_pad:]
-                                    else:
-                                        pad = np.zeros((frames_to_pad - mic_buffer.shape[0], 2), dtype=np.float32)
-                                        mic_data = np.concatenate((mic_buffer, pad), axis=0)
-                                        mic_buffer = np.zeros((0, 2), dtype=np.float32)
-                                        
-                                    mic_data = mic_data * (mic_gain * 2.0)
-                                    
-                                    peak_mic = np.max(np.abs(mic_data))
-                                    target_gain_mic = 0.99 / peak_mic if peak_mic > 0.99 else 1.0
-                                    if current_mic_limiter_gain != target_gain_mic:
-                                        gains = np.linspace(current_mic_limiter_gain, target_gain_mic, len(mic_data), dtype=np.float32).reshape(-1, 1)
-                                        mic_data = mic_data * gains
-                                        current_mic_limiter_gain = target_gain_mic
-                                    elif target_gain_mic < 1.0:
-                                        mic_data = mic_data * target_gain_mic
-                                else:
-                                    mic_data = np.zeros((frames_to_pad, 2), dtype=np.float32)
-                                    
-                                combined_pad = np.concatenate((pad_spk, mic_data), axis=1)
-                                combined_pad = np.clip(combined_pad, -1.0, 1.0)
-                                
-                                try:
-                                    self.audio_queue.put_nowait(combined_pad.astype(np.float32).tobytes())
-                                except queue.Full:
-                                    pass
+                            # キューが満杯(約60秒以上の異常な遅延)の場合は古いデータを捨てて最新のデータを入れる
+                            try:
+                                self.audio_queue.get_nowait()
+                                self.audio_queue.put_nowait(combined.astype(np.float32).tobytes())
+                                total_sent_frames += frames_to_send
+                            except queue.Empty:
+                                pass
 
                 worker_stop.set()
                 if mic_thread is not None:

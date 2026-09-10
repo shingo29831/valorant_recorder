@@ -19,9 +19,11 @@ class FFmpegRecorder:
         self.audio_record_thread = None
         self.audio_write_thread = None
         self.stop_event = threading.Event()
-        # maxsize=0 (無制限) に設定し、高負荷時に音声データが欠落して
-        # FFmpegのA/V同期が崩れ、映像がバッファリングされてカクつく現象を根本から防ぐ
-        self.audio_queue = queue.Queue(maxsize=0)
+        # maxsize=1200 (約60秒分) に設定。
+        # 60秒分の音声データは約23MBでありメモリを圧迫しない。
+        # 一時的なエンコード遅延では音声を捨てず（音質劣化なし）、
+        # 致命的な遅延が発生した時のみ古いデータを捨てる安全弁とする。
+        self.audio_queue = queue.Queue(maxsize=1200)
         
         # Nuitkaの実行時一時ディレクトリではなく、永続的なディレクトリにダウンロードする
         app_data_dir = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'ValoReco')
@@ -144,7 +146,11 @@ class FFmpegRecorder:
         # 3. マイク音単独 (編集用)
         # の3つのオーディオトラックを生成する
         # 録音時に2倍に増幅しているため、ミックス時にクリップしないよう alimiter を適用する
-        filter_complex += f";[a0]asplit=2[a0_mix][a0_out];{mic_map}asplit=2[a1_mix][a1_out];[a0_mix][a1_mix]amix=inputs=2:duration=longest:normalize=0,alimiter=limit=0.99[a_mixed]"
+        # さらに aresample=async=1 を適用して、映像と音声のクロックのズレを無劣化で自動補正し音ズレを防ぐ
+        filter_complex += f";[a0]asplit=2[a0_mix][a0_raw];{mic_map}asplit=2[a1_mix][a1_raw];"
+        filter_complex += "[a0_mix][a1_mix]amix=inputs=2:duration=longest:normalize=0,alimiter=limit=0.99,aresample=async=1[a_mixed];"
+        filter_complex += "[a0_raw]aresample=async=1[a0_out];"
+        filter_complex += "[a1_raw]aresample=async=1[a1_out]"
 
         cmd.extend([
             "-thread_queue_size", "16384",

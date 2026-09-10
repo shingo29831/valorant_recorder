@@ -15,7 +15,7 @@ def _generate_thumbnail(video_path, thumb_path):
     try:
         cmd = [
             "ffmpeg", "-y", "-i", video_path,
-            "-ss", "00:00:01", "-vframes", "1",
+            "-ss", "00:00:05", "-vframes", "1",
             "-vf", "scale=240:-1", thumb_path
         ]
         # CREATE_NO_WINDOW に加え、CREATE_NEW_PROCESS_GROUP と DETACHED_PROCESS(0x08) を指定し、
@@ -98,6 +98,24 @@ class RecordDataLoader:
                     
                     mode = match_info.get("metadata", {}).get("mode", "Unknown")
                     map_name = match_info.get("metadata", {}).get("map", "Unknown")
+                    
+                    # 内部コードネームを実際のマップ表示名に変換
+                    map_codenames = {
+                        "bonsai": "Split",
+                        "triad": "Haven",
+                        "duality": "Bind",
+                        "port": "Icebox",
+                        "foxtrot": "Breeze",
+                        "canyon": "Fracture",
+                        "pitt": "Pearl",
+                        "jam": "Lotus",
+                        "juliett": "Sunset",
+                        "infinity": "Abyss",
+                        "init": "Abyss"
+                    }
+                    if map_name.lower() in map_codenames:
+                        map_name = map_codenames[map_name.lower()]
+                        
                     agent_name = get_agent_name(riot_id, tag_line, match_info, kills_data)
                     result = get_match_result(riot_id, tag_line, match_info, kills_data)
                     
