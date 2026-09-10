@@ -11,11 +11,11 @@ from ui.player_utils import find_video_for_json, get_agent_name, get_match_resul
 # バックグラウンドでサムネイルを生成するためのスレッドプール（同時実行数1でPCへの負荷を防ぐ）
 _thumb_executor = ThreadPoolExecutor(max_workers=1)
 
-def _generate_thumbnail(video_path, thumb_path):
+def _generate_thumbnail(video_path, thumb_path, time_offset="00:00:06"):
     try:
         cmd = [
             "ffmpeg", "-y", "-i", video_path,
-            "-ss", "00:00:05", "-vframes", "1",
+            "-ss", time_offset, "-vframes", "1",
             "-vf", "scale=240:-1", thumb_path
         ]
         # CREATE_NO_WINDOW に加え、CREATE_NEW_PROCESS_GROUP と DETACHED_PROCESS(0x08) を指定し、
@@ -151,8 +151,9 @@ class RecordDataLoader:
                     
                     if video_path and os.path.exists(video_path) and os.path.getsize(video_path) > 0:
                         if not os.path.exists(expected_thumb_path):
+                            time_offset = "00:00:01" if mode in ["Custom Game", "Shooting Range"] else "00:00:06"
                             # UIスレッドをブロックしないよう、バックグラウンドでサムネイルを生成する
-                            _thumb_executor.submit(_generate_thumbnail, video_path, expected_thumb_path)
+                            _thumb_executor.submit(_generate_thumbnail, video_path, expected_thumb_path, time_offset)
                             
                     if date_key not in records_by_date:
                         records_by_date[date_key] = []

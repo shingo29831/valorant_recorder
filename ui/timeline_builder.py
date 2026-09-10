@@ -30,7 +30,7 @@ def build_timeline_data(match_info: dict, duration_ms: int, riot_id: str, tag_li
                 
     local_round_starts = []
     for ev in local_round_events:
-        if ev["phase"] == "PreRound":
+        if ev["phase"] == "InProgress":
             t = ev["time_ms"]
             if t < 1000000000000:
                 t += recording_start_ms
@@ -145,12 +145,13 @@ def build_timeline_data(match_info: dict, duration_ms: int, riot_id: str, tag_li
             if time_in_video < 0:
                 time_in_video = 0
                 
-            if phase == "PreRound" or (phase == "InProgress" and current_round_start is None):
+            if phase == "InProgress":
                 if current_round_start is not None:
                     end_time = min(time_in_video, duration_ms)
                     if current_round_start < end_time:
                         rounds.append({"start": current_round_start, "end": end_time, "phase": "Round"})
-                current_round_start = time_in_video
+                # バリアが降りる瞬間の2秒前をラウンド開始位置とする
+                current_round_start = max(0, time_in_video - 2000)
                 
             elif phase == "PostRound":
                 if current_round_start is not None:
@@ -168,6 +169,9 @@ def build_timeline_data(match_info: dict, duration_ms: int, riot_id: str, tag_li
             for i, r_start in enumerate(api_round_starts):
                 t_local = r_start + api_to_local_offset
                 start_time = int(t_local - recording_start_ms)
+                
+                # バリアが降りる瞬間の2秒前をラウンド開始位置とする
+                start_time = max(0, start_time - 2000)
                 
                 if i + 1 < len(api_round_starts):
                     next_t_local = api_round_starts[i+1] + api_to_local_offset

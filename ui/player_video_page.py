@@ -446,35 +446,49 @@ class PlayerVideoPage(QWidget):
     def _on_playback_state_changed(self, state):
         self.playback_controls.set_playback_state(state == QMediaPlayer.PlaybackState.PlayingState.value)
 
-    def skip_backward(self):
-        pos = max(0, self.player_core.position() - 5000)
+    def _get_effective_position(self):
+        import time
+        now = time.time()
+        # 直近0.5秒以内にシーク要求があった場合は、その目標位置を基準とする（連打対策）
+        if hasattr(self, '_last_seek_time') and now - self._last_seek_time < 0.5:
+            return getattr(self, '_target_position', self.player_core.position())
+        return self.player_core.position()
+
+    def _set_effective_position(self, pos):
+        import time
+        self._target_position = pos
+        self._last_seek_time = time.time()
         self.player_core.set_position_direct(pos)
 
+    def skip_backward(self):
+        pos = max(0, self._get_effective_position() - 5000)
+        self._set_effective_position(pos)
+
     def skip_forward(self):
-        pos = min(self.player_core.duration(), self.player_core.position() + 5000)
-        self.player_core.set_position_direct(pos)
+        pos = min(self.player_core.duration(), self._get_effective_position() + 5000)
+        self._set_effective_position(pos)
 
     def skip_to_prev_round(self):
         if not hasattr(self, 'current_rounds') or not self.current_rounds:
             return
-        current_pos = self.player_core.position()
+        current_pos = self._get_effective_position()
         target_pos = 0
         for r in reversed(self.current_rounds):
-            if r["start"] < current_pos - 100:
+            if r["start"] < current_pos - 2000:
                 target_pos = r["start"]
                 break
-        self.player_core.set_position_direct(target_pos)
+        self._set_effective_position(target_pos)
 
     def skip_to_next_round(self):
         if not hasattr(self, 'current_rounds') or not self.current_rounds:
             return
-        current_pos = self.player_core.position()
+        current_pos = self._get_effective_position()
         target_pos = self.player_core.duration()
         for r in self.current_rounds:
-            if r["start"] > current_pos + 100:
+            if r["start"] > current_pos + 2000:
                 target_pos = r["start"]
                 break
-        self.player_core.set_position_direct(target_pos)
+        self._set_effective_position(target_pos)
 
     def format_time(self, ms):
         s = ms // 1000

@@ -223,6 +223,12 @@ class MainWindow(QMainWindow):
         self.rec_button.blockSignals(False)
         if is_recording:
             self.rec_button.setText("⏹ Stop Recording")
+            # 録画開始時、リソース競合を防ぐために動画再生を一時停止する
+            if hasattr(self, 'player_tab') and hasattr(self.player_tab, 'video_page'):
+                try:
+                    self.player_tab.video_page.player_core.pause()
+                except Exception as e:
+                    print(f"[MainWindow] Failed to pause video on recording start: {e}")
         else:
             self.rec_button.setText("🔴 Start Recording")
 
