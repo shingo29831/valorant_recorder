@@ -6,6 +6,7 @@ import threading
 from datetime import datetime
 from PyQt6.QtCore import QThread, pyqtSignal
 from core.config import Config
+from core.i18n import get_trans
 from watcher.log_watcher import LogWatcher
 from api.henrik_api import HenrikAPI
 from storage.metadata_store import MetadataStore
@@ -19,6 +20,7 @@ class WatcherThread(QThread):
     def __init__(self, config: Config):
         super().__init__()
         self.config = config
+        self.t = get_trans(self.config.LANGUAGE)
         self.store = MetadataStore(save_dir=self.config.SAVE_DIR)
         self.recorder = FFmpegRecorder(config=self.config)
         self.watcher = LogWatcher(
@@ -57,45 +59,45 @@ class WatcherThread(QThread):
                 self.config.REGION = self.current_region
                 self.config.save()
                 
-            self.log_signal.emit(f"[Watcher] Player detected: {name}#{tag} (Region: {self.current_region})")
+            self.log_signal.emit(self.t.log_player_detected.format(name=name, tag=tag, region=self.current_region))
         else:
-            self.log_signal.emit("[Watcher] Failed to detect player from local API.")
+            self.log_signal.emit(self.t.log_player_detect_failed)
 
     def start_manual_recording(self):
         if self.current_video_path is not None:
-            self.log_signal.emit("[Manual] Already recording.")
+            self.log_signal.emit(self.t.log_manual_already_recording)
             return
         self.recording_start_time = time.time()
         self.local_round_events = []
         self._update_current_player()
-        self.log_signal.emit("[Manual] Starting manual recording...")
+        self.log_signal.emit(self.t.log_manual_starting)
         try:
             self.current_video_path = self.recorder.start_recording()
-            self.log_signal.emit(f"[Manual] Recording to: {self.current_video_path}")
+            self.log_signal.emit(self.t.log_manual_recording_to.format(path=self.current_video_path))
             self._is_manual_action = True
             self.recording_state_changed.emit(True)
             self._is_manual_action = False
         except Exception as e:
-            self.log_signal.emit(f"[Error] Failed to start manual recording: {e}")
+            self.log_signal.emit(self.t.log_manual_start_failed.format(error=e))
 
     def stop_manual_recording(self):
         if self.current_video_path is None:
             return
-        self.log_signal.emit("[Manual] Stopping manual recording...")
+        self.log_signal.emit(self.t.log_manual_stopping)
         self._is_manual_action = True
         self._stop_and_process_recording()
         self._is_manual_action = False
 
     def handle_real_match_end(self):
-        self.log_signal.emit("[Recorder] Real match end verified in logs.")
+        self.log_signal.emit(self.t.log_real_match_end)
         if self.current_video_path is not None:
-            self.log_signal.emit("[Recorder] Stopping recording on real match end...")
+            self.log_signal.emit(self.t.log_stopping_real_match_end)
             self._stop_and_process_recording()
 
     def handle_match_start(self, is_range: bool, match_start_timestamp: float = None, is_recovery: bool = False):
         map_name = getattr(self.watcher, 'current_map_name', '').lower()
         if is_range or map_name in ['the range', 'range', 'rangev2', 'poveglia', 'basictraining', 'shooting', 'tutorial']:
-            self.log_signal.emit("[Recorder] 射撃訓練場(Range)を検知しました。録画とAPI取得をスキップします。")
+            self.log_signal.emit(self.t.log_range_detected_skip)
             return
             
         self.real_match_end_time_ms = None
@@ -105,11 +107,11 @@ class WatcherThread(QThread):
             self._stop_timer.cancel()
             self._stop_timer = None
             if self.current_video_path is not None:
-                self.log_signal.emit("[Recorder] New match started during delay. Stopping previous recording immediately...")
+                self.log_signal.emit(self.t.log_new_match_during_delay)
                 self._stop_and_process_recording()
 
         if self.current_video_path is not None:
-            self.log_signal.emit("[Recorder] Already recording. Continuing...")
+            self.log_signal.emit(self.t.log_already_recording_cont)
             return
 
         self.recording_start_time = time.time()
@@ -118,23 +120,23 @@ class WatcherThread(QThread):
         self._update_current_player()
         
         if is_recovery:
-            self.log_signal.emit("[Recorder] Match in progress detected (Recovery mode). Auto-recovering recording...")
+            self.log_signal.emit(self.t.log_recovery_mode)
         else:
-            self.log_signal.emit("[Recorder] Match started. Starting FFmpeg recording...")
+            self.log_signal.emit(self.t.log_match_started)
             
         try:
             self.current_video_path = self.recorder.start_recording()
-            self.log_signal.emit(f"[Recorder] Recording to: {self.current_video_path}")
+            self.log_signal.emit(self.t.log_recording_to.format(path=self.current_video_path))
             self.recording_state_changed.emit(True)
         except Exception as e:
-            self.log_signal.emit(f"[Error] Failed to start recording: {e}")
+            self.log_signal.emit(self.t.log_start_failed.format(error=e))
 
     def handle_round_phase_changed(self, phase: str, phase_timestamp: float = None):
         if self.current_video_path is not None:
             # 絶対時刻(UNIXタイムスタンプミリ秒)で記録し、後でAPIデータと高精度に同期する
             ts_ms = int((phase_timestamp if phase_timestamp else time.time()) * 1000)
             self.local_round_events.append({"phase": phase, "time_ms": ts_ms})
-            self.log_signal.emit(f"[Recorder] Round phase changed: {phase} at {ts_ms}ms (UNIX)")
+            self.log_signal.emit(self.t.log_round_phase_changed.format(phase=phase, ts=ts_ms))
 
     def handle_ability_used(self, timestamp: float):
         if self.current_video_path is not None:
@@ -143,7 +145,7 @@ class WatcherThread(QThread):
             
     def handle_performance_drop(self):
         if getattr(self.config, 'AUTO_PERFORMANCE_CONTROL', False) and self.current_video_path is not None:
-            self.log_signal.emit("[Recorder] Performance drop detected. Lowering FFmpeg priority...")
+            self.log_signal.emit(self.t.log_performance_drop)
             self.recorder.set_low_priority()
 
     def handle_match_end(self, is_range: bool):
@@ -156,14 +158,14 @@ class WatcherThread(QThread):
 
         # 実際の試合終了時間を記録
         self.real_match_end_time_ms = int(time.time() * 1000)
-        self.log_signal.emit("[Recorder] Match ended. Waiting 15 seconds to capture result screen...")
+        self.log_signal.emit(self.t.log_match_ended_wait)
         
         if self._stop_timer is not None:
             self._stop_timer.cancel()
             
         def delayed_stop(video_path_to_stop):
             if self.current_video_path == video_path_to_stop:
-                self.log_signal.emit("[Recorder] Stopping recording after delay...")
+                self.log_signal.emit(self.t.log_stopping_after_delay)
                 self._stop_and_process_recording()
 
         self._stop_timer = threading.Timer(15.0, delayed_stop, args=[self.current_video_path])
@@ -195,7 +197,7 @@ class WatcherThread(QThread):
         try:
             self.recorder.stop_recording()
         except Exception as e:
-            self.log_signal.emit(f"[Error] Failed to stop recording: {e}")
+            self.log_signal.emit(self.t.log_stop_failed.format(error=e))
 
         # ローカルログから取得したマップ名を使用
         map_name = getattr(self.watcher, 'current_map_name', 'Fetching...')
@@ -235,14 +237,14 @@ class WatcherThread(QThread):
     def _fetch_api_and_save(self, video_path, start_time, end_time, events, ability_events=None, temp_filepath=None, start_time_ms=None, real_match_end_time_ms=None):
         if ability_events is None:
             ability_events = []
-        self.log_signal.emit("[API] Checking for match data...")
+        self.log_signal.emit(self.t.log_api_checking)
         
         if not self.current_riot_id or not self.current_tag_line:
-            self.log_signal.emit("[API] No player ID detected. Saving as local-only match.")
+            self.log_signal.emit(self.t.log_api_no_player_id)
             self._create_dummy_metadata(video_path, start_time, end_time, events, temp_filepath, start_time_ms, real_match_end_time_ms)
             return
             
-        self.log_signal.emit(f"[API] Fetching match data for {self.current_riot_id}#{self.current_tag_line} (Region: {self.current_region})...")
+        self.log_signal.emit(self.t.log_api_fetching.format(name=self.current_riot_id, tag=self.current_tag_line, region=self.current_region))
         api = HenrikAPI(self.current_region, self.current_riot_id, self.current_tag_line)
         
         match_data = None
@@ -265,12 +267,12 @@ class WatcherThread(QThread):
                         try:
                             mmr_change = api.fetch_mmr_change(match_id)
                         except Exception as e:
-                            self.log_signal.emit(f"[API] MMR fetch skipped (likely not competitive): {e}")
+                            self.log_signal.emit(self.t.log_api_mmr_skipped.format(error=e))
                             
-                    self.log_signal.emit("[API] Successfully fetched current match data.")
+                    self.log_signal.emit(self.t.log_api_fetch_success)
                     break
             except Exception as e:
-                self.log_signal.emit(f"[API] Error fetching match data (attempt {attempt+1}/3): {e}")
+                self.log_signal.emit(self.t.log_api_fetch_error.format(attempt=attempt+1, error=e))
 
         if match_data:
             try:
@@ -310,12 +312,12 @@ class WatcherThread(QThread):
                     except Exception:
                         pass
                         
-                self.log_signal.emit(f"[Storage] Metadata saved: {filepath}")
+                self.log_signal.emit(self.t.log_storage_saved.format(path=filepath))
                 self.match_saved_signal.emit()
             except Exception as e:
-                self.log_signal.emit(f"[Error] Failed to process match metadata: {e}")
+                self.log_signal.emit(self.t.log_process_metadata_failed.format(error=e))
         else:
-            self.log_signal.emit("[API] Match data not found after retries. Saving as local-only match.")
+            self.log_signal.emit(self.t.log_api_not_found)
             self._create_dummy_metadata(video_path, start_time, end_time, events, temp_filepath, start_time_ms, real_match_end_time_ms)
 
     def _get_pending_videos(self):
@@ -471,10 +473,10 @@ class WatcherThread(QThread):
                         os.remove(filepath)
                         deleted_count += 1
                     except Exception as e:
-                        self.log_signal.emit(f"[Background] Failed to delete old file {filepath}: {e}")
+                        self.log_signal.emit(self.t.log_bg_delete_failed.format(path=filepath, error=e))
                         
         if deleted_count > 0:
-            self.log_signal.emit(f"[Background] Auto-deleted {deleted_count} old file(s).")
+            self.log_signal.emit(self.t.log_bg_auto_deleted.format(count=deleted_count))
             self.match_saved_signal.emit()
 
     def _background_worker(self):
@@ -492,7 +494,7 @@ class WatcherThread(QThread):
                 map_name = getattr(self.watcher, 'current_map_name', '').lower()
                 is_range = getattr(self.watcher, 'is_range', False)
                 if is_range or map_name in ['the range', 'range', 'rangev2', 'poveglia', 'basictraining', 'shooting', 'tutorial']:
-                    self.log_signal.emit("[Recorder] 録画中に射撃場(Range)への遷移を検知しました。録画をキャンセルします。")
+                    self.log_signal.emit(self.t.log_range_transition_cancel)
                     video_to_delete = self.current_video_path
                     self.current_video_path = None
                     self.recording_state_changed.emit(False)
@@ -501,7 +503,7 @@ class WatcherThread(QThread):
                     try:
                         self.recorder.stop_recording()
                     except Exception as e:
-                        self.log_signal.emit(f"[Error] Failed to stop recording during cancel: {e}")
+                        self.log_signal.emit(self.t.log_cancel_stop_failed.format(error=e))
                         
                     # 少し待ってからファイルを削除
                     def delete_cancelled_video(path):
@@ -509,9 +511,9 @@ class WatcherThread(QThread):
                         try:
                             if os.path.exists(path):
                                 os.remove(path)
-                                self.log_signal.emit(f"[Recorder] Cancelled video file deleted: {path}")
+                                self.log_signal.emit(self.t.log_cancelled_video_deleted.format(path=path))
                         except Exception as e:
-                            self.log_signal.emit(f"[Error] Failed to delete cancelled video: {e}")
+                            self.log_signal.emit(self.t.log_cancel_delete_failed.format(error=e))
                             
                     threading.Thread(target=delete_cancelled_video, args=(video_to_delete,), daemon=True).start()
                     continue
@@ -519,7 +521,7 @@ class WatcherThread(QThread):
                 if self.recorder.process is not None:
                     returncode = self.recorder.process.poll()
                     if returncode is not None:
-                        self.log_signal.emit(f"[Watcher] FFmpeg process crashed (code {returncode}). Auto-restarting recording...")
+                        self.log_signal.emit(self.t.log_ffmpeg_crashed.format(code=returncode))
                         # 現在の録画を保存処理に回す
                         self._stop_and_process_recording()
                         # 少し待機してから再開
@@ -544,7 +546,7 @@ class WatcherThread(QThread):
                 if not pending_videos:
                     continue
                     
-                self.log_signal.emit(f"[Background] Found {len(pending_videos)} pending video(s). Checking API...")
+                self.log_signal.emit(self.t.log_bg_pending_videos.format(count=len(pending_videos)))
                 
                 try:
                     if not self.current_riot_id or not self.current_tag_line:
@@ -563,23 +565,23 @@ class WatcherThread(QThread):
                                 self.config.REGION = self.current_region
                                 self.config.save()
                                 
-                            self.log_signal.emit(f"[Background] Player detected: {name}#{tag} (Region: {self.current_region})")
+                            self.log_signal.emit(self.t.log_bg_player_detected.format(name=name, tag=tag, region=self.current_region))
                         else:
                             continue
                             
-                    self.log_signal.emit(f"[Background] Fetching match data for {self.current_riot_id}#{self.current_tag_line} (Region: {self.current_region})...")
+                    self.log_signal.emit(self.t.log_bg_fetching.format(name=self.current_riot_id, tag=self.current_tag_line, region=self.current_region))
                     api = HenrikAPI(self.current_region, self.current_riot_id, self.current_tag_line)
                     
                     try:
                         api_match_data = api.fetch_latest_match(retries=1, delay=2)
                     except Exception as e:
-                        self.log_signal.emit(f"[Background] API fetch error: {e}")
+                        self.log_signal.emit(self.t.log_bg_api_error.format(error=e))
                         api_match_data = None
                         
                     if not api_match_data:
                         for video_path, vid_time in pending_videos:
                             if time.time() - vid_time > 3600:
-                                self.log_signal.emit(f"[Background] Video {os.path.basename(video_path)} API fetch failed permanently. Saving as local-only.")
+                                self.log_signal.emit(self.t.log_bg_fetch_failed_perm.format(file=os.path.basename(video_path)))
                                 self._create_dummy_metadata(video_path, vid_time)
                         continue
                         
@@ -589,7 +591,7 @@ class WatcherThread(QThread):
                         diff = abs(game_start - vid_time)
                         
                         if diff < 3600:
-                            self.log_signal.emit(f"[Background] Match found for {os.path.basename(video_path)}.")
+                            self.log_signal.emit(self.t.log_bg_match_found.format(file=os.path.basename(video_path)))
                             match_id = api_match_data['metadata']['matchid']
                             mode = api_match_data.get('metadata', {}).get('mode', '')
                             mmr_change = 0
@@ -598,22 +600,22 @@ class WatcherThread(QThread):
                                 try:
                                     mmr_change = api.fetch_mmr_change(match_id, retries=1, delay=2)
                                 except Exception as e:
-                                    self.log_signal.emit(f"[Background] MMR fetch skipped (likely not competitive): {e}")
+                                    self.log_signal.emit(self.t.log_bg_mmr_skipped.format(error=e))
                             
                             api_match_data['local_video_path'] = video_path
                             filepath = self.store.save_match_metadata(api_match_data, mmr_change)
-                            self.log_signal.emit(f"[Background] Saved metadata: {filepath}")
+                            self.log_signal.emit(self.t.log_bg_saved.format(path=filepath))
                             self.match_saved_signal.emit()
                             
                         elif game_start > vid_time + 3600 or time.time() - vid_time > 3600:
-                            self.log_signal.emit(f"[Background] Video {os.path.basename(video_path)} is likely a custom match or API not available. Skipping.")
+                            self.log_signal.emit(self.t.log_bg_custom_or_unavailable.format(file=os.path.basename(video_path)))
                             self._create_dummy_metadata(video_path, vid_time)
                             
                 except Exception as e:
-                    self.log_signal.emit(f"[Background] Error: {e}")
+                    self.log_signal.emit(self.t.log_bg_error.format(error=e))
 
     def run(self):
-        self.log_signal.emit("Valorant Recorder App initialized. Watching logs...")
+        self.log_signal.emit(self.t.log_app_initialized)
         
         self.bg_thread = threading.Thread(target=self._background_worker, daemon=True)
         self.bg_thread.start()
@@ -621,7 +623,7 @@ class WatcherThread(QThread):
         try:
             self.watcher.start_watching()
         except Exception as e:
-            self.log_signal.emit(f"Fatal error: {e}")
+            self.log_signal.emit(self.t.log_fatal_error.format(error=e))
             self.recorder.stop_recording()
 
     def stop(self):

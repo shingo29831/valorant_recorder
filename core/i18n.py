@@ -85,6 +85,55 @@ class Translations:
     sort_date_asc: str
     sort_mmr_desc: str
     sort_mmr_asc: str
+    log_player_detected: str
+    log_player_detect_failed: str
+    log_manual_already_recording: str
+    log_manual_starting: str
+    log_manual_recording_to: str
+    log_manual_start_failed: str
+    log_manual_stopping: str
+    log_real_match_end: str
+    log_stopping_real_match_end: str
+    log_range_detected_skip: str
+    log_new_match_during_delay: str
+    log_already_recording_cont: str
+    log_recovery_mode: str
+    log_match_started: str
+    log_recording_to: str
+    log_start_failed: str
+    log_round_phase_changed: str
+    log_performance_drop: str
+    log_match_ended_wait: str
+    log_stopping_after_delay: str
+    log_stop_failed: str
+    log_api_checking: str
+    log_api_no_player_id: str
+    log_api_fetching: str
+    log_api_mmr_skipped: str
+    log_api_fetch_success: str
+    log_api_fetch_error: str
+    log_storage_saved: str
+    log_process_metadata_failed: str
+    log_api_not_found: str
+    log_bg_delete_failed: str
+    log_bg_auto_deleted: str
+    log_ffmpeg_crashed: str
+    log_range_transition_cancel: str
+    log_cancel_stop_failed: str
+    log_cancelled_video_deleted: str
+    log_cancel_delete_failed: str
+    log_bg_pending_videos: str
+    log_bg_player_detected: str
+    log_bg_fetching: str
+    log_bg_api_error: str
+    log_bg_fetch_failed_perm: str
+    log_bg_match_found: str
+    log_bg_mmr_skipped: str
+    log_bg_saved: str
+    log_bg_custom_or_unavailable: str
+    log_bg_error: str
+    log_app_initialized: str
+    log_fatal_error: str
 
 EN = Translations(
     settings_title="APPLICATION SETTINGS",
@@ -169,7 +218,56 @@ EN = Translations(
     sort_date_desc="Date (Newest)",
     sort_date_asc="Date (Oldest)",
     sort_mmr_desc="MMR Change (Highest)",
-    sort_mmr_asc="MMR Change (Lowest)"
+    sort_mmr_asc="MMR Change (Lowest)",
+    log_player_detected="[Watcher] Player detected: {name}#{tag} (Region: {region})",
+    log_player_detect_failed="[Watcher] Failed to detect player from local API.",
+    log_manual_already_recording="[Manual] Already recording.",
+    log_manual_starting="[Manual] Starting manual recording...",
+    log_manual_recording_to="[Manual] Recording to: {path}",
+    log_manual_start_failed="[Error] Failed to start manual recording: {error}",
+    log_manual_stopping="[Manual] Stopping manual recording...",
+    log_real_match_end="[Recorder] Real match end verified in logs.",
+    log_stopping_real_match_end="[Recorder] Stopping recording on real match end...",
+    log_range_detected_skip="[Recorder] Range detected. Skipping recording and API fetch.",
+    log_new_match_during_delay="[Recorder] New match started during delay. Stopping previous recording immediately...",
+    log_already_recording_cont="[Recorder] Already recording. Continuing...",
+    log_recovery_mode="[Recorder] Match in progress detected (Recovery mode). Auto-recovering recording...",
+    log_match_started="[Recorder] Match started. Starting FFmpeg recording...",
+    log_recording_to="[Recorder] Recording to: {path}",
+    log_start_failed="[Error] Failed to start recording: {error}",
+    log_round_phase_changed="[Recorder] Round phase changed: {phase} at {ts}ms (UNIX)",
+    log_performance_drop="[Recorder] Performance drop detected. Lowering FFmpeg priority...",
+    log_match_ended_wait="[Recorder] Match ended. Waiting 15 seconds to capture result screen...",
+    log_stopping_after_delay="[Recorder] Stopping recording after delay...",
+    log_stop_failed="[Error] Failed to stop recording: {error}",
+    log_api_checking="[API] Checking for match data...",
+    log_api_no_player_id="[API] No player ID detected. Saving as local-only match.",
+    log_api_fetching="[API] Fetching match data for {name}#{tag} (Region: {region})...",
+    log_api_mmr_skipped="[API] MMR fetch skipped (likely not competitive): {error}",
+    log_api_fetch_success="[API] Successfully fetched current match data.",
+    log_api_fetch_error="[API] Error fetching match data (attempt {attempt}/3): {error}",
+    log_storage_saved="[Storage] Metadata saved: {path}",
+    log_process_metadata_failed="[Error] Failed to process match metadata: {error}",
+    log_api_not_found="[API] Match data not found after retries. Saving as local-only match.",
+    log_bg_delete_failed="[Background] Failed to delete old file {path}: {error}",
+    log_bg_auto_deleted="[Background] Auto-deleted {count} old file(s).",
+    log_ffmpeg_crashed="[Watcher] FFmpeg process crashed (code {code}). Auto-restarting recording...",
+    log_range_transition_cancel="[Recorder] Range transition detected during recording. Cancelling recording.",
+    log_cancel_stop_failed="[Error] Failed to stop recording during cancel: {error}",
+    log_cancelled_video_deleted="[Recorder] Cancelled video file deleted: {path}",
+    log_cancel_delete_failed="[Error] Failed to delete cancelled video: {error}",
+    log_bg_pending_videos="[Background] Found {count} pending video(s). Checking API...",
+    log_bg_player_detected="[Background] Player detected: {name}#{tag} (Region: {region})",
+    log_bg_fetching="[Background] Fetching match data for {name}#{tag} (Region: {region})...",
+    log_bg_api_error="[Background] API fetch error: {error}",
+    log_bg_fetch_failed_perm="[Background] Video {file} API fetch failed permanently. Saving as local-only.",
+    log_bg_match_found="[Background] Match found for {file}.",
+    log_bg_mmr_skipped="[Background] MMR fetch skipped (likely not competitive): {error}",
+    log_bg_saved="[Background] Saved metadata: {path}",
+    log_bg_custom_or_unavailable="[Background] Video {file} is likely a custom match or API not available. Skipping.",
+    log_bg_error="[Background] Error: {error}",
+    log_app_initialized="Valorant Recorder App initialized. Watching logs...",
+    log_fatal_error="Fatal error: {error}"
 )
 
 JA = Translations(
@@ -255,7 +353,56 @@ JA = Translations(
     sort_date_desc="日付 (新しい順)",
     sort_date_asc="日付 (古い順)",
     sort_mmr_desc="MMR変動 (高い順)",
-    sort_mmr_asc="MMR変動 (低い順)"
+    sort_mmr_asc="MMR変動 (低い順)",
+    log_player_detected="[Watcher] プレイヤーを検出しました: {name}#{tag} (リージョン: {region})",
+    log_player_detect_failed="[Watcher] ローカルAPIからのプレイヤー検出に失敗しました。",
+    log_manual_already_recording="[Manual] 既に録画中です。",
+    log_manual_starting="[Manual] 手動録画を開始します...",
+    log_manual_recording_to="[Manual] 録画先: {path}",
+    log_manual_start_failed="[Error] 手動録画の開始に失敗しました: {error}",
+    log_manual_stopping="[Manual] 手動録画を停止します...",
+    log_real_match_end="[Recorder] ログから実際の試合終了を確認しました。",
+    log_stopping_real_match_end="[Recorder] 試合終了により録画を停止します...",
+    log_range_detected_skip="[Recorder] 射撃訓練場(Range)を検知しました。録画とAPI取得をスキップします。",
+    log_new_match_during_delay="[Recorder] 待機中に新しい試合が開始されました。直前の録画を即座に停止します...",
+    log_already_recording_cont="[Recorder] 既に録画中です。継続します...",
+    log_recovery_mode="[Recorder] 試合中の状態を検知しました(リカバリーモード)。録画を自動再開します...",
+    log_match_started="[Recorder] 試合開始。FFmpeg録画を開始します...",
+    log_recording_to="[Recorder] 録画先: {path}",
+    log_start_failed="[Error] 録画の開始に失敗しました: {error}",
+    log_round_phase_changed="[Recorder] ラウンドフェーズ変更: {phase} ({ts}ms UNIX)",
+    log_performance_drop="[Recorder] パフォーマンス低下を検知しました。FFmpegの優先度を下げます...",
+    log_match_ended_wait="[Recorder] 試合終了。リザルト画面をキャプチャするため15秒待機します...",
+    log_stopping_after_delay="[Recorder] 待機完了。録画を停止します...",
+    log_stop_failed="[Error] 録画の停止に失敗しました: {error}",
+    log_api_checking="[API] 試合データを確認中...",
+    log_api_no_player_id="[API] プレイヤーIDが検出されていません。ローカルのみの試合として保存します。",
+    log_api_fetching="[API] 試合データを取得中: {name}#{tag} (リージョン: {region})...",
+    log_api_mmr_skipped="[API] MMR取得をスキップしました (コンペティティブではない可能性): {error}",
+    log_api_fetch_success="[API] 最新の試合データを正常に取得しました。",
+    log_api_fetch_error="[API] 試合データの取得エラー (試行 {attempt}/3): {error}",
+    log_storage_saved="[Storage] メタデータを保存しました: {path}",
+    log_process_metadata_failed="[Error] 試合メタデータの処理に失敗しました: {error}",
+    log_api_not_found="[API] リトライ後も試合データが見つかりませんでした。ローカルのみの試合として保存します。",
+    log_bg_delete_failed="[Background] 古いファイルの削除に失敗しました {path}: {error}",
+    log_bg_auto_deleted="[Background] {count} 個の古いファイルを自動削除しました。",
+    log_ffmpeg_crashed="[Watcher] FFmpegプロセスがクラッシュしました (コード {code})。録画を自動再開します...",
+    log_range_transition_cancel="[Recorder] 録画中に射撃場(Range)への遷移を検知しました。録画をキャンセルします。",
+    log_cancel_stop_failed="[Error] キャンセル中の録画停止に失敗しました: {error}",
+    log_cancelled_video_deleted="[Recorder] キャンセルされた動画ファイルを削除しました: {path}",
+    log_cancel_delete_failed="[Error] キャンセルされた動画の削除に失敗しました: {error}",
+    log_bg_pending_videos="[Background] {count} 個の未処理動画が見つかりました。APIを確認します...",
+    log_bg_player_detected="[Background] プレイヤーを検出しました: {name}#{tag} (リージョン: {region})",
+    log_bg_fetching="[Background] 試合データを取得中: {name}#{tag} (リージョン: {region})...",
+    log_bg_api_error="[Background] API取得エラー: {error}",
+    log_bg_fetch_failed_perm="[Background] 動画 {file} のAPI取得に恒久的に失敗しました。ローカルのみとして保存します。",
+    log_bg_match_found="[Background] 動画 {file} の試合データが見つかりました。",
+    log_bg_mmr_skipped="[Background] MMR取得をスキップしました (コンペティティブではない可能性): {error}",
+    log_bg_saved="[Background] メタデータを保存しました: {path}",
+    log_bg_custom_or_unavailable="[Background] 動画 {file} はカスタムマッチかAPIが利用できない可能性があります。スキップします。",
+    log_bg_error="[Background] エラー: {error}",
+    log_app_initialized="Valorant Recorder アプリが初期化されました。ログを監視しています...",
+    log_fatal_error="致命的なエラー: {error}"
 )
 
 def get_trans(lang_code: str) -> Translations:
