@@ -36,14 +36,23 @@ class LogWatcher:
         return time.time()
 
     def start_watching(self):
+        import logging
         local_app_data = os.environ.get('LOCALAPPDATA')
         if not local_app_data:
-            raise EnvironmentError("LOCALAPPDATA environment variable not found.")
+            user_profile = os.environ.get('USERPROFILE')
+            if user_profile:
+                local_app_data = os.path.join(user_profile, 'AppData', 'Local')
+            else:
+                logging.error("LOCALAPPDATA and USERPROFILE environment variables not found.")
+                raise EnvironmentError("LOCALAPPDATA environment variable not found.")
 
         log_path = os.path.join(local_app_data, 'VALORANT', 'Saved', 'Logs', 'ShooterGame.log')
         
         if not os.path.exists(log_path):
+            logging.error(f"Log file not found: {log_path}")
             raise FileNotFoundError(f"Log file not found: {log_path}")
+
+        logging.info(f"Started watching log file: {log_path}")
 
         try:
             f = open(log_path, 'r', encoding='utf-8', errors='replace')
@@ -55,11 +64,13 @@ class LogWatcher:
                         current_size = os.path.getsize(log_path)
                         if current_size < f.tell():
                             # ファイルがクリアされた(Valorant再起動)場合は開き直す
+                            logging.info("Log file was cleared (Valorant restarted). Reopening...")
                             f.close()
                             f = open(log_path, 'r', encoding='utf-8', errors='replace')
                             f.seek(0, os.SEEK_END)
                             continue
-                    except OSError:
+                    except OSError as e:
+                        logging.warning(f"OSError while checking log file size: {e}")
                         pass
 
                     line = f.readline()
@@ -191,5 +202,11 @@ class LogWatcher:
             finally:
                 f.close()
                             
-        except PermissionError:
+        except PermissionError as e:
+            import logging
+            logging.error(f"PermissionError: Access denied to log file. {e}")
             raise PermissionError("Access denied. The log file might be locked by Vanguard.")
+        except Exception as e:
+            import logging
+            logging.error(f"Unexpected error in log watcher: {e}")
+            raise

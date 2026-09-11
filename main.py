@@ -1,18 +1,55 @@
 import sys
 import traceback
 import warnings
+import logging
+import os
+
+# --- ロギング設定 ---
+log_dir = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'ValorantRecorder')
+os.makedirs(log_dir, exist_ok=True)
+log_file_path = os.path.join(log_dir, 'app.log')
+
+# コンソール出力ハンドラは無限ループの原因になるため、ファイル出力のみに限定する
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[logging.FileHandler(log_file_path, encoding='utf-8')]
+)
+
+class StreamToLogger:
+    def __init__(self, logger, level):
+        self.logger = logger
+        self.level = level
+        self._is_logging = False
+
+    def write(self, buf):
+        # logging内部からの再帰呼び出し(無限ループ)を防ぐ
+        if self._is_logging:
+            return
+        self._is_logging = True
+        try:
+            if isinstance(buf, str):
+                for line in buf.rstrip().splitlines():
+                    if line.strip():
+                        self.logger.log(self.level, line.rstrip())
+        finally:
+            self._is_logging = False
+
+    def flush(self):
+        pass
+
+sys.stdout = StreamToLogger(logging.getLogger('STDOUT'), logging.INFO)
+sys.stderr = StreamToLogger(logging.getLogger('STDERR'), logging.ERROR)
+
+# loggingモジュール自体のエラー出力を無効化（無限ループ防止の念押し）
+logging.raiseExceptions = False
+# --------------------
 
 # --- グローバルエラーハンドラ ---
 # アプリがクラッシュした際に原因のログをダイアログで表示する
 def global_exception_handler(exctype, value, tb):
     error_msg = "".join(traceback.format_exception(exctype, value, tb))
-    
-    # コンソール非表示環境で sys.stderr が存在しない場合のクラッシュを防ぐ
-    if sys.stderr is not None:
-        try:
-            print(error_msg, file=sys.stderr)
-        except Exception:
-            pass
+    logging.critical(f"Uncaught exception:\n{error_msg}")
     
     # 既にQApplicationが存在するかチェックし、なければ作成
     from PyQt6.QtWidgets import QApplication, QMessageBox
@@ -23,7 +60,7 @@ def global_exception_handler(exctype, value, tb):
     msg_box = QMessageBox()
     msg_box.setIcon(QMessageBox.Icon.Critical)
     msg_box.setWindowTitle("Critical Error")
-    msg_box.setText("An unexpected error occurred during startup:")
+    msg_box.setText("An unexpected error occurred.\nPlease check the log file for details.")
     msg_box.setDetailedText(error_msg)
     msg_box.exec()
     sys.exit(1)

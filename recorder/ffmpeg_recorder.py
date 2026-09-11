@@ -214,14 +214,50 @@ class FFmpegRecorder:
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
             startupinfo.wShowWindow = subprocess.SW_HIDE
         
-        self.process = subprocess.Popen(
-            cmd,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.DEVNULL,
-            stderr=self.log_file,
-            creationflags=creationflags,
-            startupinfo=startupinfo
-        )
+        import logging
+        logging.debug(f"[FFmpegRecorder] Starting FFmpeg with command: {' '.join(cmd)}")
+        
+        try:
+            # CREATE_NEW_PROCESS_GROUP を追加して、CTRL_BREAK_EVENT が親プロセス(アプリ本体)を巻き込んでクラッシュさせるのを防ぐ
+            if os.name == 'nt':
+                creationflags |= subprocess.CREATE_NEW_PROCESS_GROUP
+
+            self.process = subprocess.Popen(
+                cmd,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=self.log_file,
+                creationflags=creationflags,
+                startupinfo=startupinfo
+            )
+        except Exception as e:
+            logging.error(f"[FFmpegRecorder] Failed to start FFmpeg process: {e}")
+            raise
+
+        # 起動直後にクラッシュしていないか確認
+        import time
+        time.sleep(0.5)
+        if self.process.poll() is not None:
+            error_msg = f"FFmpeg process crashed immediately with code {self.process.returncode}"
+            logging.error(f"[FFmpegRecorder] {error_msg}")
+            
+            # エラーログの内容を読み取ってメインログにも出力する
+            if self.log_file:
+                self.log_file.flush()
+                try:
+                    with open(error_log_path, "r", encoding="utf-8", errors="replace") as f:
+                        lines = f.readlines()
+                        if lines:
+                            logging.error("[FFmpegRecorder] --- FFmpeg Error Log ---")
+                            for line in lines[-20:]:
+                                logging.error(line.strip())
+                            logging.error("--------------------------------")
+                except Exception as read_err:
+                    logging.error(f"[FFmpegRecorder] Could not read ffmpeg_error.log: {read_err}")
+                    
+            raise RuntimeError(error_msg)
+            
+        logging.info(f"[FFmpegRecorder] FFmpeg process started successfully (PID: {self.process.pid})")
         
         # FFmpegプロセス起動完了までの間にキャプチャされた古い音声データを破棄する。
         # これを行わないと、映像キャプチャ開始前の音声が先頭に挿入され、音声が先行する音ズレが発生する。
@@ -239,18 +275,20 @@ class FFmpegRecorder:
     def stop_recording(self):
         self.stop_event.set()
         
+        import logging
         if self.process:
             # 1. FFmpegに終了シグナルを送信して安全に終了させる
             # stdinは生データ(pipe:0)を受け取っているため、EOFだけでは映像入力(ddagrab等)が終了せずハングアップする。
             # そのため、明示的にシグナルを送って正常な終了処理(moovアトム書き込み)を開始させる。
             # スレッドのjoin前にシグナルを送ることで、write()でブロックしているスレッドを解放する。
             try:
+                logging.debug(f"[FFmpegRecorder] Sending stop signal to FFmpeg (PID: {self.process.pid})")
                 if os.name == 'nt':
                     os.kill(self.process.pid, signal.CTRL_BREAK_EVENT)
                 else:
                     self.process.send_signal(signal.SIGINT)
-            except Exception:
-                pass
+            except Exception as e:
+                logging.warning(f"[FFmpegRecorder] Failed to send stop signal: {e}")
 
         # 2. 音声キャプチャと書き込みスレッドを安全に終了させる
         if self.audio_record_thread:
@@ -276,7 +314,7 @@ class FFmpegRecorder:
             returncode = self.process.poll()
             # WindowsでCTRL_BREAK_EVENTを送った場合、終了コードは255や3221225786、3221225477(0xC0000005)になるため正常とみなす
             if returncode is not None and returncode != 0 and returncode not in (255, 3221225786, 3221225477):
-                print(f"[FFmpegRecorder] FFmpeg exited abnormally with code {returncode}")
+                logging.error(f"[FFmpegRecorder] FFmpeg exited abnormally with code {returncode}")
                 # 異常終了時のみログを出力
                 if self.current_filepath:
                     log_path = os.path.join(os.path.dirname(self.current_filepath), "ffmpeg_error.log")
@@ -285,12 +323,14 @@ class FFmpegRecorder:
                             with open(log_path, "r", encoding="utf-8", errors="replace") as f:
                                 lines = f.readlines()
                                 if lines:
-                                    print("\n=== FFmpeg Error Log (Last 20 lines) ===")
+                                    logging.error("[FFmpegRecorder] === FFmpeg Error Log (Last 20 lines) ===")
                                     for line in lines[-20:]:
-                                        print(line.strip())
-                                    print("========================================\n")
+                                        logging.error(line.strip())
+                                    logging.error("========================================")
                         except Exception as e:
-                            print(f"[FFmpegRecorder] Could not read log file: {e}")
+                            logging.error(f"[FFmpegRecorder] Could not read log file: {e}")
+            else:
+                logging.debug(f"[FFmpegRecorder] FFmpeg exited normally with code {returncode}")
                             
             self.process = None
             
@@ -302,7 +342,7 @@ class FFmpegRecorder:
         # クラッシュ時でもMKVは正常な状態が保たれるため、ここでMP4に変換することで破損を防ぐ
         if self.temp_filepath and os.path.exists(self.temp_filepath):
             try:
-                print(f"[FFmpegRecorder] Remuxing MKV to MP4: {self.temp_filepath} -> {self.current_filepath}")
+                logging.info(f"[FFmpegRecorder] Remuxing MKV to MP4: {self.temp_filepath} -> {self.current_filepath}")
                 remux_cmd = [
                     self.ffmpeg_path,
                     "-y",
@@ -328,11 +368,11 @@ class FFmpegRecorder:
                 )
                 if remux_process.returncode == 0:
                     os.remove(self.temp_filepath)
-                    print("[FFmpegRecorder] Remux completed successfully.")
+                    logging.info("[FFmpegRecorder] Remux completed successfully.")
                 else:
-                    print(f"[FFmpegRecorder] Remux failed with code {remux_process.returncode}")
+                    logging.error(f"[FFmpegRecorder] Remux failed with code {remux_process.returncode}")
             except Exception as e:
-                print(f"[FFmpegRecorder] Remux exception: {e}")
+                logging.error(f"[FFmpegRecorder] Remux exception: {e}")
 
     def set_low_priority(self):
         """

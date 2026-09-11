@@ -7,6 +7,8 @@ from PyQt6.QtCore import QCoreApplication, Qt, pyqtSignal
 import traceback
 import threading
 from core.config import Config
+from core.i18n import get_trans
+from core.env_tester import EnvTesterThread
 from ui.watcher_thread import WatcherThread
 from ui.settings_tab import SettingsTab
 from ui.player_tab import PlayerTab
@@ -38,6 +40,7 @@ class MainWindow(QMainWindow):
         self._pending_update = None
         
         self.config = Config()
+        self.t = get_trans(self.config.LANGUAGE)
         
         self.stacked_widget = QStackedWidget()
         self.setCentralWidget(self.stacked_widget)
@@ -54,9 +57,9 @@ class MainWindow(QMainWindow):
         self.player_tab.videoPageVisible.connect(self._on_video_page_visible)
         self.stacked_widget.currentChanged.connect(self._on_main_tab_changed)
         
-        self.statusBar().showMessage("Initializing...")
+        self.statusBar().showMessage(getattr(self.t, 'initializing', "Initializing..."))
         
-        self.rec_button = QPushButton("🔴 Start Recording")
+        self.rec_button = QPushButton(getattr(self.t, 'start_recording', "🔴 Start Recording"))
         self.rec_button.setCheckable(True)
         self.rec_button.clicked.connect(self.toggle_recording)
         self.statusBar().addPermanentWidget(self.rec_button)
@@ -72,6 +75,60 @@ class MainWindow(QMainWindow):
         self.watcher_thread.recording_state_changed.connect(self.update_rec_button)
         self.watcher_thread.recording_state_changed.connect(self.show_recording_notification)
         self.watcher_thread.start()
+        
+        # 起動時の自動アップデート確認と環境テスト
+        self._check_for_updates()
+        self._run_env_tests()
+
+    def _run_env_tests(self):
+        self.env_tester = EnvTesterThread(self.config)
+        self.env_tester.finished_signal.connect(self._on_env_test_finished)
+        self.env_tester.start()
+
+    def _on_env_test_finished(self, successes, errors):
+        # 起動時はエラーがあった場合のみポップアップを表示する
+        if errors:
+            title = getattr(self.t, 'env_test_failed_title', "Environment Test Failed")
+            msg_template = getattr(self.t, 'env_test_failed_msg', "Some environment tests failed:\n\n{errors}")
+            
+            summary_text = "\n".join([f"- {e[0]}" for e in errors])
+            detailed_text = "\n\n".join([f"[{e[0]}]\n{e[1]}" for e in errors])
+            
+            # ゲームの邪魔にならないよう、ウィンドウがアクティブな時だけダイアログを出す
+            if self.isActiveWindow() or not self.isHidden():
+                msg_box = QMessageBox(self)
+                msg_box.setIcon(QMessageBox.Icon.Warning)
+                msg_box.setWindowTitle(title)
+                msg_box.setText(msg_template.format(errors=summary_text))
+                
+                # 詳細なエラーログをポップアップ内に格納
+                msg_box.setDetailedText(detailed_text)
+                
+                # ログをコピーするボタンを追加
+                copy_button = msg_box.addButton(getattr(self.t, 'copy_log', "Copy Log"), QMessageBox.ButtonRole.ActionRole)
+                msg_box.addButton(QMessageBox.StandardButton.Close)
+                
+                msg_box.exec()
+                
+                if msg_box.clickedButton() == copy_button:
+                    from PyQt6.QtGui import QGuiApplication
+                    QGuiApplication.clipboard().setText(detailed_text)
+                    
+                    # コピー完了のフィードバック
+                    copied_text = getattr(self.t, 'copied_to_clipboard', "Copied!")
+                    QMessageBox.information(self, "Copied", copied_text)
+            else:
+                self.statusBar().showMessage(f"Environment Test Failed: {len(errors)} errors")
+
+    def _check_for_updates(self):
+        api_url = getattr(self.config, 'UPDATE_API_URL', None)
+        if api_url:
+            self.update_checker = UpdateCheckerThread(api_url)
+            self.update_checker.update_available.connect(self.show_update_dialog)
+            self.update_checker.error_occurred.connect(lambda err: self.statusBar().showMessage(f"Update Error: {err}"))
+            self.update_checker.start()
+        else:
+            print("[MainWindow] UPDATE_API_URL is not set. Update checker skipped.")
 
     def _setup_exception_handlers(self):
         def exception_hook(exc_type, exc_value, exc_traceback):
@@ -107,16 +164,6 @@ class MainWindow(QMainWindow):
             QApplication.clipboard().setText(error_msg)
             QMessageBox.information(self, "Copied", "Error message copied to clipboard.\nエラーメッセージをクリップボードにコピーしました。")
 
-        # アップデート確認スレッドの開始
-        api_url = getattr(self.config, 'UPDATE_API_URL', None)
-        if api_url:
-            self.update_checker = UpdateCheckerThread(api_url)
-            self.update_checker.update_available.connect(self.show_update_dialog)
-            self.update_checker.error_occurred.connect(lambda err: self.statusBar().showMessage(f"Update Error: {err}"))
-            self.update_checker.start()
-        else:
-            print("[MainWindow] UPDATE_API_URL is not set. Update checker skipped.")
-
     def show_update_dialog(self, latest_version, download_url):
         # ゲーム中などにフォーカスを奪わないよう、非アクティブ時はトースト通知すら出さず、フラグのみ立てる
         if self.isHidden() or not self.isActiveWindow():
@@ -124,15 +171,17 @@ class MainWindow(QMainWindow):
             return
 
         msg_box = QMessageBox(self)
-        msg_box.setWindowTitle("アップデートのお知らせ")
-        msg_box.setText(f"新しいバージョン ({latest_version}) が利用可能です。\n現在のバージョン: {APP_VERSION}\n\n今すぐアップデートしますか？")
+        msg_box.setWindowTitle(getattr(self.t, 'update_available_title', "Update Available"))
+        msg_text = getattr(self.t, 'update_available_msg', "A new version ({latest}) is available.\nCurrent version: {current}\n\nDo you want to update now?").format(latest=latest_version, current=APP_VERSION)
+        msg_box.setText(msg_text)
         msg_box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        msg_box.button(QMessageBox.StandardButton.Yes).setText("今すぐアップデート")
-        msg_box.button(QMessageBox.StandardButton.No).setText("後で")
+        msg_box.button(QMessageBox.StandardButton.Yes).setText(getattr(self.t, 'update_now', "Update Now"))
+        msg_box.button(QMessageBox.StandardButton.No).setText(getattr(self.t, 'update_later', "Later"))
         
         if msg_box.exec() == QMessageBox.StandardButton.Yes:
-            self.progress_dialog = QProgressDialog("アップデートをダウンロード中...", "キャンセル", 0, 0, self)
-            self.progress_dialog.setWindowTitle("アップデート")
+            cancel_text = getattr(self.t, 'cancel', "Cancel")
+            self.progress_dialog = QProgressDialog(getattr(self.t, 'update_downloading', "Downloading update..."), cancel_text, 0, 0, self)
+            self.progress_dialog.setWindowTitle(getattr(self.t, 'update_available_title', "Update"))
             self.progress_dialog.setWindowModality(Qt.WindowModality.WindowModal)
             self.progress_dialog.setCancelButton(None)
             self.progress_dialog.show()
@@ -146,8 +195,10 @@ class MainWindow(QMainWindow):
             self.progress_dialog.close()
             
         if not success:
-            QMessageBox.critical(self, "アップデート失敗", f"アップデートの適用に失敗しました:\n{error_message}")
-            self.statusBar().showMessage("アップデート失敗")
+            title = getattr(self.t, 'update_failed_title', "Update Failed")
+            msg = getattr(self.t, 'update_failed_msg', "Failed to apply update:\n{error}").format(error=error_message)
+            QMessageBox.critical(self, title, msg)
+            self.statusBar().showMessage(title)
         else:
             self.quit_app()
 
@@ -222,7 +273,7 @@ class MainWindow(QMainWindow):
         self.rec_button.setChecked(is_recording)
         self.rec_button.blockSignals(False)
         if is_recording:
-            self.rec_button.setText("⏹ Stop Recording")
+            self.rec_button.setText(getattr(self.t, 'stop_recording', "⏹ Stop Recording"))
             # 録画開始時、リソース競合を防ぐために動画再生を一時停止する
             if hasattr(self, 'player_tab') and hasattr(self.player_tab, 'video_page'):
                 try:
@@ -230,7 +281,7 @@ class MainWindow(QMainWindow):
                 except Exception as e:
                     print(f"[MainWindow] Failed to pause video on recording start: {e}")
         else:
-            self.rec_button.setText("🔴 Start Recording")
+            self.rec_button.setText(getattr(self.t, 'start_recording', "🔴 Start Recording"))
 
     def show_recording_notification(self, is_recording):
         # ゲーム中（試合中）かどうかを取得
@@ -253,9 +304,9 @@ class MainWindow(QMainWindow):
         else:
             # 試合開始時の自動録画や、ゲーム外での操作の場合は通常通りポップアップを表示（ビープ音は鳴らさない）
             if is_recording:
-                self.notification_overlay.show_message("🔴 録画を開始しました", 3000)
+                self.notification_overlay.show_message(getattr(self.t, 'recording_started', "🔴 Recording started"), 3000)
             else:
-                self.notification_overlay.show_message("⏹ 録画を終了しました", 3000)
+                self.notification_overlay.show_message(getattr(self.t, 'recording_stopped', "⏹ Recording stopped"), 3000)
 
     def update_status(self, message: str):
         # バックグラウンドでの頻繁なUI更新はフルスクリーンゲームのフォーカスを奪う原因になるため、
@@ -268,7 +319,7 @@ class MainWindow(QMainWindow):
         # ウィンドウの閉じるボタンが押された時は非表示にしてトレイに格納する
         event.ignore()
         self.hide()
-        self.tray_icon.showMessage("ValoReco", "バックグラウンドで実行を継続します", QSystemTrayIcon.MessageIcon.Information, 3000)
+        # システム通知(トースト)は無効化
 
     def hideEvent(self, event):
         super().hideEvent(event)

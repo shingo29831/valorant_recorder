@@ -2,8 +2,11 @@ import os
 from PyQt6.QtWidgets import (QWidget, QFormLayout, QComboBox, QLineEdit, 
                              QPushButton, QHBoxLayout, QVBoxLayout, QLabel, 
                              QSpinBox, QDialog, QMessageBox, QCheckBox)
+from PyQt6.QtGui import QGuiApplication, QDesktopServices
+from PyQt6.QtCore import QUrl
 from ui.settings_utils import change_save_directory
 from core.autostart import set_autostart
+import logging
 
 class GeneralSettingsWidget(QWidget):
     def __init__(self, config, t, parent=None):
@@ -62,14 +65,103 @@ class GeneralSettingsWidget(QWidget):
         self.check_update_btn = QPushButton(self.t.check_update)
         self.check_update_btn.clicked.connect(self._check_update)
         
+        self.run_test_btn = QPushButton(getattr(self.t, 'run_env_test', "Run Environment Test"))
+        self.run_test_btn.clicked.connect(self._run_env_test)
+        
+        self.open_log_btn = QPushButton(getattr(self.t, 'open_log_folder', "Open Log Folder"))
+        self.open_log_btn.clicked.connect(self._open_log_folder)
+        
+        self.copy_log_btn = QPushButton(getattr(self.t, 'copy_log', "Copy Log to Clipboard"))
+        self.copy_log_btn.clicked.connect(self._copy_log)
+        
+        log_layout = QHBoxLayout()
+        log_layout.addWidget(self.open_log_btn)
+        log_layout.addWidget(self.copy_log_btn)
+        
         layout.addRow(self.t.language, self.language_input)
         layout.addRow(self.t.save_directory, save_dir_layout)
         layout.addRow(self.t.clip_save_directory, clip_dir_layout)
         layout.addRow(self.t.auto_delete_after_days, auto_delete_layout)
         layout.addRow(self.t.auto_start, self.auto_start_checkbox)
+        layout.addRow(getattr(self.t, 'app_logs', "App Logs"), log_layout)
+        layout.addRow("", self.run_test_btn)
         layout.addRow("", self.check_update_btn)
         
         self.setLayout(layout)
+
+    def _run_env_test(self):
+        self.run_test_btn.setEnabled(False)
+        self.run_test_btn.setText(getattr(self.t, 'env_test_running', "Running tests..."))
+        
+        from core.env_tester import EnvTesterThread
+        self.env_tester = EnvTesterThread(self.config)
+        self.env_tester.finished_signal.connect(self._on_env_test_finished)
+        self.env_tester.start()
+
+    def _on_env_test_finished(self, successes, errors):
+        self.run_test_btn.setEnabled(True)
+        self.run_test_btn.setText(getattr(self.t, 'run_env_test', "Run Environment Test"))
+        
+        if not errors:
+            title = getattr(self.t, 'env_test_success_title', "Test Passed")
+            msg_template = getattr(self.t, 'env_test_success_msg', "All environment tests passed successfully:\n\n{successes}")
+            success_text = "\n".join([f"✅ {s}" for s in successes])
+            QMessageBox.information(self, title, msg_template.format(successes=success_text))
+        else:
+            title = getattr(self.t, 'env_test_failed_title', "Environment Test Failed")
+            msg_template = getattr(self.t, 'env_test_mixed_msg', "Test completed with some errors.\n\n[Passed]\n{successes}\n\n[Failed]\n{errors}")
+            
+            success_text = "\n".join([f"✅ {s}" for s in successes]) if successes else "None"
+            error_summary = "\n".join([f"❌ {e[0]}" for e in errors])
+            detailed_text = "\n\n".join([f"[{e[0]}]\n{e[1]}" for e in errors])
+            
+            msg_box = QMessageBox(self)
+            msg_box.setIcon(QMessageBox.Icon.Warning)
+            msg_box.setWindowTitle(title)
+            msg_box.setText(msg_template.format(successes=success_text, errors=error_summary))
+            msg_box.setDetailedText(detailed_text)
+            
+            copy_button = msg_box.addButton(getattr(self.t, 'copy_log', "Copy Log"), QMessageBox.ButtonRole.ActionRole)
+            msg_box.addButton(QMessageBox.StandardButton.Close)
+            
+            msg_box.exec()
+            
+            if msg_box.clickedButton() == copy_button:
+                from PyQt6.QtGui import QGuiApplication
+                QGuiApplication.clipboard().setText(detailed_text)
+                QMessageBox.information(self, "Copied", getattr(self.t, 'copied_to_clipboard', "Copied!"))
+
+    def _open_log_folder(self):
+        log_dir = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'ValorantRecorder')
+        if os.path.exists(log_dir):
+            QDesktopServices.openUrl(QUrl.fromLocalFile(log_dir))
+        else:
+            QMessageBox.warning(self, "Not Found", getattr(self.t, 'log_not_found', "Log directory not found."))
+
+    def _copy_log(self):
+        log_file = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'ValorantRecorder', 'app.log')
+        if os.path.exists(log_file):
+            try:
+                with open(log_file, 'r', encoding='utf-8') as f:
+                    log_content = f.read()
+                clipboard = QGuiApplication.clipboard()
+                clipboard.setText(log_content)
+                
+                # ポップアップを出さず、ボタンのテキストを一時的に変更する
+                original_text = self.copy_log_btn.text()
+                self.copy_log_btn.setText(getattr(self.t, 'copied_to_clipboard', "Copied!"))
+                self.copy_log_btn.setEnabled(False)
+                
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(2000, lambda: self._reset_copy_btn(original_text))
+            except Exception as e:
+                QMessageBox.warning(self, "Error", f"Failed to read log file: {e}")
+        else:
+            QMessageBox.warning(self, "Not Found", getattr(self.t, 'log_not_found', "Log file not found."))
+
+    def _reset_copy_btn(self, original_text):
+        self.copy_log_btn.setText(original_text)
+        self.copy_log_btn.setEnabled(True)
 
     def _check_update(self):
         from core.updater import UpdateCheckerThread

@@ -134,6 +134,30 @@ class Translations:
     log_bg_error: str
     log_app_initialized: str
     log_fatal_error: str
+    app_logs: str
+    open_log_folder: str
+    copy_log: str
+    copied_to_clipboard: str
+    log_not_found: str
+    initializing: str
+    start_recording: str
+    stop_recording: str
+    recording_started: str
+    recording_stopped: str
+    update_available_title: str
+    update_available_msg: str
+    update_now: str
+    update_later: str
+    update_downloading: str
+    update_failed_title: str
+    update_failed_msg: str
+    env_test_failed_title: str
+    env_test_failed_msg: str
+    run_env_test: str
+    env_test_running: str
+    env_test_success_title: str
+    env_test_success_msg: str
+    env_test_mixed_msg: str
 
 EN = Translations(
     settings_title="APPLICATION SETTINGS",
@@ -267,7 +291,31 @@ EN = Translations(
     log_bg_custom_or_unavailable="[Background] Video {file} is likely a custom match or API not available. Skipping.",
     log_bg_error="[Background] Error: {error}",
     log_app_initialized="Valorant Recorder App initialized. Watching logs...",
-    log_fatal_error="Fatal error: {error}"
+    log_fatal_error="Fatal error: {error}",
+    app_logs="App Logs:",
+    open_log_folder="Open Log Folder",
+    copy_log="Copy Log to Clipboard",
+    copied_to_clipboard="Copied!",
+    log_not_found="Log file/directory not found.",
+    initializing="Initializing...",
+    start_recording="🔴 Start Recording",
+    stop_recording="⏹ Stop Recording",
+    recording_started="🔴 Recording started",
+    recording_stopped="⏹ Recording stopped",
+    update_available_title="Update Available",
+    update_available_msg="A new version ({latest}) is available.\nCurrent version: {current}\n\nDo you want to update now?",
+    update_now="Update Now",
+    update_later="Later",
+    update_downloading="Downloading update...",
+    update_failed_title="Update Failed",
+    update_failed_msg="Failed to apply update:\n{error}",
+    env_test_failed_title="Environment Test Failed",
+    env_test_failed_msg="Some environment tests failed. Recording may not work properly:\n\n{errors}\n\nPlease check the app logs for details.",
+    run_env_test="Run Environment Test",
+    env_test_running="Running tests...",
+    env_test_success_title="Test Passed",
+    env_test_success_msg="All environment tests passed successfully:\n\n{successes}",
+    env_test_mixed_msg="Test completed with some errors.\n\n[Passed]\n{successes}\n\n[Failed]\n{errors}"
 )
 
 JA = Translations(
@@ -402,7 +450,31 @@ JA = Translations(
     log_bg_custom_or_unavailable="[Background] 動画 {file} はカスタムマッチかAPIが利用できない可能性があります。スキップします。",
     log_bg_error="[Background] エラー: {error}",
     log_app_initialized="Valorant Recorder アプリが初期化されました。ログを監視しています...",
-    log_fatal_error="致命的なエラー: {error}"
+    log_fatal_error="致命的なエラー: {error}",
+    app_logs="アプリログ:",
+    open_log_folder="ログフォルダを開く",
+    copy_log="ログをクリップボードにコピー",
+    copied_to_clipboard="コピーしました",
+    log_not_found="ログファイル/ディレクトリが見つかりません。",
+    initializing="初期化中...",
+    start_recording="🔴 録画開始",
+    stop_recording="⏹ 録画停止",
+    recording_started="🔴 録画を開始しました",
+    recording_stopped="⏹ 録画を終了しました",
+    update_available_title="アップデートのお知らせ",
+    update_available_msg="新しいバージョン ({latest}) が利用可能です。\n現在のバージョン: {current}\n\n今すぐアップデートしますか？",
+    update_now="今すぐアップデート",
+    update_later="後で",
+    update_downloading="アップデートをダウンロード中...",
+    update_failed_title="アップデート失敗",
+    update_failed_msg="アップデートの適用に失敗しました:\n{error}",
+    env_test_failed_title="環境テスト失敗",
+    env_test_failed_msg="一部の環境テストに失敗しました。録画が正常に動作しない可能性があります:\n\n{errors}\n\n詳細はアプリログを確認してください。",
+    run_env_test="環境テストを実行",
+    env_test_running="テスト実行中...",
+    env_test_success_title="テスト成功",
+    env_test_success_msg="すべての環境テストに成功しました:\n\n{successes}",
+    env_test_mixed_msg="一部のテストに失敗しました。\n\n[成功]\n{successes}\n\n[失敗]\n{errors}"
 )
 
 def get_trans(lang_code: str) -> Translations:

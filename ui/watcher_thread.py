@@ -21,7 +21,7 @@ class WatcherThread(QThread):
         super().__init__()
         self.config = config
         self.t = get_trans(self.config.LANGUAGE)
-        self.store = MetadataStore(save_dir=self.config.SAVE_DIR)
+        self.store = MetadataStore(config=self.config)
         self.recorder = FFmpegRecorder(config=self.config)
         self.watcher = LogWatcher(
             on_match_start=self.handle_match_start,
@@ -125,10 +125,15 @@ class WatcherThread(QThread):
             self.log_signal.emit(self.t.log_match_started)
             
         try:
+            import logging
+            logging.info("[WatcherThread] Attempting to start FFmpeg recording...")
             self.current_video_path = self.recorder.start_recording()
+            logging.info(f"[WatcherThread] Recording successfully started: {self.current_video_path}")
             self.log_signal.emit(self.t.log_recording_to.format(path=self.current_video_path))
             self.recording_state_changed.emit(True)
         except Exception as e:
+            import logging
+            logging.error(f"[WatcherThread] Failed to start recording: {e}")
             self.log_signal.emit(self.t.log_start_failed.format(error=e))
 
     def handle_round_phase_changed(self, phase: str, phase_timestamp: float = None):
