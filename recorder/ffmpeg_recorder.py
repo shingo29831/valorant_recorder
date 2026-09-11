@@ -19,11 +19,9 @@ class FFmpegRecorder:
         self.audio_record_thread = None
         self.audio_write_thread = None
         self.stop_event = threading.Event()
-        # maxsize=1200 (約60秒分) に設定。
-        # 60秒分の音声データは約23MBでありメモリを圧迫しない。
-        # 一時的なエンコード遅延では音声を捨てず（音質劣化なし）、
-        # 致命的な遅延が発生した時のみ古いデータを捨てる安全弁とする。
-        self.audio_queue = queue.Queue(maxsize=1200)
+        # メモリ節約とリアルタイム性向上のため、バッファサイズを大幅に縮小
+        # maxsize=100 (約5秒分)。遅延が蓄積する前に古いデータを破棄し、映像のカクつき(フレームドロップ)を防ぐ。
+        self.audio_queue = queue.Queue(maxsize=100)
         
         # Nuitkaの実行時一時ディレクトリではなく、永続的なディレクトリにダウンロードする
         app_data_dir = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'ValoReco')
@@ -90,7 +88,7 @@ class FFmpegRecorder:
         
         if self.config.RECORD_VIDEO_FORMAT == "ddagrab":
             cmd.extend([
-                "-thread_queue_size", "16384",
+                "-thread_queue_size", "2048",  # メモリ節約と遅延防止のため縮小
                 "-f", "lavfi",
                 "-i", f"ddagrab=framerate={self.config.RECORD_FPS}"
             ])
@@ -99,8 +97,8 @@ class FFmpegRecorder:
             video_map = "[v_out]"
         else:
             cmd.extend([
-                "-thread_queue_size", "16384",
-                "-rtbufsize", "1024M",  # キャプチャバッファを増やしてドロップを防ぐ
+                "-thread_queue_size", "2048",  # メモリ節約と遅延防止のため縮小
+                "-rtbufsize", "256M",          # メモリ節約
                 "-use_wallclock_as_timestamps", "1",
                 "-f", self.config.RECORD_VIDEO_FORMAT,
                 "-framerate", self.config.RECORD_FPS,
@@ -153,7 +151,7 @@ class FFmpegRecorder:
         filter_complex += "[a1_raw]aresample=async=1[a1_out]"
 
         cmd.extend([
-            "-thread_queue_size", "16384",
+            "-thread_queue_size", "2048",
             # 音声(pipe:0)に対する wallclock タイムスタンプは、映像との激しい非同期(dup大量発生)を引き起こすため削除
             "-f", "f32le",
             "-ar", "48000",
@@ -278,17 +276,16 @@ class FFmpegRecorder:
         import logging
         if self.process:
             # 1. FFmpegに終了シグナルを送信して安全に終了させる
-            # stdinは生データ(pipe:0)を受け取っているため、EOFだけでは映像入力(ddagrab等)が終了せずハングアップする。
-            # そのため、明示的にシグナルを送って正常な終了処理(moovアトム書き込み)を開始させる。
-            # スレッドのjoin前にシグナルを送ることで、write()でブロックしているスレッドを解放する。
-            try:
-                logging.debug(f"[FFmpegRecorder] Sending stop signal to FFmpeg (PID: {self.process.pid})")
-                if os.name == 'nt':
-                    os.kill(self.process.pid, signal.CTRL_BREAK_EVENT)
-                else:
-                    self.process.send_signal(signal.SIGINT)
-            except Exception as e:
-                logging.warning(f"[FFmpegRecorder] Failed to send stop signal: {e}")
+            # プロセスが既に終了している場合はシグナルを送らない (WinError 6 対策)
+            if self.process.poll() is None:
+                try:
+                    logging.debug(f"[FFmpegRecorder] Sending stop signal to FFmpeg (PID: {self.process.pid})")
+                    if os.name == 'nt':
+                        os.kill(self.process.pid, signal.CTRL_BREAK_EVENT)
+                    else:
+                        self.process.send_signal(signal.SIGINT)
+                except Exception as e:
+                    logging.warning(f"[FFmpegRecorder] Failed to send stop signal: {e}")
 
         # 2. 音声キャプチャと書き込みスレッドを安全に終了させる
         if self.audio_record_thread:

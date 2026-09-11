@@ -10,6 +10,14 @@ add_library(audio_processor SHARED
     AudioProcessor.h
 )
 
+# 新しい録画コア (DLL)
+add_library(native_recorder SHARED
+    NativeRecorder.cpp
+    NativeRecorder.h
+    WasapiCapture.cpp
+    WasapiCapture.h
+)
+
 # --- サードパーティライブラリのパス設定 ---
 set(THIRD_PARTY_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../third_party")
 
@@ -36,6 +44,16 @@ target_link_libraries(audio_processor PRIVATE
     ws2_32.lib
     userenv.lib
     advapi32.lib
+)
+
+# 録画コアに必要なWindows APIライブラリを追加
+target_link_libraries(native_recorder PRIVATE
+    mmdevapi.lib
+    ole32.lib
+    oleaut32.lib
+    avrt.lib
+    d3d11.lib
+    dxgi.lib
 )
 
 # --- 実行時バイナリのコピー ---

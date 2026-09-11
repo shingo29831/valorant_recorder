@@ -21,10 +21,9 @@ class AudioCaptureThread(threading.Thread):
         warnings.filterwarnings("ignore", message=".*data discontinuity.*")
         
         samplerate = 48000
-        # AIノイズキャンセル(DeepFilterNet)やSpeexDSPは10ms(480サンプル)単位での処理を要求するため、
-        # 480の倍数であり、かつモニター時と同じ安定したバッファサイズである2400(50ms)に設定する。
-        # バッファが小さすぎると処理落ち(ドロップアウト)が発生しプツプツ音の原因になる。
-        frames_per_buffer = 2400
+        # メモリ節約とCPU負荷軽減(コンテキストスイッチ削減)のため、バッファサイズを拡大
+        # 4800(100ms)にすることで、Python側のループ回数を半減させ、FFmpegへのデータ供給を安定させる
+        frames_per_buffer = 4800
         mic_gain = float(getattr(self.config, 'RECORD_AUDIO_MIC_GAIN', '1.0'))
         system_gain = float(getattr(self.config, 'RECORD_AUDIO_SYSTEM_GAIN', '1.0'))
         
@@ -67,8 +66,9 @@ class AudioCaptureThread(threading.Thread):
                 if self.audio_ready_event:
                     self.audio_ready_event.set()
 
-                mic_queue = queue.Queue()
-                spk_queue = queue.Queue()
+                # メモリ節約のため、内部キューのサイズを制限 (約2秒分)
+                mic_queue = queue.Queue(maxsize=20)
+                spk_queue = queue.Queue(maxsize=20)
                 worker_stop = threading.Event()
                 
                 def mic_worker():
