@@ -20,7 +20,7 @@ class LogWatcher:
         self.has_entered_in_progress = False
         self.is_range = False
         self.current_map_name = "Unknown"
-        self.map_name_pattern = re.compile(r"Map Name:\s*(.*?)\s*\|")
+        self.map_name_pattern = re.compile(r"(?:Map Name:\s*|\[Map:\s*)(.*?)(?:\s*\||\s*\])")
         self.state_transition_pattern = re.compile(r"(?:State:|Match State Changed from)\s*(\w+)\s*(?:->|to)\s*(\w+)")
         self.time_pattern = re.compile(r"^\[(\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2}:\d{3})\]")
 
@@ -72,17 +72,17 @@ class LogWatcher:
                         continue
 
                     # マップロード時に射撃訓練場(Range)かどうかを判定し、マップ名も抽出
-                    if "LogMapLoadModel: Update:" in line and "Map Name:" in line:
+                    if "LogMapLoadModel: Update:" in line:
                         map_match = self.map_name_pattern.search(line)
                         if map_match:
                             extracted_map_name = map_match.group(1).strip()
                             # メインメニューやキャラセレなどの非プレイ用マップ名は無視して上書きを防ぐ
-                            if extracted_map_name.lower() not in ["mainmenuv2", "mainmenu", "characterselect"]:
+                            if extracted_map_name.lower() not in ["mainmenuv2", "mainmenu", "characterselect", "characterselectpersistentlevel"]:
                                 self.current_map_name = extracted_map_name
                             
                         line_lower = line.lower()
                         # 最近のアップデートで射撃訓練場が「Basic Training」等に変更されたケースに対応
-                        if any(x in line_lower for x in ["range", "poveglia", "basictraining", "shooting", "tutorial"]):
+                        if any(x in line_lower for x in ["range", "rangev2", "poveglia", "basictraining", "shooting", "tutorial"]):
                             self.is_range = True
                         else:
                             self.is_range = False

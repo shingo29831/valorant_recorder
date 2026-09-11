@@ -94,7 +94,7 @@ class WatcherThread(QThread):
 
     def handle_match_start(self, is_range: bool, match_start_timestamp: float = None, is_recovery: bool = False):
         map_name = getattr(self.watcher, 'current_map_name', '').lower()
-        if is_range or map_name in ['the range', 'range', 'poveglia']:
+        if is_range or map_name in ['the range', 'range', 'rangev2', 'poveglia', 'basictraining', 'shooting', 'tutorial']:
             self.log_signal.emit("[Recorder] 射撃訓練場(Range)を検知しました。録画とAPI取得をスキップします。")
             return
             
@@ -488,6 +488,34 @@ class WatcherThread(QThread):
             
             # --- 1. 録画プロセスの死活監視と自動再開 (クラッシュ対策) ---
             if self.current_video_path is not None and getattr(self.watcher, 'is_in_match', False):
+                # 録画開始後にマップ名が遅れて判明し、射撃場だった場合のキャンセル処理
+                map_name = getattr(self.watcher, 'current_map_name', '').lower()
+                is_range = getattr(self.watcher, 'is_range', False)
+                if is_range or map_name in ['the range', 'range', 'rangev2', 'poveglia', 'basictraining', 'shooting', 'tutorial']:
+                    self.log_signal.emit("[Recorder] 録画中に射撃場(Range)への遷移を検知しました。録画をキャンセルします。")
+                    video_to_delete = self.current_video_path
+                    self.current_video_path = None
+                    self.recording_state_changed.emit(False)
+                    self.watcher.is_in_match = False
+                    
+                    try:
+                        self.recorder.stop_recording()
+                    except Exception as e:
+                        self.log_signal.emit(f"[Error] Failed to stop recording during cancel: {e}")
+                        
+                    # 少し待ってからファイルを削除
+                    def delete_cancelled_video(path):
+                        time.sleep(2)
+                        try:
+                            if os.path.exists(path):
+                                os.remove(path)
+                                self.log_signal.emit(f"[Recorder] Cancelled video file deleted: {path}")
+                        except Exception as e:
+                            self.log_signal.emit(f"[Error] Failed to delete cancelled video: {e}")
+                            
+                    threading.Thread(target=delete_cancelled_video, args=(video_to_delete,), daemon=True).start()
+                    continue
+
                 if self.recorder.process is not None:
                     returncode = self.recorder.process.poll()
                     if returncode is not None:
