@@ -132,6 +132,33 @@ public:
         m_cv.notify_one();
     }
 
+    void DrainKeepLatest(size_t keepSamples) {
+        std::lock_guard<std::mutex> lock(m_mtx);
+        if (m_buffer.size() > keepSamples) {
+            size_t drop = m_buffer.size() - keepSamples;
+            drop = (drop / m_channels) * m_channels;
+            m_buffer.erase(m_buffer.begin(), m_buffer.begin() + drop);
+        }
+    }
+
+    void PopWithLatencyControl(size_t samples, std::vector<float>& out, size_t maxAllowedBuffer) {
+        std::lock_guard<std::mutex> lock(m_mtx);
+        out.assign(samples, 0.0f);
+
+        // バッファ肥大化時は古いサンプルをドレインして実時間に追従
+        if (m_buffer.size() > maxAllowedBuffer) {
+            size_t excess = m_buffer.size() - maxAllowedBuffer;
+            excess = (excess / m_channels) * m_channels;
+            m_buffer.erase(m_buffer.begin(), m_buffer.begin() + excess);
+        }
+
+        size_t available = (std::min)(samples, m_buffer.size());
+        if (available > 0) {
+            std::copy(m_buffer.begin(), m_buffer.begin() + available, out.begin());
+            m_buffer.erase(m_buffer.begin(), m_buffer.begin() + available);
+        }
+    }
+
     void PopExact(size_t samples, std::vector<float>& out) {
         std::lock_guard<std::mutex> lock(m_mtx);
         out.assign(samples, 0.0f);
@@ -320,24 +347,29 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
             ffmpegLogPath = saveDirStr.substr(0, pos) + "/native_ffmpeg.log";
         }
     }
-    
-    SECURITY_ATTRIBUTES saLog;
-    saLog.nLength = sizeof(SECURITY_ATTRIBUTES);
-    saLog.bInheritHandle = TRUE;
-    saLog.lpSecurityDescriptor = NULL;
-    
-    HANDLE hLogFile = CreateFileA(ffmpegLogPath.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &saLog, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (hLogFile == INVALID_HANDLE_VALUE) {
-        hLogFile = CreateFileA("NUL", GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE, &saLog, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+
+    HANDLE hErrReadPipe, hErrWritePipe;
+    SECURITY_ATTRIBUTES saErr;
+    saErr.nLength = sizeof(SECURITY_ATTRIBUTES);
+    saErr.bInheritHandle = TRUE;
+    saErr.lpSecurityDescriptor = NULL;
+
+    if (!CreatePipe(&hErrReadPipe, &hErrWritePipe, &saErr, 0)) {
+        SetLastErrorMsg("Failed to create stderr pipe");
+        CloseHandle(hReadPipe);
+        CloseHandle(hWritePipe);
+        g_isRunning = false;
+        return;
     }
+    SetHandleInformation(hErrReadPipe, HANDLE_FLAG_INHERIT, 0);
 
     STARTUPINFOA si;
     PROCESS_INFORMATION pi;
     ZeroMemory(&si, sizeof(si));
     si.cb = sizeof(si);
     si.hStdInput = hReadPipe;
-    si.hStdOutput = hLogFile;
-    si.hStdError = hLogFile;
+    si.hStdOutput = hErrWritePipe;
+    si.hStdError = hErrWritePipe;
     si.dwFlags |= STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
     si.wShowWindow = SW_HIDE;
     ZeroMemory(&pi, sizeof(pi));
@@ -352,12 +384,40 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
         SetLastErrorMsg("Failed to start FFmpeg process (CreateProcessA error: " + std::to_string(err) + ")");
         CloseHandle(hReadPipe);
         CloseHandle(hWritePipe);
-        if (hLogFile != INVALID_HANDLE_VALUE) CloseHandle(hLogFile);
+        CloseHandle(hErrReadPipe);
+        CloseHandle(hErrWritePipe);
         g_isRunning = false;
         return;
     }
     CloseHandle(hReadPipe);
-    if (hLogFile != INVALID_HANDLE_VALUE) CloseHandle(hLogFile);
+    CloseHandle(hErrWritePipe); // 子プロセスへの継承後に書き込み端を閉じる
+
+    // FFmpegのログを非同期受信し、エンコード開始（ddagrab初期化完了）を検知
+    std::atomic<bool> ffmpegCaptureStarted{false};
+    std::thread logReaderThread([hErrReadPipe, ffmpegLogPath, &ffmpegCaptureStarted]() {
+        std::ofstream logFile(ffmpegLogPath, std::ios::out | std::ios::trunc);
+        char buf[1024];
+        DWORD bytesRead = 0;
+        std::string accumulated;
+
+        while (ReadFile(hErrReadPipe, buf, sizeof(buf) - 1, &bytesRead, NULL) && bytesRead > 0) {
+            buf[bytesRead] = '\0';
+            if (logFile.is_open()) {
+                logFile.write(buf, bytesRead);
+                logFile.flush();
+            }
+            if (!ffmpegCaptureStarted) {
+                accumulated.append(buf, bytesRead);
+                if (accumulated.find("Stream mapping:") != std::string::npos ||
+                    accumulated.find("Press [q]") != std::string::npos ||
+                    accumulated.find("Output #0") != std::string::npos ||
+                    accumulated.find("frame=") != std::string::npos) {
+                    ffmpegCaptureStarted = true;
+                }
+            }
+        }
+        CloseHandle(hErrReadPipe);
+    });
 
     DWORD waitResult = WaitForSingleObject(pi.hProcess, 150);
     if (waitResult == WAIT_OBJECT_0) {
@@ -365,6 +425,7 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
         GetExitCodeProcess(pi.hProcess, &exitCode);
         SetLastErrorMsg("FFmpeg process crashed immediately with exit code " + std::to_string(exitCode));
         CloseHandle(hWritePipe);
+        if (logReaderThread.joinable()) logReaderThread.join();
         CloseHandle(pi.hProcess);
         CloseHandle(pi.hThread);
         g_isRunning = false;
@@ -407,14 +468,25 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
     timeBeginPeriod(1);
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
 
-    // デバイスから最初のデータが届くのを待つジッターバッファ確保(60ms)
-    Sleep(60);
+    // FFmpegがddagrabの初期化を終えてエンコードを開始する瞬間を同期待機（最大800ms）
+    auto syncWaitStart = std::chrono::steady_clock::now();
+    while (g_isRunning && !ffmpegCaptureStarted) {
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - syncWaitStart).count() >= 800) {
+            NativeLog("Notice: Sync wait timed out, starting audio stream with fallback.");
+            break;
+        }
+        Sleep(5);
+    }
+
+    // 初期化待機中に溜まった古いサンプルをドレインし、最新の1チャンクに同期
+    sysQueue.DrainKeepLatest(framesPerChunk * 2);
+    micQueue.DrainKeepLatest(framesPerChunk * 2);
 
     auto startTime = std::chrono::steady_clock::now();
     uint64_t totalWrittenFrames = 0;
     auto lastLogTime = startTime;
 
-    NativeLog("Entering main recording loop (Self-Clocked Exact 48kHz Pipeline)...");
+    NativeLog("Entering main recording loop (A/V Aligned 48kHz Pipeline)...");
 
     while (g_isRunning) {
         auto now = std::chrono::steady_clock::now();
@@ -424,10 +496,10 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
         size_t reqSysSamples = framesPerChunk * 2;
         size_t reqMicSamples = framesPerChunk * 2;
 
-        // 実時間クロック(48kHz)に合わせて正確にパイプへ供給し、FFmpegが57fps(0.95x)へ減速するのを根絶
+        // 実時間クロックに合わせて正確に供給し、遅延蓄積時は自動的に最新サンプルに追従
         while (g_isRunning && (totalWrittenFrames + framesPerChunk) <= targetFrames) {
-            sysQueue.PopExact(reqSysSamples, sysBuf);
-            micQueue.PopExact(reqMicSamples, micBuf);
+            sysQueue.PopWithLatencyControl(reqSysSamples, sysBuf, framesPerChunk * 4);
+            micQueue.PopWithLatencyControl(reqMicSamples, micBuf, framesPerChunk * 4);
 
             micNoiseGate.Process(micBuf.data(), framesPerChunk, 2);
 
@@ -491,6 +563,9 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
 
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
+    if (logReaderThread.joinable()) {
+        logReaderThread.join();
+    }
 }
 
 EXPORT_API bool Recorder_Start(const RecorderConfig* config) {

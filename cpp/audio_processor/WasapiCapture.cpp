@@ -111,7 +111,8 @@ bool WasapiCapture::Initialize() {
     m_channels = m_pwfx->nChannels;
 
     DWORD streamFlags = (m_type == CaptureType::SystemLoopback) ? AUDCLNT_STREAMFLAGS_LOOPBACK : 0;
-    REFERENCE_TIME hnsRequestedDuration = 1000000; // 100ms buffer
+    // キャプチャ遅延を極小化するため要求バッファを20msに設定
+    REFERENCE_TIME hnsRequestedDuration = 200000;
 
     hr = m_audioClient->Initialize(AUDCLNT_SHAREMODE_SHARED, streamFlags, hnsRequestedDuration, 0, m_pwfx, NULL);
     if (FAILED(hr)) {
