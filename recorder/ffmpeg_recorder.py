@@ -197,7 +197,8 @@ class FFmpegRecorder:
                 "-loglevel", "verbose",
             ]
 
-            # ddagrabをfilter_complex内部ソースに直結し、demuxer多重ループの競合を根絶
+            # ddagrabをfilter_complex内部ソースに直結し、1秒ごとのIDRキーフレームで爆速シークを実現
+            gop_size = str(self.config.RECORD_FPS)
             if is_nvenc:
                 cmd.extend([
                     "-init_hw_device", "d3d11va",
@@ -212,6 +213,9 @@ class FFmpegRecorder:
                     "-b:v", "0",
                     "-delay", "0",
                     "-zerolatency", "1",
+                    "-g", gop_size,
+                    "-keyint_min", gop_size,
+                    "-forced-idr", "1",
                 ]
             else:
                 video_filter = f"ddagrab=output_idx=0:framerate={self.config.RECORD_FPS}:draw_mouse=1,hwdownload,format=bgra,format=yuv420p[v_out];"
@@ -220,6 +224,8 @@ class FFmpegRecorder:
                     "-preset", preset,
                     "-tune", tune,
                     "-b:v", "10M",
+                    "-g", gop_size,
+                    "-keyint_min", gop_size,
                 ]
 
             video_map = "[v_out]"
