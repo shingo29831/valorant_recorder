@@ -197,27 +197,38 @@ class FFmpegRecorder:
                 "-loglevel", "verbose",
             ]
 
-            # GPUゼロコピー: D3D11VAフレームを直接NVENCへ渡す
-            # CPU/PCIe負荷ゼロでゲーム内FPSの低下・コマ送りを根絶
+            # GPUゼロコピー (ddagrab -> NVENC)
             if is_nvenc:
                 cmd.extend([
                     "-init_hw_device", "d3d11va",
-                    "-thread_queue_size", "4096",
                     "-f", "lavfi",
                     "-i", f"ddagrab=framerate={self.config.RECORD_FPS}:draw_mouse=1",
                 ])
                 video_map = "0:v"
                 video_filter = ""
+                encoder_opts = [
+                    "-c:v", self.actual_encoder,
+                    "-preset", "p2",
+                    "-tune", "ll",
+                    "-rc", "vbr",
+                    "-cq", "20",
+                    "-b:v", "0",
+                    "-zerolatency", "1",
+                ]
             else:
                 cmd.extend([
-                    "-thread_queue_size", "4096",
                     "-f", "lavfi",
                     "-i", f"ddagrab=framerate={self.config.RECORD_FPS}:draw_mouse=1",
                 ])
                 video_map = "[v_out]"
                 video_filter = f"[0:v]hwdownload,format=bgra,format=yuv420p[v_out];"
+                encoder_opts = [
+                    "-c:v", self.actual_encoder,
+                    "-preset", preset,
+                    "-tune", tune,
+                    "-b:v", "10M",
+                ]
 
-            # 音声タイムスタンプを先頭0からの完全連続値に統一し、破損を招くaresample=asyncを撤廃
             audio_filter = (
                 "[1:a]asetpts=N/SR/TB,asplit=3[mix_in][sys_in][mic_in];"
                 "[mix_in]pan=stereo|FL=c0|FR=c1,alimiter=limit=0.99[a_mixed];"
@@ -227,7 +238,6 @@ class FFmpegRecorder:
             filter_complex = video_filter + audio_filter
 
             cmd.extend([
-                "-thread_queue_size", "4096",
                 "-f", "f32le",
                 "-ar", "48000",
                 "-ac", "6",
@@ -237,14 +247,10 @@ class FFmpegRecorder:
                 "-map", "[a_mixed]",
                 "-map", "[a0_out]",
                 "-map", "[a1_out]",
-                "-c:v", self.actual_encoder,
-                "-preset", preset,
-                "-tune", tune,
-                "-b:v", "10M",
-                "-r", str(self.config.RECORD_FPS),
-                "-g", str(self.config.RECORD_FPS),
-                "-keyint_min", str(self.config.RECORD_FPS),
-                "-fps_mode", "cfr",
+            ])
+            cmd.extend(encoder_opts)
+            cmd.extend([
+                "-fps_mode", "passthrough",
                 "-max_muxing_queue_size", "8192",
                 "-c:a", "aac",
                 "-b:a", "192k",
