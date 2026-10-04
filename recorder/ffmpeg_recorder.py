@@ -203,16 +203,16 @@ class FFmpegRecorder:
                     "-f", "lavfi",
                     "-i", f"ddagrab=framerate={self.config.RECORD_FPS}:draw_mouse=1",
                 ])
-                video_filter = "[0:v]setpts=PTS-STARTPTS[v_out];"
+                video_map = "0:v"
+                video_filter = ""
             else:
                 cmd.extend([
                     "-thread_queue_size", "4096",
                     "-f", "lavfi",
                     "-i", f"ddagrab=framerate={self.config.RECORD_FPS}:draw_mouse=1",
                 ])
-                video_filter = f"[0:v]hwdownload,format=bgra,format=yuv420p,setpts=PTS-STARTPTS[v_out];"
-
-            video_map = "[v_out]"
+                video_map = "[v_out]"
+                video_filter = f"[0:v]hwdownload,format=bgra,format=yuv420p[v_out];"
 
             # 音声タイムスタンプを先頭0からの完全連続値に統一し、破損を招くaresample=asyncを撤廃
             audio_filter = (
@@ -243,7 +243,6 @@ class FFmpegRecorder:
                 "-keyint_min", str(self.config.RECORD_FPS),
                 "-fps_mode", "cfr",
                 "-max_muxing_queue_size", "8192",
-                "-max_interleave_delta", "0",
                 "-c:a", "aac",
                 "-b:a", "192k",
                 self.temp_filepath

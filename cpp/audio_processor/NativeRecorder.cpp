@@ -342,7 +342,7 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
 
     NativeLog("Executing FFmpeg command: " + ffmpegCmd);
 
-    if (!CreateProcessA(NULL, cmdBuf.data(), NULL, NULL, TRUE, CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP, NULL, NULL, &si, &pi)) {
+    if (!CreateProcessA(NULL, cmdBuf.data(), NULL, NULL, TRUE, CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | ABOVE_NORMAL_PRIORITY_CLASS, NULL, NULL, &si, &pi)) {
         DWORD err = GetLastError();
         SetLastErrorMsg("Failed to start FFmpeg process (CreateProcessA error: " + std::to_string(err) + ")");
         CloseHandle(hReadPipe);
@@ -401,9 +401,6 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
 
     timeBeginPeriod(1);
     
-    // ジッターバッファ（40ms）を確保してアンダーランによるゼロ埋めプツプツ音を完全防止
-    Sleep(40);
-
     auto startTime = std::chrono::steady_clock::now();
     uint64_t totalWrittenFrames = 0;
     auto lastLogTime = startTime;
