@@ -216,11 +216,12 @@ void WasapiCapture::CaptureThreadFunc() {
         HRESULT hr = m_captureClient->GetNextPacketSize(&packetLength);
         if (FAILED(hr)) continue;
 
-        // ループバック時に無音が続いてパケットが途絶えた場合のキープアライブ
+        // ループバック無音時にパケットが途絶えレートが0.95xに減速するのを防ぐ正確なキープアライブ
         if (packetLength == 0 && m_type == CaptureType::SystemLoopback) {
             auto now = std::chrono::steady_clock::now();
-            if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastPacketTime).count() >= 10) {
-                uint32_t silentFrames = m_sampleRate / 100;
+            double silentSec = std::chrono::duration<double>(now - lastPacketTime).count();
+            if (silentSec >= 0.010) {
+                uint32_t silentFrames = static_cast<uint32_t>(silentSec * m_sampleRate);
                 if (silentFrames > 0 && m_callback) {
                     floatBuffer.assign(silentFrames * m_channels, 0.0f);
                     m_callback(floatBuffer.data(), silentFrames, m_channels, m_sampleRate);

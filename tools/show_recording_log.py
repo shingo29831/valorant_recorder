@@ -24,8 +24,9 @@ def analyze_ffmpeg_log(log_path: str):
     else:
         print("    (ddagrab情報なし)")
 
-    # 2. 最終統計行 (frame=... fps=... drop=... speed=...) の抽出
-    stat_pattern = re.compile(r"frame=\s*(\d+)\s+fps=\s*([\d\.]+).*?drop=\s*(\d+).*?speed=\s*([\d\.]+)x")
+    # 2. 最終統計行 (frame=... fps=... speed=...) の抽出
+    stat_pattern = re.compile(r"frame=\s*(\d+)\s+fps=\s*([\d\.]+).*?speed=\s*([\d\.]+)x")
+    drop_pattern = re.compile(r"drop=\s*(\d+)")
     last_stats = None
     all_drops = []
     all_speeds = []
@@ -34,18 +35,19 @@ def analyze_ffmpeg_log(log_path: str):
         m = stat_pattern.search(l)
         if m:
             last_stats = m
-            all_drops.append(int(m.group(3)))
             try:
-                all_speeds.append(float(m.group(4)))
+                all_speeds.append(float(m.group(3)))
             except ValueError:
                 pass
+            dm = drop_pattern.search(l)
+            if dm:
+                all_drops.append(int(dm.group(1)))
 
     print("\n[2] キャプチャ & エンコード速度解析:")
     if last_stats:
         frames = last_stats.group(1)
         fps = last_stats.group(2)
-        drop = last_stats.group(3)
-        speed = last_stats.group(4)
+        speed = last_stats.group(3)
         avg_speed = sum(all_speeds) / len(all_speeds) if all_speeds else 0.0
         max_drop = max(all_drops) if all_drops else 0
 

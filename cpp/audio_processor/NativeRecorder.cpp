@@ -407,25 +407,25 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
     timeBeginPeriod(1);
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
 
-    // FFmpegが起動直後にパイプ待ちでブロックされて映像がカクつくのを防ぐ初期クッション(50ms)
-    std::vector<float> initialSilence(framesPerChunk * 6, 0.0f);
-    for (int k = 0; k < 5; ++k) {
-        outQueue.Push(initialSilence);
-    }
+    // デバイスから最初のデータが届くのを待つジッターバッファ確保(60ms)
+    Sleep(60);
 
     auto startTime = std::chrono::steady_clock::now();
     uint64_t totalWrittenFrames = 0;
     auto lastLogTime = startTime;
 
-    NativeLog("Entering main recording loop (Data-Driven Zero-Block Pipeline)...");
+    NativeLog("Entering main recording loop (Self-Clocked Exact 48kHz Pipeline)...");
 
     while (g_isRunning) {
+        auto now = std::chrono::steady_clock::now();
+        double elapsedSec = std::chrono::duration<double>(now - startTime).count();
+        uint64_t targetFrames = static_cast<uint64_t>(elapsedSec * 48000.0);
+
         size_t reqSysSamples = framesPerChunk * 2;
         size_t reqMicSamples = framesPerChunk * 2;
 
-        // WASAPIから届いた音声データを即座に処理してパイプへ供給
-        // タイマーでブレーキをかけず常にパイプを満たすことで、FFmpegが音声待ちでブロックされ映像がカクつくのを根絶
-        while (g_isRunning && sysQueue.AvailableSamples() >= reqSysSamples) {
+        // 実時間クロック(48kHz)に合わせて正確にパイプへ供給し、FFmpegが57fps(0.95x)へ減速するのを根絶
+        while (g_isRunning && (totalWrittenFrames + framesPerChunk) <= targetFrames) {
             sysQueue.PopExact(reqSysSamples, sysBuf);
             micQueue.PopExact(reqMicSamples, micBuf);
 
@@ -456,9 +456,9 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
             totalWrittenFrames += framesPerChunk;
         }
 
-        auto now = std::chrono::steady_clock::now();
         if (std::chrono::duration_cast<std::chrono::seconds>(now - lastLogTime).count() >= 5) {
-            NativeLog("Status: Running. Total frames written: " + std::to_string(totalWrittenFrames));
+            NativeLog("Status: Running. Total frames written: " + std::to_string(totalWrittenFrames) + 
+                      ", Target: " + std::to_string(targetFrames));
             lastLogTime = now;
         }
 
