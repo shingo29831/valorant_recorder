@@ -8,6 +8,44 @@ from core.config import Config
 from recorder.ffmpeg_downloader import ensure_ffmpeg_downloaded
 from recorder.encoder_utils import test_encoder, get_available_encoders
 
+def try_rebuild_native_recorder():
+    """
+    C++のソースファイル(NativeRecorder.cpp)がDLLより新しい場合、
+    バックグラウンドでCMakeビルドを実行して最新化する。
+    """
+    try:
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "cpp", "audio_processor"))
+        cpp_src = os.path.join(base_dir, "NativeRecorder.cpp")
+        build_dir = os.path.join(base_dir, "build")
+        dll_path = os.path.join(build_dir, "Release", "native_recorder.dll")
+        
+        if not os.path.exists(cpp_src):
+            return
+            
+        needs_build = False
+        if not os.path.exists(dll_path):
+            needs_build = True
+        elif os.path.getmtime(cpp_src) > os.path.getmtime(dll_path):
+            needs_build = True
+            
+        if needs_build:
+            logging.info("[FFmpegRecorder] Newer C++ source detected. Rebuilding native_recorder.dll...")
+            os.makedirs(build_dir, exist_ok=True)
+            res = subprocess.run(
+                ["cmake", "--build", ".", "--config", "Release"],
+                cwd=build_dir,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
+                timeout=30
+            )
+            if res.returncode == 0:
+                logging.info("[FFmpegRecorder] C++ module successfully rebuilt.")
+            else:
+                logging.warning(f"[FFmpegRecorder] Auto-rebuild skipped: {res.stderr.decode('utf-8', errors='replace')}")
+    except Exception as e:
+        logging.warning(f"[FFmpegRecorder] Auto-rebuild check skipped: {e}")
+
 class RecorderConfig(ctypes.Structure):
     _fields_ = [
         ("mic_gain", ctypes.c_float),
@@ -33,6 +71,8 @@ class FFmpegRecorder:
         os.makedirs(app_data_dir, exist_ok=True)
         self.ffmpeg_path = ensure_ffmpeg_downloaded(app_data_dir)
         self.actual_encoder = self._determine_encoder()
+        
+        try_rebuild_native_recorder()
         
         from recorder.audio_processor_wrapper import get_short_path_name
         base_build_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "cpp", "audio_processor", "build"))
@@ -154,28 +194,30 @@ class FFmpegRecorder:
                 "-y",
             ]
 
-            # NVIDIA GPU環境ではD3D11テクスチャをVRAM内でNVENCに直結（GPUゼロコピー）
-            # PCIe帯域とCPU負荷をゼロにして、ゲームのコマ落ちと録画のカクつきを完全根絶
+            # GPUゼロコピー: D3D11VAフレームを直接NVENCへ渡す
+            # CPU/PCIe負荷ゼロでゲーム内FPSの低下・コマ送りを根絶
             if is_nvenc:
                 cmd.extend([
                     "-init_hw_device", "d3d11va",
-                    "-thread_queue_size", "1024",
+                    "-thread_queue_size", "4096",
                     "-f", "lavfi",
-                    "-i", f"ddagrab=framerate={self.config.RECORD_FPS}",
+                    "-i", f"ddagrab=framerate={self.config.RECORD_FPS}:draw_mouse=1",
                 ])
                 video_map = "0:v"
                 video_filter = ""
             else:
                 cmd.extend([
-                    "-thread_queue_size", "1024",
+                    "-thread_queue_size", "4096",
                     "-f", "lavfi",
-                    "-i", f"ddagrab=framerate={self.config.RECORD_FPS}",
+                    "-i", f"ddagrab=framerate={self.config.RECORD_FPS}:draw_mouse=1",
                 ])
                 video_map = "[v_out]"
                 video_filter = f"[0:v]hwdownload,format=bgra,format=yuv420p[v_out];"
 
+            # aresample=async=1000:first_pts=0 により、音声パイプの到着速度に関わらず
+            # 実時間クロックに合わせて自動補正し、FFmpegが音声待ちで停止するコマ送りを完全消滅
             audio_filter = (
-                "[1:a]asetpts=N/SR/TB,asplit=3[mix_in][sys_in][mic_in];"
+                "[1:a]asetpts=N/SR/TB,aresample=async=1000:first_pts=0,asplit=3[mix_in][sys_in][mic_in];"
                 "[mix_in]pan=stereo|FL=c0|FR=c1,alimiter=limit=0.99[a_mixed];"
                 "[sys_in]pan=stereo|FL=c2|FR=c3,alimiter=limit=0.99[a0_out];"
                 "[mic_in]pan=stereo|FL=0.5*c4+0.5*c5|FR=0.5*c4+0.5*c5,alimiter=limit=0.95:attack=5:release=50[a1_out]"
@@ -183,7 +225,7 @@ class FFmpegRecorder:
             filter_complex = video_filter + audio_filter
 
             cmd.extend([
-                "-thread_queue_size", "1024",
+                "-thread_queue_size", "4096",
                 "-f", "f32le",
                 "-ar", "48000",
                 "-ac", "6",
@@ -201,7 +243,7 @@ class FFmpegRecorder:
                 "-g", str(self.config.RECORD_FPS),
                 "-keyint_min", str(self.config.RECORD_FPS),
                 "-fps_mode", "cfr",
-                "-max_muxing_queue_size", "4096",
+                "-max_muxing_queue_size", "8192",
                 "-shortest",
                 "-c:a", "aac",
                 "-b:a", "192k",
@@ -301,7 +343,6 @@ class FFmpegRecorder:
         
         # MKVからMP4への再多重化 (Remux)
         if self.temp_filepath and os.path.exists(self.temp_filepath):
-            # FFmpegのプロセス終了とファイルハンドル解放を確実に待機 (最大3秒)
             for attempt in range(6):
                 try:
                     with open(self.temp_filepath, "r+b"):
