@@ -192,6 +192,9 @@ class FFmpegRecorder:
             cmd = [
                 self.ffmpeg_path,
                 "-y",
+                "-stats",
+                "-benchmark",
+                "-loglevel", "verbose",
             ]
 
             # GPUゼロコピー: D3D11VAフレームを直接NVENCへ渡す
