@@ -18,13 +18,13 @@ class VideoPlayerCore(QObject):
         
         self.media_player = QMediaPlayer(self)
         self.audio_output = QAudioOutput(self)
-        self.audio_output.setVolume(self.current_sys_volume / 2.0)
+        self.audio_output.setVolume(self.current_sys_volume)
         self.media_player.setAudioOutput(self.audio_output)
         self.media_player.setVideoOutput(self.video_widget)
         
         self.mic_player = QMediaPlayer(self)
         self.mic_audio_output = QAudioOutput(self)
-        self.mic_audio_output.setVolume(self.current_mic_volume / 2.0)
+        self.mic_audio_output.setVolume(self.current_mic_volume)
         self.mic_player.setAudioOutput(self.mic_audio_output)
         
         self.media_loaded = False
@@ -93,9 +93,9 @@ class VideoPlayerCore(QObject):
             QTimer.singleShot(150, self._restore_volume)
 
     def _restore_volume(self):
-        self.audio_output.setVolume(self.current_sys_volume / 2.0)
+        self.audio_output.setVolume(self.current_sys_volume)
         if len(self.mic_player.audioTracks()) >= 2:
-            self.mic_audio_output.setVolume(self.current_mic_volume / 2.0)
+            self.mic_audio_output.setVolume(self.current_mic_volume)
         else:
             self.mic_audio_output.setVolume(0)
 
@@ -138,12 +138,15 @@ class VideoPlayerCore(QObject):
 
     def set_sys_volume(self, volume_percent):
         self.current_sys_volume = volume_percent / 100.0
-        self.audio_output.setVolume(self.current_sys_volume / 2.0)
+        self.audio_output.setVolume(self.current_sys_volume)
         self._save_volume_settings()
 
     def set_mic_volume(self, volume_percent):
         self.current_mic_volume = volume_percent / 100.0
-        self.mic_audio_output.setVolume(self.current_mic_volume / 2.0)
+        if len(self.mic_player.audioTracks()) >= 2:
+            self.mic_audio_output.setVolume(self.current_mic_volume)
+        else:
+            self.mic_audio_output.setVolume(0)
         self._save_volume_settings()
 
     def _save_volume_settings(self):

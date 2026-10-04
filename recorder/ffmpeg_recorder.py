@@ -377,6 +377,7 @@ class FFmpegRecorder:
                     self.ffmpeg_path,
                     "-y",
                     "-i", self.temp_filepath,
+                    "-map", "0",
                     "-c", "copy",
                     "-movflags", "+faststart",
                     self.current_filepath
