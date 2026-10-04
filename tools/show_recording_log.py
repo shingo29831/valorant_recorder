@@ -79,16 +79,26 @@ def analyze_ffmpeg_log(log_path: str):
 
 def main():
     import sys
-    from core.config import Config
-    cfg = Config()
-    
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if project_root not in sys.path:
+        sys.path.insert(0, project_root)
+
+    from datetime import datetime
+    save_dir = ""
+    try:
+        from core.config import Config
+        cfg = Config()
+        save_dir = getattr(cfg, 'SAVE_DIR', '')
+    except Exception:
+        pass
+
     # 確実に実際の保存先フォルダから最新ログを探索
-    search_dirs = [
-        cfg.SAVE_DIR,
+    search_dirs = [d for d in [
+        save_dir,
         os.path.join(os.environ.get('USERPROFILE', ''), 'Videos', 'valorant_records'),
         os.path.join(os.environ.get('LOCALAPPDATA', ''), 'ValoReco'),
         os.getcwd()
-    ]
+    ] if d]
     
     found_logs = set()
     for d in search_dirs:
