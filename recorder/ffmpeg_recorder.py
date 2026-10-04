@@ -2,6 +2,7 @@ import subprocess
 import os
 import ctypes
 import logging
+import time
 from datetime import datetime
 from core.config import Config
 from recorder.ffmpeg_downloader import ensure_ffmpeg_downloaded
@@ -186,6 +187,7 @@ class FFmpegRecorder:
                 "-keyint_min", str(self.config.RECORD_FPS),
                 "-fps_mode", "cfr",
                 "-max_muxing_queue_size", "4096",
+                "-shortest",
                 "-c:a", "aac",
                 "-b:a", "192k",
                 self.temp_filepath
@@ -257,7 +259,6 @@ class FFmpegRecorder:
                 self._collect_and_save_diagnostic(full_err)
                 raise RuntimeError(full_err)
                 
-            import time
             time.sleep(0.4)
             if not self.native_lib.Recorder_IsRunning():
                 err = self.native_lib.Recorder_GetLastError().decode('utf-8', errors='replace')
@@ -283,7 +284,17 @@ class FFmpegRecorder:
         logging.info("[FFmpegRecorder] Stopping NativeRecorder...")
         self.native_lib.Recorder_Stop()
         
+        # MKVからMP4への再多重化 (Remux)
         if self.temp_filepath and os.path.exists(self.temp_filepath):
+            # C++側とFFmpegのファイルハンドル解放を確実に待機
+            for attempt in range(5):
+                try:
+                    # ファイル共有違反(WinError 32)チェック
+                    with open(self.temp_filepath, "r+b"):
+                        break
+                except IOError:
+                    time.sleep(0.5)
+
             try:
                 logging.info(f"[FFmpegRecorder] Remuxing MKV to MP4: {self.temp_filepath} -> {self.current_filepath}")
                 remux_cmd = [
@@ -310,7 +321,10 @@ class FFmpegRecorder:
                     startupinfo=startupinfo
                 )
                 if remux_process.returncode == 0:
-                    os.remove(self.temp_filepath)
+                    try:
+                        os.remove(self.temp_filepath)
+                    except Exception as rm_err:
+                        logging.warning(f"[FFmpegRecorder] Could not remove temp MKV: {rm_err}")
                     logging.info("[FFmpegRecorder] Remux completed successfully.")
                 else:
                     logging.error(f"[FFmpegRecorder] Remux failed with code {remux_process.returncode}")
