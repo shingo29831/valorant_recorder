@@ -103,6 +103,85 @@ public:
     }
 };
 
+class AudioSyncQueue {
+    std::deque<float> m_buffer;
+    std::mutex m_mtx;
+    std::condition_variable m_cv;
+    size_t m_channels;
+    size_t m_maxBufferSamples;
+
+public:
+    AudioSyncQueue(size_t channels = 2, size_t maxDelayMs = 80)
+        : m_channels(channels), m_maxBufferSamples((48000 * channels * maxDelayMs) / 1000) {}
+
+    void Push(const std::vector<float>& data) {
+        if (data.empty()) return;
+        std::lock_guard<std::mutex> lock(m_mtx);
+        m_buffer.insert(m_buffer.end(), data.begin(), data.end());
+
+        if (m_buffer.size() > m_maxBufferSamples) {
+            size_t overflow = m_buffer.size() - m_maxBufferSamples;
+            overflow = (overflow / m_channels) * m_channels;
+            m_buffer.erase(m_buffer.begin(), m_buffer.begin() + overflow);
+        }
+        m_cv.notify_one();
+    }
+
+    void PopExact(size_t samples, std::vector<float>& out) {
+        std::lock_guard<std::mutex> lock(m_mtx);
+        out.assign(samples, 0.0f);
+
+        size_t available = (std::min)(samples, m_buffer.size());
+        if (available > 0) {
+            std::copy(m_buffer.begin(), m_buffer.begin() + available, out.begin());
+            m_buffer.erase(m_buffer.begin(), m_buffer.begin() + available);
+        }
+    }
+
+    bool PopWait(size_t samples, std::vector<float>& out, int timeoutMs) {
+        std::unique_lock<std::mutex> lock(m_mtx);
+        if (!m_cv.wait_for(lock, std::chrono::milliseconds(timeoutMs), [this, samples]() {
+            return m_buffer.size() >= samples;
+        })) {
+            return false;
+        }
+        out.assign(m_buffer.begin(), m_buffer.begin() + samples);
+        m_buffer.erase(m_buffer.begin(), m_buffer.begin() + samples);
+        return true;
+    }
+};
+
+class NoiseGate {
+    float m_threshold = 0.0f;
+    float m_currentGain = 1.0f;
+
+public:
+    void SetThreshold(float threshold) {
+        m_threshold = threshold;
+    }
+
+    void Process(float* buffer, size_t frames, size_t channels) {
+        if (m_threshold <= 0.0001f) return;
+
+        double sumSquares = 0.0;
+        size_t totalSamples = frames * channels;
+        for (size_t i = 0; i < totalSamples; ++i) {
+            sumSquares += buffer[i] * buffer[i];
+        }
+        float rms = static_cast<float>(std::sqrt(sumSquares / totalSamples));
+
+        float targetGain = (rms < m_threshold) ? 0.0f : 1.0f;
+        float smoothingFactor = (targetGain < m_currentGain) ? 0.05f : 0.2f;
+
+        for (size_t f = 0; f < frames; ++f) {
+            m_currentGain += (targetGain - m_currentGain) * smoothingFactor;
+            for (size_t c = 0; c < channels; ++c) {
+                buffer[f * channels + c] *= m_currentGain;
+            }
+        }
+    }
+};
+
 static void DownmixToStereo(const std::vector<float>& in, uint32_t frames, uint32_t channels, float gain, std::vector<float>& stereoOut) {
     stereoOut.resize(frames * 2);
     if (channels == 1) {
