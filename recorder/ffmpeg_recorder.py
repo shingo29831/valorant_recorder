@@ -197,14 +197,12 @@ class FFmpegRecorder:
                 "-loglevel", "verbose",
             ]
 
-            # GPUゼロコピー (ddagrab -> NVENC) を維持しつつ全ストリームを同一グラフで統合同期
+            # ddagrabをfilter_complex内部ソースに直結し、demuxer多重ループの競合を根絶
             if is_nvenc:
                 cmd.extend([
                     "-init_hw_device", "d3d11va",
-                    "-f", "lavfi",
-                    "-i", f"ddagrab=framerate={self.config.RECORD_FPS}:draw_mouse=1",
                 ])
-                video_filter = "[0:v]null[v_out];"
+                video_filter = f"ddagrab=output_idx=0:framerate={self.config.RECORD_FPS}:draw_mouse=1[v_out];"
                 encoder_opts = [
                     "-c:v", self.actual_encoder,
                     "-preset", "p2",
@@ -212,14 +210,11 @@ class FFmpegRecorder:
                     "-rc", "vbr",
                     "-cq", "20",
                     "-b:v", "0",
+                    "-delay", "0",
                     "-zerolatency", "1",
                 ]
             else:
-                cmd.extend([
-                    "-f", "lavfi",
-                    "-i", f"ddagrab=framerate={self.config.RECORD_FPS}:draw_mouse=1",
-                ])
-                video_filter = f"[0:v]hwdownload,format=bgra,format=yuv420p[v_out];"
+                video_filter = f"ddagrab=output_idx=0:framerate={self.config.RECORD_FPS}:draw_mouse=1,hwdownload,format=bgra,format=yuv420p[v_out];"
                 encoder_opts = [
                     "-c:v", self.actual_encoder,
                     "-preset", preset,
@@ -230,7 +225,7 @@ class FFmpegRecorder:
             video_map = "[v_out]"
 
             audio_filter = (
-                "[1:a]asetpts=N/SR/TB,asplit=3[mix_in][sys_in][mic_in];"
+                "[0:a]asetpts=N/SR/TB,asplit=3[mix_in][sys_in][mic_in];"
                 "[mix_in]pan=stereo|FL=c0|FR=c1,alimiter=limit=0.99[a_mixed];"
                 "[sys_in]pan=stereo|FL=c2|FR=c3,alimiter=limit=0.99[a0_out];"
                 "[mic_in]pan=stereo|FL=0.5*c4+0.5*c5|FR=0.5*c4+0.5*c5,alimiter=limit=0.95:attack=5:release=50[a1_out]"
@@ -250,7 +245,8 @@ class FFmpegRecorder:
             ])
             cmd.extend(encoder_opts)
             cmd.extend([
-                "-fps_mode", "passthrough",
+                "-r", str(self.config.RECORD_FPS),
+                "-fps_mode", "cfr",
                 "-max_muxing_queue_size", "8192",
                 "-c:a", "aac",
                 "-b:a", "192k",
