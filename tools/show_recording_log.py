@@ -78,30 +78,36 @@ def analyze_ffmpeg_log(log_path: str):
     print("\n==========================================\n")
 
 def main():
-    # 保存先ディレクトリの探索
+    import sys
+    from core.config import Config
+    cfg = Config()
+    
+    # 確実に実際の保存先フォルダから最新ログを探索
     search_dirs = [
+        cfg.SAVE_DIR,
         os.path.join(os.environ.get('USERPROFILE', ''), 'Videos', 'valorant_records'),
         os.path.join(os.environ.get('LOCALAPPDATA', ''), 'ValoReco'),
         os.getcwd()
     ]
     
-    found_logs = []
+    found_logs = set()
     for d in search_dirs:
-        for p in glob.glob(os.path.join(d, "**", "native_ffmpeg.log"), recursive=True):
-            if os.path.exists(p):
-                found_logs.append(p)
-
-    if not found_logs:
-        # 直下のファイルを確認
-        if os.path.exists("native_ffmpeg.log"):
-            found_logs.append("native_ffmpeg.log")
+        if os.path.exists(d):
+            direct = os.path.join(d, "native_ffmpeg.log")
+            if os.path.exists(direct):
+                found_logs.add(direct)
+            for p in glob.glob(os.path.join(d, "**", "native_ffmpeg.log"), recursive=True):
+                if os.path.exists(p):
+                    found_logs.add(p)
 
     if found_logs:
-        # 最新のログを解析
-        latest_log = max(found_logs, key=os.path.getmtime)
+        # 更新日時が最も新しいログを確実に解析
+        latest_log = max(list(found_logs), key=os.path.getmtime)
+        mtime_str = datetime.fromtimestamp(os.path.getmtime(latest_log)).strftime("%Y-%m-%d %H:%M:%S")
+        print(f"[*] 検出された最新ログ: {latest_log} (最終更新: {mtime_str})")
         analyze_ffmpeg_log(latest_log)
     else:
-        print("[!] native_ffmpeg.log が見つかりませんでした。一度数秒録画を実行してから再試行してください。")
+        print("[!] native_ffmpeg.log が見つかりませんでした。一度録画を実行してください。")
 
 if __name__ == "__main__":
     main()
