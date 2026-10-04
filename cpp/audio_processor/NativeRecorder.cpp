@@ -563,7 +563,6 @@ class AudioSyncQueue {
     size_t m_maxBufferSamples;
 
 public:
-    // 遅延蓄積を防ぐため最大バッファサイズを80msに制限
     AudioSyncQueue(size_t channels = 2, size_t maxDelayMs = 80)
         : m_channels(channels), m_maxBufferSamples((48000 * channels * maxDelayMs) / 1000) {}
 
