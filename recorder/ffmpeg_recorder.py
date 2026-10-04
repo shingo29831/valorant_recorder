@@ -152,19 +152,35 @@ class FFmpegRecorder:
             cmd = [
                 self.ffmpeg_path,
                 "-y",
-                "-thread_queue_size", "1024",
-                "-f", "lavfi",
-                "-i", f"ddagrab=framerate={self.config.RECORD_FPS}",
             ]
-            
-            filter_complex = f"[0:v]hwdownload,format=bgra,setpts=PTS-STARTPTS[v_out];"
+
+            # NVIDIA GPU環境ではD3D11テクスチャをVRAM内でNVENCに直結（GPUゼロコピー）
+            # PCIe帯域とCPU負荷をゼロにして、ゲームのコマ落ちと録画のカクつきを完全根絶
+            if is_nvenc:
+                cmd.extend([
+                    "-init_hw_device", "d3d11va",
+                    "-thread_queue_size", "1024",
+                    "-f", "lavfi",
+                    "-i", f"ddagrab=framerate={self.config.RECORD_FPS}",
+                ])
+                video_map = "0:v"
+                video_filter = ""
+            else:
+                cmd.extend([
+                    "-thread_queue_size", "1024",
+                    "-f", "lavfi",
+                    "-i", f"ddagrab=framerate={self.config.RECORD_FPS}",
+                ])
+                video_map = "[v_out]"
+                video_filter = f"[0:v]hwdownload,format=bgra,format=yuv420p[v_out];"
+
             audio_filter = (
                 "[1:a]asetpts=N/SR/TB,asplit=3[mix_in][sys_in][mic_in];"
                 "[mix_in]pan=stereo|FL=c0|FR=c1,alimiter=limit=0.99[a_mixed];"
                 "[sys_in]pan=stereo|FL=c2|FR=c3,alimiter=limit=0.99[a0_out];"
                 "[mic_in]pan=stereo|FL=0.5*c4+0.5*c5|FR=0.5*c4+0.5*c5,alimiter=limit=0.95:attack=5:release=50[a1_out]"
             )
-            filter_complex += audio_filter
+            filter_complex = video_filter + audio_filter
 
             cmd.extend([
                 "-thread_queue_size", "1024",
@@ -173,7 +189,7 @@ class FFmpegRecorder:
                 "-ac", "6",
                 "-i", "pipe:0",
                 "-filter_complex", filter_complex,
-                "-map", "[v_out]",
+                "-map", video_map,
                 "-map", "[a_mixed]",
                 "-map", "[a0_out]",
                 "-map", "[a1_out]",
@@ -181,7 +197,6 @@ class FFmpegRecorder:
                 "-preset", preset,
                 "-tune", tune,
                 "-b:v", "10M",
-                "-pix_fmt", "yuv420p",
                 "-r", str(self.config.RECORD_FPS),
                 "-g", str(self.config.RECORD_FPS),
                 "-keyint_min", str(self.config.RECORD_FPS),
@@ -286,10 +301,9 @@ class FFmpegRecorder:
         
         # MKVからMP4への再多重化 (Remux)
         if self.temp_filepath and os.path.exists(self.temp_filepath):
-            # C++側とFFmpegのファイルハンドル解放を確実に待機
-            for attempt in range(5):
+            # FFmpegのプロセス終了とファイルハンドル解放を確実に待機 (最大3秒)
+            for attempt in range(6):
                 try:
-                    # ファイル共有違反(WinError 32)チェック
                     with open(self.temp_filepath, "r+b"):
                         break
                 except IOError:
