@@ -33,7 +33,6 @@ class FFmpegRecorder:
         self.ffmpeg_path = ensure_ffmpeg_downloaded(app_data_dir)
         self.actual_encoder = self._determine_encoder()
         
-        # Load NativeRecorder DLL
         from recorder.audio_processor_wrapper import get_short_path_name
         base_build_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "cpp", "audio_processor", "build"))
         possible_paths = [
@@ -55,10 +54,8 @@ class FFmpegRecorder:
         if hasattr(os, 'add_dll_directory'):
             os.add_dll_directory(dll_dir)
             
-        # winmode=8 (LOAD_WITH_ALTERED_SEARCH_PATH) を使用し、DLLと同じディレクトリから依存関係を解決させる
         LOAD_WITH_ALTERED_SEARCH_PATH = 8
         
-        # 依存DLLを個別にプリロードし、失敗した場合は詳細なログを残す
         for dep_dll in ["deep_filter.dll", "libspeexdsp.dll", "audio_processor.dll"]:
             dep_path = os.path.join(dll_dir, dep_dll)
             if os.path.exists(dep_path):
@@ -87,20 +84,52 @@ class FFmpegRecorder:
         if success:
             return encoder
         
-        # 設定されたエンコーダが使えない場合（グラボ変更など）、利用可能な最適なものを返す
         available, _ = get_available_encoders(self.ffmpeg_path)
         return available[0]
 
-    def _dump_ffmpeg_log(self):
-        log_path = os.path.join(self.config.SAVE_DIR, "native_ffmpeg.log")
-        if os.path.exists(log_path):
-            try:
-                with open(log_path, "r", encoding="utf-8", errors="replace") as f:
-                    lines = f.readlines()
-                    tail = "".join(lines[-25:]) if len(lines) > 25 else "".join(lines)
-                    logging.error(f"[FFmpegRecorder] --- FFmpeg Log Dump ---\n{tail}\n---------------------------")
-            except Exception as e:
-                logging.error(f"[FFmpegRecorder] Could not read native_ffmpeg.log: {e}")
+    def _collect_and_save_diagnostic(self, err_msg: str):
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        diagnostic_path = os.path.join(project_root, "recording_diagnostic.log")
+        try:
+            with open(diagnostic_path, "w", encoding="utf-8") as f:
+                f.write(f"=== Recording Error Diagnostic ===\n")
+                f.write(f"Timestamp: {datetime.now()}\n")
+                f.write(f"Error Message: {err_msg}\n\n")
+
+                try:
+                    last_err = self.native_lib.Recorder_GetLastError().decode('utf-8', errors='replace')
+                    f.write(f"[NativeRecorder Last Error]: {last_err}\n\n")
+                except Exception as e:
+                    f.write(f"[NativeRecorder Last Error]: (Failed to read: {e})\n\n")
+
+                native_log_path = os.path.join(self.config.SAVE_DIR, "native_recorder_debug.log")
+                f.write(f"--- native_recorder_debug.log ({native_log_path}) ---\n")
+                if os.path.exists(native_log_path):
+                    with open(native_log_path, "r", encoding="utf-8", errors="replace") as nf:
+                        f.write(nf.read()[-3000:])
+                else:
+                    f.write("File not found.\n")
+                f.write("\n\n")
+
+                ffmpeg_log_path = os.path.join(self.config.SAVE_DIR, "native_ffmpeg.log")
+                f.write(f"--- native_ffmpeg.log ({ffmpeg_log_path}) ---\n")
+                if os.path.exists(ffmpeg_log_path):
+                    with open(ffmpeg_log_path, "r", encoding="utf-8", errors="replace") as ff:
+                        f.write(ff.read()[-3000:])
+                else:
+                    f.write("File not found.\n")
+                f.write("\n\n")
+
+                app_log_path = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'ValorantRecorder', 'app.log')
+                f.write(f"--- app.log ({app_log_path}) ---\n")
+                if os.path.exists(app_log_path):
+                    with open(app_log_path, "r", encoding="utf-8", errors="replace") as af:
+                        f.write(af.read()[-3000:])
+                else:
+                    f.write("File not found.\n")
+            logging.info(f"[FFmpegRecorder] Diagnostic log saved to: {diagnostic_path}")
+        except Exception as write_err:
+            logging.error(f"[FFmpegRecorder] Failed to write diagnostic log: {write_err}")
 
     def start_recording(self) -> str:
         if self.native_lib.Recorder_IsRunning():
@@ -127,7 +156,7 @@ class FFmpegRecorder:
                 "-i", f"ddagrab=framerate={self.config.RECORD_FPS}",
             ]
             
-            filter_complex = f"[0:v]hwdownload,format=bgra,setpts=PTS-STARTPTS,fps={self.config.RECORD_FPS}[v_out];"
+            filter_complex = f"[0:v]hwdownload,format=bgra,setpts=PTS-STARTPTS[v_out];"
             audio_filter = (
                 "[1:a]asetpts=N/SR/TB,asplit=3[mix_in][sys_in][mic_in];"
                 "[mix_in]pan=stereo|FL=c0|FR=c1,alimiter=limit=0.99[a_mixed];"
@@ -156,6 +185,7 @@ class FFmpegRecorder:
                 "-g", str(self.config.RECORD_FPS),
                 "-keyint_min", str(self.config.RECORD_FPS),
                 "-fps_mode", "cfr",
+                "-max_muxing_queue_size", "4096",
                 "-c:a", "aac",
                 "-b:a", "192k",
                 self.temp_filepath
@@ -188,13 +218,15 @@ class FFmpegRecorder:
             
             project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             possible_model_paths = [
+                os.path.join(project_root, "cpp", "audio_processor", "models", "DeepFilterNet3", "DeepFilterNet3_onnx.tar.gz"),
+                os.path.join(project_root, "cpp", "audio_processor", "models", "DeepFilterNet3_onnx.tar.gz"),
                 os.path.join(project_root, "cpp", "audio_processor", "DeepFilterNet3_onnx.tar.gz"),
                 os.path.join(project_root, "models", "DeepFilterNet3", "DeepFilterNet3_onnx.tar.gz"),
                 os.path.join(project_root, "models", "DeepFilterNet3_onnx.tar.gz"),
             ]
             df_model_path = ""
             for p in possible_model_paths:
-                if os.path.isfile(p):
+                if os.path.isfile(p) and os.path.getsize(p) > 1024:
                     df_model_path = p
                     break
                     
@@ -202,8 +234,10 @@ class FFmpegRecorder:
                 for root, _, files in os.walk(project_root):
                     for f in files:
                         if f.endswith(".tar.gz") and "deepfilter" in f.lower():
-                            df_model_path = os.path.join(root, f)
-                            break
+                            cand = os.path.join(root, f)
+                            if os.path.getsize(cand) > 1024:
+                                df_model_path = cand
+                                break
                     if df_model_path:
                         break
 
@@ -218,23 +252,28 @@ class FFmpegRecorder:
             
             if not self.native_lib.Recorder_Start(ctypes.byref(config_struct)):
                 err = self.native_lib.Recorder_GetLastError().decode('utf-8', errors='replace')
-                logging.error(f"[FFmpegRecorder] Recorder_Start failed: {err}")
-                self._dump_ffmpeg_log()
-                raise RuntimeError(f"NativeRecorder failed to start: {err}")
+                full_err = f"NativeRecorder failed to start: {err}"
+                logging.error(f"[FFmpegRecorder] {full_err}")
+                self._collect_and_save_diagnostic(full_err)
+                raise RuntimeError(full_err)
                 
             import time
-            time.sleep(0.3)
+            time.sleep(0.4)
             if not self.native_lib.Recorder_IsRunning():
                 err = self.native_lib.Recorder_GetLastError().decode('utf-8', errors='replace')
-                logging.error(f"[FFmpegRecorder] Recorder stopped immediately: {err}")
-                self._dump_ffmpeg_log()
-                raise RuntimeError(f"Recorder stopped immediately: {err}")
+                if not err:
+                    err = "FFmpeg or audio capture pipeline terminated unexpectedly (see recording_diagnostic.log)"
+                full_err = f"Recorder initialization failed: {err}"
+                logging.error(f"[FFmpegRecorder] {full_err}")
+                self._collect_and_save_diagnostic(full_err)
+                raise RuntimeError(full_err)
 
             logging.info("[FFmpegRecorder] Recording started successfully.")
             return self.current_filepath
         except Exception as e:
-            logging.error(f"[FFmpegRecorder] Failed to start recording: {e}", exc_info=True)
-            self._dump_ffmpeg_log()
+            err_msg = str(e)
+            logging.error(f"[FFmpegRecorder] Failed to start recording: {err_msg}", exc_info=True)
+            self._collect_and_save_diagnostic(err_msg)
             raise
 
     def is_recording(self) -> bool:
@@ -244,44 +283,6 @@ class FFmpegRecorder:
         logging.info("[FFmpegRecorder] Stopping NativeRecorder...")
         self.native_lib.Recorder_Stop()
         
-        # MKVからMP4への再多重化 (Remux)
-        # クラッシュ時でもMKVは正常な状態が保たれるため、ここでMP4に変換することで破損を防ぐ
-        if self.temp_filepath and os.path.exists(self.temp_filepath):
-            try:
-                logging.info(f"[FFmpegRecorder] Remuxing MKV to MP4: {self.temp_filepath} -> {self.current_filepath}")
-                remux_cmd = [
-                    self.ffmpeg_path,
-                    "-y",
-                    "-i", self.temp_filepath,
-                    "-c", "copy",
-                    "-movflags", "+faststart",
-                    self.current_filepath
-                ]
-                creationflags = 0
-                startupinfo = None
-                if os.name == 'nt':
-                    creationflags = subprocess.CREATE_NO_WINDOW
-                    startupinfo = subprocess.STARTUPINFO()
-                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                    startupinfo.wShowWindow = subprocess.SW_HIDE
-
-                remux_process = subprocess.run(
-                    remux_cmd,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    creationflags=creationflags,
-                    startupinfo=startupinfo
-                )
-                if remux_process.returncode == 0:
-                    os.remove(self.temp_filepath)
-                    logging.info("[FFmpegRecorder] Remux completed successfully.")
-                else:
-                    logging.error(f"[FFmpegRecorder] Remux failed with code {remux_process.returncode}")
-            except Exception as e:
-                logging.error(f"[FFmpegRecorder] Remux exception: {e}")
-
-        # MKVからMP4への再多重化 (Remux)
-        # クラッシュ時でもMKVは正常な状態が保たれるため、ここでMP4に変換することで破損を防ぐ
         if self.temp_filepath and os.path.exists(self.temp_filepath):
             try:
                 logging.info(f"[FFmpegRecorder] Remuxing MKV to MP4: {self.temp_filepath} -> {self.current_filepath}")
@@ -317,4 +318,4 @@ class FFmpegRecorder:
                 logging.error(f"[FFmpegRecorder] Remux exception: {e}")
 
     def set_low_priority(self):
-        pass # C++側でプロセスを管理するため不要
+        pass

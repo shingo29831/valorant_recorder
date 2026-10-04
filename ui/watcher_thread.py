@@ -78,7 +78,14 @@ class WatcherThread(QThread):
             self.recording_state_changed.emit(True)
             self._is_manual_action = False
         except Exception as e:
-            self.log_signal.emit(self.t.log_manual_start_failed.format(error=e))
+            err_str = str(e)
+            try:
+                msg = self.t.log_manual_start_failed.format(error=err_str)
+                if err_str not in msg:
+                    msg = f"{msg}: {err_str}"
+            except Exception:
+                msg = f"録画の開始に失敗しました: {err_str}"
+            self.log_signal.emit(msg)
 
     def stop_manual_recording(self):
         if self.current_video_path is None:
@@ -133,8 +140,15 @@ class WatcherThread(QThread):
             self.recording_state_changed.emit(True)
         except Exception as e:
             import logging
-            logging.error(f"[WatcherThread] Failed to start recording: {e}")
-            self.log_signal.emit(self.t.log_start_failed.format(error=e))
+            err_str = str(e)
+            logging.error(f"[WatcherThread] Failed to start recording: {err_str}")
+            try:
+                msg = self.t.log_start_failed.format(error=err_str)
+                if err_str not in msg:
+                    msg = f"{msg}: {err_str}"
+            except Exception:
+                msg = f"録画の開始に失敗しました: {err_str}"
+            self.log_signal.emit(msg)
 
     def handle_round_phase_changed(self, phase: str, phase_timestamp: float = None):
         if self.current_video_path is not None:
@@ -523,17 +537,15 @@ class WatcherThread(QThread):
                     threading.Thread(target=delete_cancelled_video, args=(video_to_delete,), daemon=True).start()
                     continue
 
-                if self.recorder.process is not None:
-                    returncode = self.recorder.process.poll()
-                    if returncode is not None:
-                        self.log_signal.emit(self.t.log_ffmpeg_crashed.format(code=returncode))
-                        # 現在の録画を保存処理に回す
-                        self._stop_and_process_recording()
-                        # 少し待機してから再開
-                        time.sleep(2)
-                        # リカバリーモードとして再開
-                        self.handle_match_start(is_range=False, is_recovery=True)
-                        continue
+                if not self.recorder.is_recording():
+                    self.log_signal.emit(self.t.log_ffmpeg_crashed.format(code=-1))
+                    # 現在の録画を保存処理に回す
+                    self._stop_and_process_recording()
+                    # 少し待機してから再開
+                    time.sleep(2)
+                    # リカバリーモードとして再開
+                    self.handle_match_start(is_range=False, is_recovery=True)
+                    continue
 
             # --- 2. 定期クリーンアップ (1時間ごと) ---
             if now - last_cleanup_time > 3600:
