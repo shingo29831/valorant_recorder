@@ -1,34 +1,85 @@
 import subprocess
 import os
-import threading
-import queue
-import signal
+import ctypes
+import logging
 from datetime import datetime
 from core.config import Config
-from recorder.ffmpeg_downloader import ensure_ffmpeg_downloaded, ensure_rnnoise_model_downloaded
+from recorder.ffmpeg_downloader import ensure_ffmpeg_downloaded
 from recorder.encoder_utils import test_encoder, get_available_encoders
-from recorder.audio_capture_thread import AudioCaptureThread
+
+class RecorderConfig(ctypes.Structure):
+    _fields_ = [
+        ("mic_gain", ctypes.c_float),
+        ("system_gain", ctypes.c_float),
+        ("noise_gate_threshold", ctypes.c_float),
+        ("denoise_mode", ctypes.c_int32),
+        ("preprocess_mode", ctypes.c_int32),
+        ("mic_device_name", ctypes.c_char_p),
+        ("ffmpeg_command", ctypes.c_char_p),
+        ("save_file_path", ctypes.c_char_p),
+        ("temp_file_path", ctypes.c_char_p),
+        ("ffmpeg_path", ctypes.c_char_p),
+        ("df_model_path", ctypes.c_char_p),
+    ]
 
 class FFmpegRecorder:
     def __init__(self, config: Config):
         self.config = config
-        self.process = None
         self.current_filepath = None
         self.temp_filepath = None
-        self.log_file = None
-        self.audio_record_thread = None
-        self.audio_write_thread = None
-        self.stop_event = threading.Event()
-        # メモリ節約とリアルタイム性向上のため、バッファサイズを大幅に縮小
-        # maxsize=100 (約5秒分)。遅延が蓄積する前に古いデータを破棄し、映像のカクつき(フレームドロップ)を防ぐ。
-        self.audio_queue = queue.Queue(maxsize=100)
         
-        # Nuitkaの実行時一時ディレクトリではなく、永続的なディレクトリにダウンロードする
         app_data_dir = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'ValoReco')
         os.makedirs(app_data_dir, exist_ok=True)
         self.ffmpeg_path = ensure_ffmpeg_downloaded(app_data_dir)
-        self.rnnoise_model_path = ensure_rnnoise_model_downloaded(app_data_dir)
         self.actual_encoder = self._determine_encoder()
+        
+        # Load NativeRecorder DLL
+        from recorder.audio_processor_wrapper import get_short_path_name
+        base_build_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "cpp", "audio_processor", "build"))
+        possible_paths = [
+            os.path.join(base_build_dir, "Release", "native_recorder.dll"),
+            os.path.join(base_build_dir, "native_recorder.dll")
+        ]
+        
+        dll_path = None
+        for p in possible_paths:
+            if os.path.exists(p):
+                dll_path = p
+                break
+                
+        if not dll_path:
+            raise FileNotFoundError(f"native_recorder.dll not found in {base_build_dir}. Please ensure C++ build was successful.")
+
+        dll_dir = os.path.dirname(dll_path)
+        
+        if hasattr(os, 'add_dll_directory'):
+            os.add_dll_directory(dll_dir)
+            
+        # winmode=8 (LOAD_WITH_ALTERED_SEARCH_PATH) を使用し、DLLと同じディレクトリから依存関係を解決させる
+        LOAD_WITH_ALTERED_SEARCH_PATH = 8
+        
+        # 依存DLLを個別にプリロードし、失敗した場合は詳細なログを残す
+        for dep_dll in ["deep_filter.dll", "libspeexdsp.dll", "audio_processor.dll"]:
+            dep_path = os.path.join(dll_dir, dep_dll)
+            if os.path.exists(dep_path):
+                try:
+                    ctypes.CDLL(dep_path, winmode=LOAD_WITH_ALTERED_SEARCH_PATH)
+                except Exception as e:
+                    logging.warning(f"[FFmpegRecorder] Failed to preload {dep_dll}: {e}")
+            else:
+                logging.warning(f"[FFmpegRecorder] Dependency not found: {dep_path}")
+            
+        try:
+            self.native_lib = ctypes.CDLL(dll_path, winmode=LOAD_WITH_ALTERED_SEARCH_PATH)
+        except Exception as e:
+            logging.error(f"[FFmpegRecorder] Failed to load native_recorder.dll: {e}")
+            raise RuntimeError(f"Failed to load native recorder module: {e}")
+        
+        self.native_lib.Recorder_Start.argtypes = [ctypes.POINTER(RecorderConfig)]
+        self.native_lib.Recorder_Start.restype = ctypes.c_bool
+        self.native_lib.Recorder_Stop.argtypes = []
+        self.native_lib.Recorder_IsRunning.restype = ctypes.c_bool
+        self.native_lib.Recorder_GetLastError.restype = ctypes.c_char_p
 
     def _determine_encoder(self) -> str:
         encoder = self.config.RECORD_ENCODER
@@ -40,31 +91,8 @@ class FFmpegRecorder:
         available, _ = get_available_encoders(self.ffmpeg_path)
         return available[0]
 
-    def _audio_write_loop(self):
-        while not self.stop_event.is_set():
-            try:
-                data = self.audio_queue.get(timeout=0.5)
-                if data is None:
-                    break
-                if self.process and self.process.stdin and not self.process.stdin.closed:
-                    self.process.stdin.write(data)
-                    self.process.stdin.flush()
-                else:
-                    break
-            except queue.Empty:
-                continue
-            except (BrokenPipeError, OSError, ValueError):
-                break
-                
-        # 同一スレッド内で安全に stdin を閉じる (別スレッドからの close によるデッドロック防止)
-        if self.process and self.process.stdin and not self.process.stdin.closed:
-            try:
-                self.process.stdin.close()
-            except Exception:
-                pass
-
     def start_recording(self) -> str:
-        if self.process is not None:
+        if self.native_lib.Recorder_IsRunning():
             return self.current_filepath
 
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -74,88 +102,45 @@ class FFmpegRecorder:
         self.temp_filepath = os.path.join(self.config.SAVE_DIR, temp_filename)
         os.makedirs(self.config.SAVE_DIR, exist_ok=True)
 
-        # リアルタイムエンコード向けに低遅延・低負荷なプリセットとチューニングを適用
-        preset = "p2" if "nvenc" in self.actual_encoder else "veryfast"
-        tune = "ull" if "nvenc" in self.actual_encoder else "zerolatency"
+        is_nvenc = "nvenc" in self.actual_encoder.lower()
+        preset = "p1" if is_nvenc else "ultrafast"
+        tune = "ull" if is_nvenc else "zerolatency"
 
         cmd = [
             self.ffmpeg_path,
             "-y",
         ]
         
-        filter_complex = ""
+        # GPUエンコーダではD3D11テクスチャをCPUに落とさず直結してカクつきを完全防止
+        cmd.extend([
+            "-thread_queue_size", "1024",
+            "-f", "lavfi",
+            "-i", f"ddagrab=framerate={self.config.RECORD_FPS}:draw_mouse=1"
+        ])
+        
+        audio_filter = (
+            "[1:a]asetpts=N/SR/TB,asplit=3[mix_in][sys_in][mic_in];"
+            "[mix_in]pan=stereo|FL=c0|FR=c1,alimiter=limit=0.99[a_mixed];"
+            "[sys_in]pan=stereo|FL=c2|FR=c3,alimiter=limit=0.99[a0_out];"
+            "[mic_in]pan=stereo|FL=0.5*c4+0.5*c5|FR=0.5*c4+0.5*c5,alimiter=limit=0.95:attack=5:release=50[a1_out]"
+        )
+
         video_map = "0:v"
-        
-        if self.config.RECORD_VIDEO_FORMAT == "ddagrab":
-            cmd.extend([
-                "-thread_queue_size", "2048",  # メモリ節約と遅延防止のため縮小
-                "-f", "lavfi",
-                "-i", f"ddagrab=framerate={self.config.RECORD_FPS}"
-            ])
-            # ddagrabのタイムスタンプを0から開始させる
-            filter_complex += "[0:v]hwdownload,format=bgra,setpts=PTS-STARTPTS[v_out];"
-            video_map = "[v_out]"
-        else:
-            cmd.extend([
-                "-thread_queue_size", "2048",  # メモリ節約と遅延防止のため縮小
-                "-rtbufsize", "256M",          # メモリ節約
-                "-use_wallclock_as_timestamps", "1",
-                "-f", self.config.RECORD_VIDEO_FORMAT,
-                "-framerate", self.config.RECORD_FPS,
-                "-video_size", self.config.RECORD_RESOLUTION,
-                "-i", self.config.RECORD_INPUT_SOURCE
-            ])
-            # gdigrab等の場合もタイムスタンプを0から開始させる
-            filter_complex += "[0:v]setpts=PTS-STARTPTS[v_out];"
-            video_map = "[v_out]"
-            
-        gate_level = float(getattr(self.config, 'RECORD_AUDIO_MIC_NOISE_GATE', '0')) / 100.0
-        denoise_mode = str(getattr(self.config, 'RECORD_AUDIO_MIC_DENOISE', 'None'))
+        filter_complex = audio_filter
 
-        # 音声のタイムスタンプも0から開始させ、映像と同期させる
-        # a_resをasplit=2で2つのストリームに複製してから、それぞれをpanフィルタに渡す
-        # FFmpegの自動ダウンミックスによる音量減衰を防ぐため、ゲイン(1.0*)を明示的に指定
-        filter_complex += "[1:a]asetpts=PTS-STARTPTS,asplit=2[a_res1][a_res2];[a_res1]pan=stereo|c0=1.0*c0|c1=1.0*c1[a0];[a_res2]pan=stereo|c0=1.0*c2|c1=1.0*c3[a1]"
-        
-        mic_filters = []
-        
-        # RNNoiseの場合はFFmpegのarnndnフィルタを使用する
-        if denoise_mode in ('True', 'Standard (FFmpeg)', 'AI (RNNoise)'):
-            try:
-                rel_model_path = os.path.relpath(self.rnnoise_model_path, start=os.getcwd())
-                model_path_str = rel_model_path.replace('\\', '/')
-                mic_filters.append(f"arnndn=m='{model_path_str}'")
-            except ValueError:
-                model_path_str = self.rnnoise_model_path.replace('\\', '/').replace(':', '\\:').replace(' ', '\\ ')
-                mic_filters.append(f"arnndn=m={model_path_str}")
-            
-        # ノイズゲートはPython側でモニターと全く同じ処理を適用するため、FFmpegのagateフィルタは使用しない
-            
-        if mic_filters:
-            # フィルタ適用後にチャンネルレイアウトやサンプリングレートが失われないようaformatで明示的に指定する
-            filter_complex += f";[a1]{','.join(mic_filters)},aformat=channel_layouts=stereo:sample_rates=48000[a1_out]"
-            mic_map = "[a1_out]"
-        else:
-            mic_map = "[a1]"
-
-        # システム音とマイク音をそれぞれ asplit で複製し、
-        # 1. ミックス用 (通常再生用)
-        # 2. システム音単独 (編集用)
-        # 3. マイク音単独 (編集用)
-        # の3つのオーディオトラックを生成する
-        # 録音時に2倍に増幅しているため、ミックス時にクリップしないよう alimiter を適用する
-        # さらに aresample=async=1 を適用して、映像と音声のクロックのズレを無劣化で自動補正し音ズレを防ぐ
-        filter_complex += f";[a0]asplit=2[a0_mix][a0_raw];{mic_map}asplit=2[a1_mix][a1_raw];"
-        filter_complex += "[a0_mix][a1_mix]amix=inputs=2:duration=longest:normalize=0,alimiter=limit=0.99,aresample=async=1[a_mixed];"
-        filter_complex += "[a0_raw]aresample=async=1[a0_out];"
-        filter_complex += "[a1_raw]aresample=async=1[a1_out]"
+        # ソフトウェアエンコーダのみCPUへのhwdownloadが必要
+        if not is_nvenc and "amf" not in self.actual_encoder.lower():
+            filter_complex = (
+                f"[0:v]hwdownload,format=bgra,format=yuv420p,setpts=PTS-STARTPTS[v_out];"
+                + audio_filter
+            )
+            video_map = "[v_out]"
 
         cmd.extend([
-            "-thread_queue_size", "2048",
-            # 音声(pipe:0)に対する wallclock タイムスタンプは、映像との激しい非同期(dup大量発生)を引き起こすため削除
+            "-thread_queue_size", "1024",
             "-f", "f32le",
             "-ar", "48000",
-            "-ac", "4",
+            "-ac", "6",
             "-i", "pipe:0",
             "-filter_complex", filter_complex,
             "-map", video_map,
@@ -166,174 +151,123 @@ class FFmpegRecorder:
             "-preset", preset,
             "-tune", tune,
             "-b:v", "10M",
-            "-pix_fmt", "yuv420p",
+            "-pix_fmt", "nv12" if is_nvenc else "yuv420p",
             "-r", str(self.config.RECORD_FPS),
             "-g", str(self.config.RECORD_FPS),
             "-keyint_min", str(self.config.RECORD_FPS),
-            "-fps_mode", "cfr",
+            "-delay", "0",
+            "-zerolatency", "1",
             "-c:a", "aac",
             "-b:a", "192k",
-            "-max_muxing_queue_size", "9999",
-            "-shortest",
             self.temp_filepath
         ])
 
-        error_log_path = os.path.join(self.config.SAVE_DIR, "ffmpeg_error.log")
-        self.log_file = open(error_log_path, "w")
+        cmd_str = subprocess.list2cmdline(cmd)
         
-        self.stop_event.clear()
-        self.audio_ready_event = threading.Event()
+        report_path = os.path.join(self.config.SAVE_DIR, "ffmpeg_crash_report.log").replace('\\', '/')
+        os.environ["FFREPORT"] = f"file='{report_path}':level=48"
+        logging.info(f"[FFmpegRecorder] Set FFREPORT to {report_path}")
         
-        while not self.audio_queue.empty():
-            try:
-                self.audio_queue.get_nowait()
-            except queue.Empty:
+        gate_level = float(getattr(self.config, 'RECORD_AUDIO_MIC_NOISE_GATE', '0')) / 100.0
+        denoise_str = str(getattr(self.config, 'RECORD_AUDIO_MIC_DENOISE', 'None'))
+        denoise_mode = 1 if denoise_str == 'DeepFilterNet' else 0
+        preprocess_str = str(getattr(self.config, 'RECORD_AUDIO_MIC_PREPROCESS', 'SpeexDSP'))
+        preprocess_mode = 1 if preprocess_str == 'SpeexDSP' else 0
+
+        config_struct = RecorderConfig()
+        config_struct.mic_gain = float(getattr(self.config, 'RECORD_AUDIO_MIC_GAIN', 100)) / 100.0
+        config_struct.system_gain = float(getattr(self.config, 'RECORD_AUDIO_SYS_GAIN', 100)) / 100.0
+        config_struct.noise_gate_threshold = gate_level
+        config_struct.denoise_mode = denoise_mode
+        config_struct.preprocess_mode = preprocess_mode
+        
+        mic_device = getattr(self.config, 'RECORD_AUDIO_MIC_DEVICE', 'Default')
+        config_struct.mic_device_name = mic_device.encode('utf-8') if mic_device != 'Default' else b""
+        config_struct.ffmpeg_command = cmd_str.encode('utf-8')
+        config_struct.save_file_path = self.current_filepath.encode('utf-8')
+        config_struct.temp_file_path = self.temp_filepath.encode('utf-8')
+        config_struct.ffmpeg_path = self.ffmpeg_path.encode('utf-8')
+        
+        # DeepFilterNetのモデルパスを解決
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        possible_model_paths = [
+            os.path.join(project_root, "cpp", "audio_processor", "DeepFilterNet3_onnx.tar.gz"),
+            os.path.join(project_root, "models", "DeepFilterNet3", "DeepFilterNet3_onnx.tar.gz"),
+            os.path.join(project_root, "models", "DeepFilterNet3_onnx.tar.gz"),
+        ]
+        df_model_path = ""
+        for p in possible_model_paths:
+            if os.path.isfile(p):
+                df_model_path = p
                 break
+                
+        if not df_model_path:
+            # 見つからない場合は再帰探索
+            for root, _, files in os.walk(project_root):
+                for f in files:
+                    if f.endswith(".tar.gz") and "deepfilter" in f.lower():
+                        df_model_path = os.path.join(root, f)
+                        break
+                if df_model_path:
+                    break
 
-        self.audio_record_thread = AudioCaptureThread(
-            self.config,
-            self.audio_queue,
-            self.log_file,
-            self.stop_event,
-            self.audio_ready_event
-        )
-        self.audio_record_thread.start()
-        
-        self.audio_ready_event.wait(timeout=5.0)
-        
-        # CREATE_NO_WINDOW のみを指定し、CREATE_NEW_PROCESS_GROUP や DETACHED_PROCESS は
-        # 逆にフォーカスを奪う原因になるため除外する。
-        # さらに startupinfo で明示的にウィンドウを非表示(SW_HIDE)に設定する。
-        creationflags = 0
-        startupinfo = None
-        if os.name == 'nt':
-            creationflags = subprocess.CREATE_NO_WINDOW
-            startupinfo = subprocess.STARTUPINFO()
-            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-            startupinfo.wShowWindow = subprocess.SW_HIDE
-        
-        import logging
-        logging.debug(f"[FFmpegRecorder] Starting FFmpeg with command: {' '.join(cmd)}")
-        
-        try:
-            # CREATE_NEW_PROCESS_GROUP を追加して、CTRL_BREAK_EVENT が親プロセス(アプリ本体)を巻き込んでクラッシュさせるのを防ぐ
-            if os.name == 'nt':
-                creationflags |= subprocess.CREATE_NEW_PROCESS_GROUP
-
-            self.process = subprocess.Popen(
-                cmd,
-                stdin=subprocess.PIPE,
-                stdout=subprocess.DEVNULL,
-                stderr=self.log_file,
-                creationflags=creationflags,
-                startupinfo=startupinfo
-            )
-        except Exception as e:
-            logging.error(f"[FFmpegRecorder] Failed to start FFmpeg process: {e}")
-            raise
-
-        # 起動直後にクラッシュしていないか確認
-        import time
-        time.sleep(0.5)
-        if self.process.poll() is not None:
-            error_msg = f"FFmpeg process crashed immediately with code {self.process.returncode}"
-            logging.error(f"[FFmpegRecorder] {error_msg}")
+        # 短いパスに変換（日本語パス対策）
+        from recorder.audio_processor_wrapper import get_short_path_name
+        if df_model_path:
+            df_model_path = get_short_path_name(df_model_path).replace('\\', '/')
             
-            # エラーログの内容を読み取ってメインログにも出力する
-            if self.log_file:
-                self.log_file.flush()
-                try:
-                    with open(error_log_path, "r", encoding="utf-8", errors="replace") as f:
-                        lines = f.readlines()
-                        if lines:
-                            logging.error("[FFmpegRecorder] --- FFmpeg Error Log ---")
-                            for line in lines[-20:]:
-                                logging.error(line.strip())
-                            logging.error("--------------------------------")
-                except Exception as read_err:
-                    logging.error(f"[FFmpegRecorder] Could not read ffmpeg_error.log: {read_err}")
-                    
-            raise RuntimeError(error_msg)
+        config_struct.df_model_path = df_model_path.encode('utf-8')
+        
+        logging.info(f"[FFmpegRecorder] Starting NativeRecorder with command: {cmd_str}")
+        
+        if not self.native_lib.Recorder_Start(ctypes.byref(config_struct)):
+            err = self.native_lib.Recorder_GetLastError().decode('utf-8')
+            raise RuntimeError(f"NativeRecorder failed to start: {err}")
             
-        logging.info(f"[FFmpegRecorder] FFmpeg process started successfully (PID: {self.process.pid})")
-        
-        # FFmpegプロセス起動完了までの間にキャプチャされた古い音声データを破棄する。
-        # これを行わないと、映像キャプチャ開始前の音声が先頭に挿入され、音声が先行する音ズレが発生する。
-        while not self.audio_queue.empty():
-            try:
-                self.audio_queue.get_nowait()
-            except queue.Empty:
-                break
-        
-        self.audio_write_thread = threading.Thread(target=self._audio_write_loop, daemon=True)
-        self.audio_write_thread.start()
-        
         return self.current_filepath
 
-    def stop_recording(self):
-        self.stop_event.set()
-        
-        import logging
-        if self.process:
-            # 1. FFmpegに終了シグナルを送信して安全に終了させる
-            # プロセスが既に終了している場合はシグナルを送らない (WinError 6 対策)
-            if self.process.poll() is None:
-                try:
-                    logging.debug(f"[FFmpegRecorder] Sending stop signal to FFmpeg (PID: {self.process.pid})")
-                    if os.name == 'nt':
-                        os.kill(self.process.pid, signal.CTRL_BREAK_EVENT)
-                    else:
-                        self.process.send_signal(signal.SIGINT)
-                except Exception as e:
-                    logging.warning(f"[FFmpegRecorder] Failed to send stop signal: {e}")
+    def is_recording(self) -> bool:
+        return self.native_lib.Recorder_IsRunning()
 
-        # 2. 音声キャプチャと書き込みスレッドを安全に終了させる
-        if self.audio_record_thread:
-            self.audio_record_thread.join(timeout=5)
-            self.audio_record_thread = None
-            
-        if self.audio_write_thread:
-            self.audio_write_thread.join(timeout=5)
-            self.audio_write_thread = None
-            
-        if self.process:
-            # stdinのcloseはaudio_write_thread内で安全に行われるため、ここでは行わない
-                
-            # 3. FFmpegが正常終了(moovアトム書き込み等)するのを待機
+    def stop_recording(self):
+        logging.info("[FFmpegRecorder] Stopping NativeRecorder...")
+        self.native_lib.Recorder_Stop()
+        
+        # MKVからMP4への再多重化 (Remux)
+        # クラッシュ時でもMKVは正常な状態が保たれるため、ここでMP4に変換することで破損を防ぐ
+        if self.temp_filepath and os.path.exists(self.temp_filepath):
             try:
-                self.process.wait(timeout=15.0)
-            except subprocess.TimeoutExpired:
-                self.process.terminate()
-                self.process.wait()
-            except Exception:
-                pass
-            
-            returncode = self.process.poll()
-            # WindowsでCTRL_BREAK_EVENTを送った場合、終了コードは255や3221225786、3221225477(0xC0000005)になるため正常とみなす
-            if returncode is not None and returncode != 0 and returncode not in (255, 3221225786, 3221225477):
-                logging.error(f"[FFmpegRecorder] FFmpeg exited abnormally with code {returncode}")
-                # 異常終了時のみログを出力
-                if self.current_filepath:
-                    log_path = os.path.join(os.path.dirname(self.current_filepath), "ffmpeg_error.log")
-                    if os.path.exists(log_path):
-                        try:
-                            with open(log_path, "r", encoding="utf-8", errors="replace") as f:
-                                lines = f.readlines()
-                                if lines:
-                                    logging.error("[FFmpegRecorder] === FFmpeg Error Log (Last 20 lines) ===")
-                                    for line in lines[-20:]:
-                                        logging.error(line.strip())
-                                    logging.error("========================================")
-                        except Exception as e:
-                            logging.error(f"[FFmpegRecorder] Could not read log file: {e}")
-            else:
-                logging.debug(f"[FFmpegRecorder] FFmpeg exited normally with code {returncode}")
-                            
-            self.process = None
-            
-        if self.log_file:
-            self.log_file.close()
-            self.log_file = None
+                logging.info(f"[FFmpegRecorder] Remuxing MKV to MP4: {self.temp_filepath} -> {self.current_filepath}")
+                remux_cmd = [
+                    self.ffmpeg_path,
+                    "-y",
+                    "-i", self.temp_filepath,
+                    "-c", "copy",
+                    "-movflags", "+faststart",
+                    self.current_filepath
+                ]
+                creationflags = 0
+                startupinfo = None
+                if os.name == 'nt':
+                    creationflags = subprocess.CREATE_NO_WINDOW
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    startupinfo.wShowWindow = subprocess.SW_HIDE
+
+                remux_process = subprocess.run(
+                    remux_cmd,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    creationflags=creationflags,
+                    startupinfo=startupinfo
+                )
+                if remux_process.returncode == 0:
+                    os.remove(self.temp_filepath)
+                    logging.info("[FFmpegRecorder] Remux completed successfully.")
+                else:
+                    logging.error(f"[FFmpegRecorder] Remux failed with code {remux_process.returncode}")
+            except Exception as e:
+                logging.error(f"[FFmpegRecorder] Remux exception: {e}")
 
         # MKVからMP4への再多重化 (Remux)
         # クラッシュ時でもMKVは正常な状態が保たれるため、ここでMP4に変換することで破損を防ぐ
@@ -372,21 +306,4 @@ class FFmpegRecorder:
                 logging.error(f"[FFmpegRecorder] Remux exception: {e}")
 
     def set_low_priority(self):
-        """
-        FFmpegプロセスの優先度を設定する。
-        ※以前は BELOW_NORMAL に下げていたが、OSのスケジューラによって
-        FFmpegにリソースが割り当てられず動画がカクつく原因となっていたため、
-        NORMAL_PRIORITY_CLASS (0x00000020) を維持するように修正。
-        （メソッド名は他ファイルからの呼び出し互換性のために維持）
-        """
-        if self.process and self.process.poll() is None:
-            try:
-                import ctypes
-                import sys
-                if sys.platform == "win32":
-                    # NORMAL_PRIORITY_CLASS = 0x00000020
-                    # 録画のフレームドロップを防ぐため NORMAL を明示的に設定する
-                    ctypes.windll.kernel32.SetPriorityClass(int(self.process._handle), 0x00000020)
-            except Exception as e:
-                import warnings
-                warnings.warn(f"Failed to set process priority: {e}")
+        pass # C++側でプロセスを管理するため不要

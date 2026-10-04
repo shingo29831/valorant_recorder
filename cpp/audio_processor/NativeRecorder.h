@@ -10,20 +10,18 @@
 
 // Pythonから渡される録画設定
 struct RecorderConfig {
-    int video_fps;
-    const char* video_resolution;
-    const char* video_format;
-    const char* video_input_source;
-    const char* video_encoder;
-    
     float mic_gain;
     float system_gain;
     float noise_gate_threshold;
+    int32_t denoise_mode;
+    int32_t preprocess_mode;
     
     const char* mic_device_name;
+    const char* ffmpeg_command;
     const char* save_file_path;
     const char* temp_file_path;
     const char* ffmpeg_path;
+    const char* df_model_path;
 };
 
 // Python (ctypes) から呼び出すAPI
