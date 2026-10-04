@@ -259,17 +259,18 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
     }
     g_micCapture->Initialize();
 
-    AudioSyncQueue sysQueue(2, 80);
-    AudioSyncQueue micQueue(2, 80);
+    AudioSyncQueue sysQueue(2, 2000);
+    AudioSyncQueue micQueue(2, 2000);
     std::unique_ptr<Resampler> sysResampler;
     std::unique_ptr<Resampler> micResampler;
-    std::mutex resamplerMtx;
+    std::mutex sysResamplerMtx;
+    std::mutex micResamplerMtx;
 
     float sysGain = configCopy.system_gain;
     float micGain = configCopy.mic_gain;
 
     g_sysCapture->SetCallback([&](const float* data, uint32_t frames, uint32_t channels, uint32_t sampleRate) {
-        std::lock_guard<std::mutex> lock(resamplerMtx);
+        std::lock_guard<std::mutex> lock(sysResamplerMtx);
         if (!sysResampler) sysResampler = std::make_unique<Resampler>(channels, sampleRate, 48000);
         std::vector<float> resampled;
         sysResampler->Process(data, frames, resampled);
@@ -281,7 +282,7 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
     });
 
     g_micCapture->SetCallback([&](const float* data, uint32_t frames, uint32_t channels, uint32_t sampleRate) {
-        std::lock_guard<std::mutex> lock(resamplerMtx);
+        std::lock_guard<std::mutex> lock(micResamplerMtx);
         if (!micResampler) micResampler = std::make_unique<Resampler>(channels, sampleRate, 48000);
         std::vector<float> resampled;
         micResampler->Process(data, frames, resampled);
@@ -400,6 +401,9 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
 
     timeBeginPeriod(1);
     
+    // ジッターバッファ（40ms）を確保してアンダーランによるゼロ埋めプツプツ音を完全防止
+    Sleep(40);
+
     auto startTime = std::chrono::steady_clock::now();
     uint64_t totalWrittenFrames = 0;
     auto lastLogTime = startTime;
@@ -411,25 +415,23 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
         double elapsedSec = std::chrono::duration<double>(now - startTime).count();
         uint64_t targetFrames = static_cast<uint64_t>(elapsedSec * 48000.0);
 
-        while (g_isRunning && totalWrittenFrames < targetFrames) {
-            uint32_t chunkFrames = static_cast<uint32_t>((std::min<uint64_t>)(framesPerChunk, targetFrames - totalWrittenFrames));
-            if (chunkFrames == 0) break;
-
-            size_t reqSysSamples = chunkFrames * 2;
-            size_t reqMicSamples = chunkFrames * 2;
+        // DSP/AIデノイズのブロック境界破断を防ぐため、必ず完全なチャンク(480フレーム)単位で処理
+        while (g_isRunning && (totalWrittenFrames + framesPerChunk) <= targetFrames) {
+            size_t reqSysSamples = framesPerChunk * 2;
+            size_t reqMicSamples = framesPerChunk * 2;
 
             sysQueue.PopExact(reqSysSamples, sysBuf);
             micQueue.PopExact(reqMicSamples, micBuf);
 
-            micNoiseGate.Process(micBuf.data(), chunkFrames, 2);
+            micNoiseGate.Process(micBuf.data(), framesPerChunk, 2);
 
             if (audioProc && (configCopy.denoise_mode > 0 || configCopy.preprocess_mode > 0)) {
-                AudioProcessor_Process(audioProc, micBuf.data(), micProcessed.data(), static_cast<int>(chunkFrames));
+                AudioProcessor_Process(audioProc, micBuf.data(), micProcessed.data(), static_cast<int>(framesPerChunk));
             } else {
                 std::copy(micBuf.begin(), micBuf.begin() + reqMicSamples, micProcessed.begin());
             }
 
-            for (size_t i = 0; i < chunkFrames; ++i) {
+            for (size_t i = 0; i < framesPerChunk; ++i) {
                 float sysL = sysBuf[i * 2 + 0];
                 float sysR = sysBuf[i * 2 + 1];
                 float micL = micProcessed[i * 2 + 0];
@@ -443,9 +445,9 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
                 outBuf[i * 6 + 5] = micR;
             }
 
-            std::vector<float> chunkOut(outBuf.begin(), outBuf.begin() + chunkFrames * 6);
+            std::vector<float> chunkOut(outBuf.begin(), outBuf.begin() + framesPerChunk * 6);
             outQueue.Push(chunkOut);
-            totalWrittenFrames += chunkFrames;
+            totalWrittenFrames += framesPerChunk;
         }
 
         if (std::chrono::duration_cast<std::chrono::seconds>(now - lastLogTime).count() >= 5) {

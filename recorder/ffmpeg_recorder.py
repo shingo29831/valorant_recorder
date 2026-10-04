@@ -203,21 +203,20 @@ class FFmpegRecorder:
                     "-f", "lavfi",
                     "-i", f"ddagrab=framerate={self.config.RECORD_FPS}:draw_mouse=1",
                 ])
-                video_map = "0:v"
-                video_filter = ""
+                video_filter = "[0:v]setpts=PTS-STARTPTS[v_out];"
             else:
                 cmd.extend([
                     "-thread_queue_size", "4096",
                     "-f", "lavfi",
                     "-i", f"ddagrab=framerate={self.config.RECORD_FPS}:draw_mouse=1",
                 ])
-                video_map = "[v_out]"
-                video_filter = f"[0:v]hwdownload,format=bgra,format=yuv420p[v_out];"
+                video_filter = f"[0:v]hwdownload,format=bgra,format=yuv420p,setpts=PTS-STARTPTS[v_out];"
 
-            # aresample=async=1000:first_pts=0 により、音声パイプの到着速度に関わらず
-            # 実時間クロックに合わせて自動補正し、FFmpegが音声待ちで停止するコマ送りを完全消滅
+            video_map = "[v_out]"
+
+            # 音声タイムスタンプを先頭0からの完全連続値に統一し、破損を招くaresample=asyncを撤廃
             audio_filter = (
-                "[1:a]asetpts=N/SR/TB,aresample=async=1000:first_pts=0,asplit=3[mix_in][sys_in][mic_in];"
+                "[1:a]asetpts=N/SR/TB,asplit=3[mix_in][sys_in][mic_in];"
                 "[mix_in]pan=stereo|FL=c0|FR=c1,alimiter=limit=0.99[a_mixed];"
                 "[sys_in]pan=stereo|FL=c2|FR=c3,alimiter=limit=0.99[a0_out];"
                 "[mic_in]pan=stereo|FL=0.5*c4+0.5*c5|FR=0.5*c4+0.5*c5,alimiter=limit=0.95:attack=5:release=50[a1_out]"
@@ -244,7 +243,7 @@ class FFmpegRecorder:
                 "-keyint_min", str(self.config.RECORD_FPS),
                 "-fps_mode", "cfr",
                 "-max_muxing_queue_size", "8192",
-                "-shortest",
+                "-max_interleave_delta", "0",
                 "-c:a", "aac",
                 "-b:a", "192k",
                 self.temp_filepath

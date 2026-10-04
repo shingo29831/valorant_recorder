@@ -125,6 +125,14 @@ bool WasapiCapture::Initialize() {
         return false;
     }
 
+    if (m_logger) {
+        m_logger("Initialized device: " + (m_deviceName.empty() ? "Default" : m_deviceName) + 
+                 ", Rate: " + std::to_string(m_sampleRate) + 
+                 ", Channels: " + std::to_string(m_channels) + 
+                 ", FormatTag: " + std::to_string(m_pwfx->wFormatTag) + 
+                 ", Bits: " + std::to_string(m_pwfx->wBitsPerSample));
+    }
+
     m_isInitialized = true;
     return true;
 }
@@ -157,23 +165,69 @@ void WasapiCapture::Stop() {
 
 void WasapiCapture::CaptureThreadFunc() {
     CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
 
     UINT32 packetLength = 0;
     BYTE* pData = nullptr;
     UINT32 numFramesAvailable = 0;
     DWORD flags = 0;
 
-    bool isFloat = (m_pwfx->wFormatTag == WAVE_FORMAT_IEEE_FLOAT) || 
-                   (m_pwfx->wFormatTag == WAVE_FORMAT_EXTENSIBLE && 
-                    reinterpret_cast<WAVEFORMATEXTENSIBLE*>(m_pwfx)->SubFormat == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT);
+    // GUIDの明示的な定義 (環境依存の比較エラーを防ぐ)
+    const GUID GUID_SUBTYPE_PCM = { 0x00000001, 0x0000, 0x0010, { 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71 } };
+    const GUID GUID_SUBTYPE_IEEE_FLOAT = { 0x00000003, 0x0000, 0x0010, { 0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71 } };
+
+    // フォーマットを厳密に判定し、誤った型キャストによる波形破壊（ノイズ）を防ぐ
+    bool isFloat = false;
+    bool is16Bit = false;
+    bool is24Bit = false;
+    bool is32Bit = false;
+
+    if (m_pwfx->wFormatTag == WAVE_FORMAT_IEEE_FLOAT) {
+        isFloat = true;
+    } else if (m_pwfx->wFormatTag == WAVE_FORMAT_EXTENSIBLE) {
+        WAVEFORMATEXTENSIBLE* pEx = reinterpret_cast<WAVEFORMATEXTENSIBLE*>(m_pwfx);
+        if (memcmp(&pEx->SubFormat, &GUID_SUBTYPE_IEEE_FLOAT, sizeof(GUID)) == 0) {
+            isFloat = true;
+        } else if (memcmp(&pEx->SubFormat, &GUID_SUBTYPE_PCM, sizeof(GUID)) == 0) {
+            if (m_pwfx->wBitsPerSample == 16) is16Bit = true;
+            else if (m_pwfx->wBitsPerSample == 24) is24Bit = true;
+            else if (m_pwfx->wBitsPerSample == 32) is32Bit = true;
+        }
+    } else if (m_pwfx->wFormatTag == WAVE_FORMAT_PCM) {
+        if (m_pwfx->wBitsPerSample == 16) is16Bit = true;
+        else if (m_pwfx->wBitsPerSample == 24) is24Bit = true;
+        else if (m_pwfx->wBitsPerSample == 32) is32Bit = true;
+    }
+
+    if (m_logger) {
+        if (isFloat) m_logger("Detected Format: Float");
+        else if (is16Bit) m_logger("Detected Format: 16bit PCM");
+        else if (is24Bit) m_logger("Detected Format: 24bit PCM");
+        else if (is32Bit) m_logger("Detected Format: 32bit PCM");
+        else m_logger("Detected Format: UNKNOWN");
+    }
 
     std::vector<float> floatBuffer;
+    auto lastPacketTime = std::chrono::steady_clock::now();
 
     while (m_isRunning) {
-        Sleep(10); // Polling interval
+        Sleep(3);
 
         HRESULT hr = m_captureClient->GetNextPacketSize(&packetLength);
         if (FAILED(hr)) continue;
+
+        // ループバック時に無音が続いてパケットが途絶えた場合のキープアライブ
+        if (packetLength == 0 && m_type == CaptureType::SystemLoopback) {
+            auto now = std::chrono::steady_clock::now();
+            if (std::chrono::duration_cast<std::chrono::milliseconds>(now - lastPacketTime).count() >= 10) {
+                uint32_t silentFrames = m_sampleRate / 100;
+                if (silentFrames > 0 && m_callback) {
+                    floatBuffer.assign(silentFrames * m_channels, 0.0f);
+                    m_callback(floatBuffer.data(), silentFrames, m_channels, m_sampleRate);
+                }
+                lastPacketTime = now;
+            }
+        }
 
         while (packetLength != 0) {
             hr = m_captureClient->GetBuffer(&pData, &numFramesAvailable, &flags, NULL, NULL);
@@ -186,10 +240,24 @@ void WasapiCapture::CaptureThreadFunc() {
                 if (!(flags & AUDCLNT_BUFFERFLAGS_SILENT) && pData) {
                     if (isFloat) {
                         memcpy(floatBuffer.data(), pData, totalSamples * sizeof(float));
-                    } else if (m_pwfx->wBitsPerSample == 16) {
+                    } else if (is16Bit) {
                         int16_t* p16 = reinterpret_cast<int16_t*>(pData);
                         for (uint32_t i = 0; i < totalSamples; ++i) {
                             floatBuffer[i] = p16[i] / 32768.0f;
+                        }
+                    } else if (is24Bit) {
+                        uint8_t* p24 = reinterpret_cast<uint8_t*>(pData);
+                        for (uint32_t i = 0; i < totalSamples; ++i) {
+                            // 24bit (リトルエンディアン) の正しい符号拡張と正規化
+                            int32_t val = (static_cast<int32_t>(static_cast<int8_t>(p24[i * 3 + 2])) << 16) |
+                                          (static_cast<int32_t>(p24[i * 3 + 1]) << 8) |
+                                          static_cast<int32_t>(p24[i * 3]);
+                            floatBuffer[i] = val / 8388608.0f;
+                        }
+                    } else if (is32Bit) {
+                        int32_t* p32 = reinterpret_cast<int32_t*>(pData);
+                        for (uint32_t i = 0; i < totalSamples; ++i) {
+                            floatBuffer[i] = p32[i] / 2147483648.0f;
                         }
                     }
                 }
@@ -198,6 +266,7 @@ void WasapiCapture::CaptureThreadFunc() {
 
             hr = m_captureClient->ReleaseBuffer(numFramesAvailable);
             hr = m_captureClient->GetNextPacketSize(&packetLength);
+            lastPacketTime = std::chrono::steady_clock::now();
         }
     }
     CoUninitialize();
