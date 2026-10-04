@@ -142,6 +142,11 @@ class WatcherThread(QThread):
             import logging
             err_str = str(e)
             logging.error(f"[WatcherThread] Failed to start recording: {err_str}")
+            # 録画失敗時はログ監視側の状態をリセットし次マッチ検知不能を防ぐ
+            self.current_video_path = None
+            if hasattr(self, 'watcher'):
+                self.watcher.is_in_match = False
+                self.watcher.has_entered_in_progress = False
             try:
                 msg = self.t.log_start_failed.format(error=err_str)
                 if err_str not in msg:

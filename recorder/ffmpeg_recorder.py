@@ -257,13 +257,20 @@ class FFmpegRecorder:
             
             gate_level = float(getattr(self.config, 'RECORD_AUDIO_MIC_NOISE_GATE', '0')) / 100.0
             denoise_str = str(getattr(self.config, 'RECORD_AUDIO_MIC_DENOISE', 'None'))
-            denoise_mode = 1 if denoise_str == 'DeepFilterNet' else 0
+            # UI表記(AI (DeepFilterNet))との不整合を解消
+            denoise_mode = 1 if "deepfilter" in denoise_str.lower() else 0
             preprocess_str = str(getattr(self.config, 'RECORD_AUDIO_MIC_PREPROCESS', 'SpeexDSP'))
             preprocess_mode = 1 if preprocess_str == 'SpeexDSP' else 0
 
+            # 過去互換性および設定キー名の揺らぎを吸収
+            raw_mic_gain = float(getattr(self.config, 'RECORD_AUDIO_MIC_GAIN', 1.0))
+            mic_gain = raw_mic_gain / 100.0 if raw_mic_gain > 10.0 else raw_mic_gain
+            raw_sys_gain = float(getattr(self.config, 'RECORD_AUDIO_SYSTEM_GAIN', getattr(self.config, 'RECORD_AUDIO_SYS_GAIN', 1.0)))
+            sys_gain = raw_sys_gain / 100.0 if raw_sys_gain > 10.0 else raw_sys_gain
+
             config_struct = RecorderConfig()
-            config_struct.mic_gain = float(getattr(self.config, 'RECORD_AUDIO_MIC_GAIN', 100)) / 100.0
-            config_struct.system_gain = float(getattr(self.config, 'RECORD_AUDIO_SYS_GAIN', 100)) / 100.0
+            config_struct.mic_gain = mic_gain
+            config_struct.system_gain = sys_gain
             config_struct.noise_gate_threshold = gate_level
             config_struct.denoise_mode = denoise_mode
             config_struct.preprocess_mode = preprocess_mode
@@ -332,6 +339,11 @@ class FFmpegRecorder:
             err_msg = str(e)
             logging.error(f"[FFmpegRecorder] Failed to start recording: {err_msg}", exc_info=True)
             self._collect_and_save_diagnostic(err_msg)
+            # エラー時にネイティブスレッドとリソースを確実に後始末
+            try:
+                self.native_lib.Recorder_Stop()
+            except Exception:
+                pass
             raise
 
     def is_recording(self) -> bool:

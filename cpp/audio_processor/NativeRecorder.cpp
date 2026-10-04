@@ -486,6 +486,11 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
 }
 
 EXPORT_API bool Recorder_Start(const RecorderConfig* config) {
+    // 前回のスレッドが終了済みかつ未joinなら安全に回収
+    if (g_recordingThread.joinable()) {
+        g_recordingThread.join();
+    }
+
     if (g_isRunning) {
         SetLastErrorMsg("Recorder is already running.");
         return false;

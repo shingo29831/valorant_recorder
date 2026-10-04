@@ -141,6 +141,9 @@ class LogWatcher:
 
                     if is_menu:
                         self.is_match_ending = False
+                        # メニューに戻った場合は確実に試合中フラグを初期化
+                        self.is_in_match = False
+                        self.has_entered_in_progress = False
 
                     # 試合開始の検知 (ピック画面から完全録画するため Pregame を追加)
                     is_start = (
