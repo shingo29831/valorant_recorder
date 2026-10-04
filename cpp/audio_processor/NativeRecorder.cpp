@@ -51,6 +51,7 @@ static std::unique_ptr<WasapiCapture> g_micCapture;
 static void SetLastErrorMsg(const std::string& msg) {
     std::lock_guard<std::mutex> lock(g_errorMutex);
     g_lastError = msg;
+    NativeLog("[ERROR] " + msg);
 }
 
 // SpeexDSP リサンプラーラッパー
@@ -303,17 +304,34 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
     std::vector<char> cmdBuf(ffmpegCmd.begin(), ffmpegCmd.end());
     cmdBuf.push_back('\0');
 
+    NativeLog("Executing FFmpeg command: " + ffmpegCmd);
+
     if (!CreateProcessA(NULL, cmdBuf.data(), NULL, NULL, TRUE, CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP, NULL, NULL, &si, &pi)) {
-        SetLastErrorMsg("Failed to start FFmpeg process");
+        DWORD err = GetLastError();
+        SetLastErrorMsg("Failed to start FFmpeg process (CreateProcessA error: " + std::to_string(err) + ")");
         CloseHandle(hReadPipe);
         CloseHandle(hWritePipe);
         if (hLogFile != INVALID_HANDLE_VALUE) CloseHandle(hLogFile);
         g_isRunning = false;
         return;
     }
-    CloseHandle(hReadPipe); // 親プロセス側ではReadハンドルを閉じる
-    
-    if (hLogFile != INVALID_HANDLE_VALUE) {
+    CloseHandle(hReadPipe);
+    if (hLogFile != INVALID_HANDLE_VALUE) CloseHandle(hLogFile);
+
+    // FFmpegプロセスの即時終了（コマンド引数エラー等）を検知
+    DWORD waitResult = WaitForSingleObject(pi.hProcess, 150);
+    if (waitResult == WAIT_OBJECT_0) {
+        DWORD exitCode = 0;
+        GetExitCodeProcess(pi.hProcess, &exitCode);
+        SetLastErrorMsg("FFmpeg process crashed immediately with exit code " + std::to_string(exitCode));
+        CloseHandle(hWritePipe);
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+        g_isRunning = false;
+        return;
+    }
+
+    void* audioProc = nullptr;
         CloseHandle(hLogFile); // 子プロセスに継承されたため、親プロセス側のハンドルは直ちに閉じる
     }
 

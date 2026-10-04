@@ -13,8 +13,6 @@ struct RecorderConfig {
     float mic_gain;
     float system_gain;
     float noise_gate_threshold;
-    int32_t denoise_mode;
-    int32_t preprocess_mode;
     
     const char* mic_device_name;
     const char* ffmpeg_command;
@@ -22,6 +20,9 @@ struct RecorderConfig {
     const char* temp_file_path;
     const char* ffmpeg_path;
     const char* df_model_path;
+
+    int32_t denoise_mode;
+    int32_t preprocess_mode;
 };
 
 // Python (ctypes) から呼び出すAPI

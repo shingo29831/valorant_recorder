@@ -12,14 +12,14 @@ class RecorderConfig(ctypes.Structure):
         ("mic_gain", ctypes.c_float),
         ("system_gain", ctypes.c_float),
         ("noise_gate_threshold", ctypes.c_float),
-        ("denoise_mode", ctypes.c_int32),
-        ("preprocess_mode", ctypes.c_int32),
         ("mic_device_name", ctypes.c_char_p),
         ("ffmpeg_command", ctypes.c_char_p),
         ("save_file_path", ctypes.c_char_p),
         ("temp_file_path", ctypes.c_char_p),
         ("ffmpeg_path", ctypes.c_char_p),
         ("df_model_path", ctypes.c_char_p),
+        ("denoise_mode", ctypes.c_int32),
+        ("preprocess_mode", ctypes.c_int32),
     ]
 
 class FFmpegRecorder:
@@ -91,140 +91,151 @@ class FFmpegRecorder:
         available, _ = get_available_encoders(self.ffmpeg_path)
         return available[0]
 
+    def _dump_ffmpeg_log(self):
+        log_path = os.path.join(self.config.SAVE_DIR, "native_ffmpeg.log")
+        if os.path.exists(log_path):
+            try:
+                with open(log_path, "r", encoding="utf-8", errors="replace") as f:
+                    lines = f.readlines()
+                    tail = "".join(lines[-25:]) if len(lines) > 25 else "".join(lines)
+                    logging.error(f"[FFmpegRecorder] --- FFmpeg Log Dump ---\n{tail}\n---------------------------")
+            except Exception as e:
+                logging.error(f"[FFmpegRecorder] Could not read native_ffmpeg.log: {e}")
+
     def start_recording(self) -> str:
         if self.native_lib.Recorder_IsRunning():
+            logging.info("[FFmpegRecorder] Already recording.")
             return self.current_filepath
 
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        filename = f"match_record_{timestamp}.mp4"
-        temp_filename = f"match_record_{timestamp}.mkv"
-        self.current_filepath = os.path.join(self.config.SAVE_DIR, filename)
-        self.temp_filepath = os.path.join(self.config.SAVE_DIR, temp_filename)
-        os.makedirs(self.config.SAVE_DIR, exist_ok=True)
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"match_record_{timestamp}.mp4"
+            temp_filename = f"match_record_{timestamp}.mkv"
+            self.current_filepath = os.path.join(self.config.SAVE_DIR, filename)
+            self.temp_filepath = os.path.join(self.config.SAVE_DIR, temp_filename)
+            os.makedirs(self.config.SAVE_DIR, exist_ok=True)
 
-        is_nvenc = "nvenc" in self.actual_encoder.lower()
-        preset = "p1" if is_nvenc else "ultrafast"
-        tune = "ull" if is_nvenc else "zerolatency"
+            is_nvenc = "nvenc" in self.actual_encoder.lower()
+            preset = "p1" if is_nvenc else "ultrafast"
+            tune = "ull" if is_nvenc else "zerolatency"
 
-        cmd = [
-            self.ffmpeg_path,
-            "-y",
-        ]
-        
-        # GPUエンコーダではD3D11テクスチャをCPUに落とさず直結してカクつきを完全防止
-        cmd.extend([
-            "-thread_queue_size", "1024",
-            "-f", "lavfi",
-            "-i", f"ddagrab=framerate={self.config.RECORD_FPS}:draw_mouse=1"
-        ])
-        
-        audio_filter = (
-            "[1:a]asetpts=N/SR/TB,asplit=3[mix_in][sys_in][mic_in];"
-            "[mix_in]pan=stereo|FL=c0|FR=c1,alimiter=limit=0.99[a_mixed];"
-            "[sys_in]pan=stereo|FL=c2|FR=c3,alimiter=limit=0.99[a0_out];"
-            "[mic_in]pan=stereo|FL=0.5*c4+0.5*c5|FR=0.5*c4+0.5*c5,alimiter=limit=0.95:attack=5:release=50[a1_out]"
-        )
-
-        video_map = "0:v"
-        filter_complex = audio_filter
-
-        # ソフトウェアエンコーダのみCPUへのhwdownloadが必要
-        if not is_nvenc and "amf" not in self.actual_encoder.lower():
-            filter_complex = (
-                f"[0:v]hwdownload,format=bgra,format=yuv420p,setpts=PTS-STARTPTS[v_out];"
-                + audio_filter
+            cmd = [
+                self.ffmpeg_path,
+                "-y",
+                "-thread_queue_size", "1024",
+                "-f", "lavfi",
+                "-i", f"ddagrab=framerate={self.config.RECORD_FPS}",
+            ]
+            
+            filter_complex = f"[0:v]hwdownload,format=bgra,setpts=PTS-STARTPTS,fps={self.config.RECORD_FPS}[v_out];"
+            audio_filter = (
+                "[1:a]asetpts=N/SR/TB,asplit=3[mix_in][sys_in][mic_in];"
+                "[mix_in]pan=stereo|FL=c0|FR=c1,alimiter=limit=0.99[a_mixed];"
+                "[sys_in]pan=stereo|FL=c2|FR=c3,alimiter=limit=0.99[a0_out];"
+                "[mic_in]pan=stereo|FL=0.5*c4+0.5*c5|FR=0.5*c4+0.5*c5,alimiter=limit=0.95:attack=5:release=50[a1_out]"
             )
-            video_map = "[v_out]"
+            filter_complex += audio_filter
 
-        cmd.extend([
-            "-thread_queue_size", "1024",
-            "-f", "f32le",
-            "-ar", "48000",
-            "-ac", "6",
-            "-i", "pipe:0",
-            "-filter_complex", filter_complex,
-            "-map", video_map,
-            "-map", "[a_mixed]",
-            "-map", "[a0_out]",
-            "-map", "[a1_out]",
-            "-c:v", self.actual_encoder,
-            "-preset", preset,
-            "-tune", tune,
-            "-b:v", "10M",
-            "-pix_fmt", "nv12" if is_nvenc else "yuv420p",
-            "-r", str(self.config.RECORD_FPS),
-            "-g", str(self.config.RECORD_FPS),
-            "-keyint_min", str(self.config.RECORD_FPS),
-            "-delay", "0",
-            "-zerolatency", "1",
-            "-c:a", "aac",
-            "-b:a", "192k",
-            self.temp_filepath
-        ])
+            cmd.extend([
+                "-thread_queue_size", "1024",
+                "-f", "f32le",
+                "-ar", "48000",
+                "-ac", "6",
+                "-i", "pipe:0",
+                "-filter_complex", filter_complex,
+                "-map", "[v_out]",
+                "-map", "[a_mixed]",
+                "-map", "[a0_out]",
+                "-map", "[a1_out]",
+                "-c:v", self.actual_encoder,
+                "-preset", preset,
+                "-tune", tune,
+                "-b:v", "10M",
+                "-pix_fmt", "yuv420p",
+                "-r", str(self.config.RECORD_FPS),
+                "-g", str(self.config.RECORD_FPS),
+                "-keyint_min", str(self.config.RECORD_FPS),
+                "-fps_mode", "cfr",
+                "-c:a", "aac",
+                "-b:a", "192k",
+                self.temp_filepath
+            ])
 
-        cmd_str = subprocess.list2cmdline(cmd)
-        
-        report_path = os.path.join(self.config.SAVE_DIR, "ffmpeg_crash_report.log").replace('\\', '/')
-        os.environ["FFREPORT"] = f"file='{report_path}':level=48"
-        logging.info(f"[FFmpegRecorder] Set FFREPORT to {report_path}")
-        
-        gate_level = float(getattr(self.config, 'RECORD_AUDIO_MIC_NOISE_GATE', '0')) / 100.0
-        denoise_str = str(getattr(self.config, 'RECORD_AUDIO_MIC_DENOISE', 'None'))
-        denoise_mode = 1 if denoise_str == 'DeepFilterNet' else 0
-        preprocess_str = str(getattr(self.config, 'RECORD_AUDIO_MIC_PREPROCESS', 'SpeexDSP'))
-        preprocess_mode = 1 if preprocess_str == 'SpeexDSP' else 0
+            cmd_str = subprocess.list2cmdline(cmd)
+            
+            report_path = os.path.join(self.config.SAVE_DIR, "ffmpeg_crash_report.log").replace('\\', '/')
+            os.environ["FFREPORT"] = f"file='{report_path}':level=48"
+            
+            gate_level = float(getattr(self.config, 'RECORD_AUDIO_MIC_NOISE_GATE', '0')) / 100.0
+            denoise_str = str(getattr(self.config, 'RECORD_AUDIO_MIC_DENOISE', 'None'))
+            denoise_mode = 1 if denoise_str == 'DeepFilterNet' else 0
+            preprocess_str = str(getattr(self.config, 'RECORD_AUDIO_MIC_PREPROCESS', 'SpeexDSP'))
+            preprocess_mode = 1 if preprocess_str == 'SpeexDSP' else 0
 
-        config_struct = RecorderConfig()
-        config_struct.mic_gain = float(getattr(self.config, 'RECORD_AUDIO_MIC_GAIN', 100)) / 100.0
-        config_struct.system_gain = float(getattr(self.config, 'RECORD_AUDIO_SYS_GAIN', 100)) / 100.0
-        config_struct.noise_gate_threshold = gate_level
-        config_struct.denoise_mode = denoise_mode
-        config_struct.preprocess_mode = preprocess_mode
-        
-        mic_device = getattr(self.config, 'RECORD_AUDIO_MIC_DEVICE', 'Default')
-        config_struct.mic_device_name = mic_device.encode('utf-8') if mic_device != 'Default' else b""
-        config_struct.ffmpeg_command = cmd_str.encode('utf-8')
-        config_struct.save_file_path = self.current_filepath.encode('utf-8')
-        config_struct.temp_file_path = self.temp_filepath.encode('utf-8')
-        config_struct.ffmpeg_path = self.ffmpeg_path.encode('utf-8')
-        
-        # DeepFilterNetのモデルパスを解決
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        possible_model_paths = [
-            os.path.join(project_root, "cpp", "audio_processor", "DeepFilterNet3_onnx.tar.gz"),
-            os.path.join(project_root, "models", "DeepFilterNet3", "DeepFilterNet3_onnx.tar.gz"),
-            os.path.join(project_root, "models", "DeepFilterNet3_onnx.tar.gz"),
-        ]
-        df_model_path = ""
-        for p in possible_model_paths:
-            if os.path.isfile(p):
-                df_model_path = p
-                break
-                
-        if not df_model_path:
-            # 見つからない場合は再帰探索
-            for root, _, files in os.walk(project_root):
-                for f in files:
-                    if f.endswith(".tar.gz") and "deepfilter" in f.lower():
-                        df_model_path = os.path.join(root, f)
-                        break
-                if df_model_path:
+            config_struct = RecorderConfig()
+            config_struct.mic_gain = float(getattr(self.config, 'RECORD_AUDIO_MIC_GAIN', 100)) / 100.0
+            config_struct.system_gain = float(getattr(self.config, 'RECORD_AUDIO_SYS_GAIN', 100)) / 100.0
+            config_struct.noise_gate_threshold = gate_level
+            config_struct.denoise_mode = denoise_mode
+            config_struct.preprocess_mode = preprocess_mode
+            
+            mic_device = getattr(self.config, 'RECORD_AUDIO_MIC_DEVICE', 'Default')
+            config_struct.mic_device_name = mic_device.encode('utf-8') if mic_device != 'Default' else b""
+            config_struct.ffmpeg_command = cmd_str.encode('utf-8')
+            config_struct.save_file_path = self.current_filepath.encode('utf-8')
+            config_struct.temp_file_path = self.temp_filepath.encode('utf-8')
+            config_struct.ffmpeg_path = self.ffmpeg_path.encode('utf-8')
+            
+            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            possible_model_paths = [
+                os.path.join(project_root, "cpp", "audio_processor", "DeepFilterNet3_onnx.tar.gz"),
+                os.path.join(project_root, "models", "DeepFilterNet3", "DeepFilterNet3_onnx.tar.gz"),
+                os.path.join(project_root, "models", "DeepFilterNet3_onnx.tar.gz"),
+            ]
+            df_model_path = ""
+            for p in possible_model_paths:
+                if os.path.isfile(p):
+                    df_model_path = p
                     break
+                    
+            if not df_model_path:
+                for root, _, files in os.walk(project_root):
+                    for f in files:
+                        if f.endswith(".tar.gz") and "deepfilter" in f.lower():
+                            df_model_path = os.path.join(root, f)
+                            break
+                    if df_model_path:
+                        break
 
-        # 短いパスに変換（日本語パス対策）
-        from recorder.audio_processor_wrapper import get_short_path_name
-        if df_model_path:
-            df_model_path = get_short_path_name(df_model_path).replace('\\', '/')
+            from recorder.audio_processor_wrapper import get_short_path_name
+            if df_model_path:
+                df_model_path = get_short_path_name(df_model_path).replace('\\', '/')
+                
+            config_struct.df_model_path = df_model_path.encode('utf-8')
             
-        config_struct.df_model_path = df_model_path.encode('utf-8')
-        
-        logging.info(f"[FFmpegRecorder] Starting NativeRecorder with command: {cmd_str}")
-        
-        if not self.native_lib.Recorder_Start(ctypes.byref(config_struct)):
-            err = self.native_lib.Recorder_GetLastError().decode('utf-8')
-            raise RuntimeError(f"NativeRecorder failed to start: {err}")
+            logging.info(f"[FFmpegRecorder] Starting NativeRecorder. Encoder: {self.actual_encoder}")
+            logging.info(f"[FFmpegRecorder] Command: {cmd_str}")
             
-        return self.current_filepath
+            if not self.native_lib.Recorder_Start(ctypes.byref(config_struct)):
+                err = self.native_lib.Recorder_GetLastError().decode('utf-8', errors='replace')
+                logging.error(f"[FFmpegRecorder] Recorder_Start failed: {err}")
+                self._dump_ffmpeg_log()
+                raise RuntimeError(f"NativeRecorder failed to start: {err}")
+                
+            import time
+            time.sleep(0.3)
+            if not self.native_lib.Recorder_IsRunning():
+                err = self.native_lib.Recorder_GetLastError().decode('utf-8', errors='replace')
+                logging.error(f"[FFmpegRecorder] Recorder stopped immediately: {err}")
+                self._dump_ffmpeg_log()
+                raise RuntimeError(f"Recorder stopped immediately: {err}")
+
+            logging.info("[FFmpegRecorder] Recording started successfully.")
+            return self.current_filepath
+        except Exception as e:
+            logging.error(f"[FFmpegRecorder] Failed to start recording: {e}", exc_info=True)
+            self._dump_ffmpeg_log()
+            raise
 
     def is_recording(self) -> bool:
         return self.native_lib.Recorder_IsRunning()
