@@ -1,6 +1,6 @@
 import os
 from PyQt6.QtCore import QObject, pyqtSignal, QUrl, QTimer
-from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
+from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput, QMediaMetaData
 
 class VideoPlayerCore(QObject):
     positionChanged = pyqtSignal(int)
@@ -74,19 +74,26 @@ class VideoPlayerCore(QObject):
         pass
 
     def _apply_audio_tracks(self):
-        # 3トラック構成: 0=Mix, 1=System, 2=Mic
+        # 標準構成: Track 0=System Audio, Track 1=Microphone, Track 2=Mixed
+        # メタデータ(言語/タイトル)を認識してシステム音とマイク音を完全分離
         media_tracks = self.media_player.audioTracks()
-        if len(media_tracks) >= 3:
-            self.media_player.setActiveAudioTrack(1)
-        elif len(media_tracks) > 0:
-            self.media_player.setActiveAudioTrack(0)
+        num_tracks = len(media_tracks)
 
-        mic_tracks = self.mic_player.audioTracks()
-        if len(mic_tracks) >= 3:
-            self.mic_player.setActiveAudioTrack(2)
-        elif len(mic_tracks) == 2:
-            self.mic_player.setActiveAudioTrack(1)
-        elif len(mic_tracks) > 0:
+        if num_tracks >= 2:
+            sys_idx = 0
+            mic_idx = 1
+            for idx, meta in enumerate(media_tracks):
+                title = str(meta.value(QMediaMetaData.Key.Title) or "").lower()
+                lang = str(meta.value(QMediaMetaData.Key.Language) or "").lower()
+                if "sys" in title or lang == "eng":
+                    sys_idx = idx
+                elif "mic" in title or lang == "jpn":
+                    mic_idx = idx
+
+            self.media_player.setActiveAudioTrack(sys_idx)
+            self.mic_player.setActiveAudioTrack(mic_idx)
+        elif num_tracks == 1:
+            self.media_player.setActiveAudioTrack(0)
             self.mic_player.setActiveAudioTrack(-1)
 
     def _on_media_tracks_changed(self):

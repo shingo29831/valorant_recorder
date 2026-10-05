@@ -236,11 +236,13 @@ class FFmpegRecorder:
 
             video_map = "[v_out]"
 
+            # c0,c1: システム音単体 / c2,c3: マイク音単体 / c4,c5: 合成音
+            # マイクの0.5倍減衰を排除し、設定画面のゲイン値と1:1で正確に同期
             audio_filter = (
-                "[0:a]asetpts=N/SR/TB,asplit=3[mix_in][sys_in][mic_in];"
-                "[mix_in]pan=stereo|FL=c0|FR=c1,alimiter=limit=0.99[a_mixed];"
-                "[sys_in]pan=stereo|FL=c2|FR=c3,alimiter=limit=0.99[a0_out];"
-                "[mic_in]pan=stereo|FL=0.5*c4+0.5*c5|FR=0.5*c4+0.5*c5,alimiter=limit=0.95:attack=5:release=50[a1_out]"
+                "[0:a]asetpts=N/SR/TB,asplit=3[sys_in][mic_in][mix_in];"
+                "[sys_in]pan=stereo|FL=c0|FR=c1,alimiter=limit=0.99[a_sys];"
+                "[mic_in]pan=stereo|FL=c2|FR=c3,alimiter=limit=0.99[a_mic];"
+                "[mix_in]pan=stereo|FL=c4|FR=c5,alimiter=limit=0.99[a_mix]"
             )
             filter_complex = video_filter + audio_filter
 
@@ -251,9 +253,15 @@ class FFmpegRecorder:
                 "-i", "pipe:0",
                 "-filter_complex", filter_complex,
                 "-map", video_map,
-                "-map", "[a_mixed]",
-                "-map", "[a0_out]",
-                "-map", "[a1_out]",
+                "-map", "[a_sys]",
+                "-map", "[a_mic]",
+                "-map", "[a_mix]",
+                "-metadata:s:a:0", "title=System Audio",
+                "-metadata:s:a:0", "language=eng",
+                "-metadata:s:a:1", "title=Microphone",
+                "-metadata:s:a:1", "language=jpn",
+                "-metadata:s:a:2", "title=Mixed Audio",
+                "-metadata:s:a:2", "language=und",
             ])
             cmd.extend(encoder_opts)
             cmd.extend([

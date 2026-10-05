@@ -542,12 +542,15 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
                 float micL = micProcessed[i * 2 + 0];
                 float micR = micProcessed[i * 2 + 1];
 
-                outBuf[i * 6 + 0] = std::clamp(sysL + micL, -1.0f, 1.0f);
-                outBuf[i * 6 + 1] = std::clamp(sysR + micR, -1.0f, 1.0f);
-                outBuf[i * 6 + 2] = sysL;
-                outBuf[i * 6 + 3] = sysR;
-                outBuf[i * 6 + 4] = micL;
-                outBuf[i * 6 + 5] = micR;
+                // c0,c1: システム音声単体 (Track 0)
+                outBuf[i * 6 + 0] = sysL;
+                outBuf[i * 6 + 1] = sysR;
+                // c2,c3: マイク音声単体 (Track 1)
+                outBuf[i * 6 + 2] = micL;
+                outBuf[i * 6 + 3] = micR;
+                // c4,c5: システム+マイク合成音声 (Track 2)
+                outBuf[i * 6 + 4] = std::clamp(sysL + micL, -1.0f, 1.0f);
+                outBuf[i * 6 + 5] = std::clamp(sysR + micR, -1.0f, 1.0f);
             }
 
             std::vector<float> chunkOut(outBuf.begin(), outBuf.begin() + framesPerChunk * 6);
