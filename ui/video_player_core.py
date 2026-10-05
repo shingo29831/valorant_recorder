@@ -74,21 +74,42 @@ class VideoPlayerCore(QObject):
         pass
 
     def _apply_audio_tracks(self):
-        # 標準構成: Track 0=System Audio, Track 1=Microphone, Track 2=Mixed
-        # メタデータ(言語/タイトル)を認識してシステム音とマイク音を完全分離
+        # 3トラック動画 (標準/過去録画): Track 0=Mix, Track 1=System, Track 2=Mic
+        # 2トラック動画: Track 0=System, Track 1=Mic
+        # 1トラック動画: Track 0=Mix/System
         media_tracks = self.media_player.audioTracks()
         num_tracks = len(media_tracks)
 
-        if num_tracks >= 2:
+        if num_tracks >= 3:
+            sys_idx = 1
+            mic_idx = 2
+            # メタデータ(タイトル/言語)が存在する場合は優先判別
+            for idx, meta in enumerate(media_tracks):
+                try:
+                    title = str(meta.value(QMediaMetaData.Key.Title) or "").lower()
+                    lang = str(meta.value(QMediaMetaData.Key.Language) or "").lower()
+                    if "sys" in title or lang == "eng":
+                        sys_idx = idx
+                    elif "mic" in title or lang == "jpn":
+                        mic_idx = idx
+                except Exception:
+                    pass
+
+            self.media_player.setActiveAudioTrack(sys_idx)
+            self.mic_player.setActiveAudioTrack(mic_idx)
+        elif num_tracks == 2:
             sys_idx = 0
             mic_idx = 1
             for idx, meta in enumerate(media_tracks):
-                title = str(meta.value(QMediaMetaData.Key.Title) or "").lower()
-                lang = str(meta.value(QMediaMetaData.Key.Language) or "").lower()
-                if "sys" in title or lang == "eng":
-                    sys_idx = idx
-                elif "mic" in title or lang == "jpn":
-                    mic_idx = idx
+                try:
+                    title = str(meta.value(QMediaMetaData.Key.Title) or "").lower()
+                    lang = str(meta.value(QMediaMetaData.Key.Language) or "").lower()
+                    if "sys" in title or lang == "eng":
+                        sys_idx = idx
+                    elif "mic" in title or lang == "jpn":
+                        mic_idx = idx
+                except Exception:
+                    pass
 
             self.media_player.setActiveAudioTrack(sys_idx)
             self.mic_player.setActiveAudioTrack(mic_idx)
