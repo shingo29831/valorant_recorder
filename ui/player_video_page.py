@@ -227,10 +227,19 @@ class PlayerVideoPage(QWidget):
         if obj == self.video_widget:
             if event.type() == QEvent.Type.Wheel:
                 delta = event.angleDelta().y()
-                if delta > 0:
-                    self.increase_speed()
-                elif delta < 0:
-                    self.decrease_speed()
+                modifiers = event.modifiers()
+                # Ctrl+ホイールで速度変更、通常ホイールは音量調整（誤操作による低音化を防止）
+                if modifiers & Qt.KeyboardModifier.ControlModifier:
+                    if delta > 0:
+                        self.increase_speed()
+                    elif delta < 0:
+                        self.decrease_speed()
+                else:
+                    step = 5 if delta > 0 else -5
+                    new_vol = max(0, min(200, int(round(self.player_core.current_sys_volume * 100)) + step))
+                    self.player_core.set_sys_volume(new_vol)
+                    self.volume_widget.set_volume(new_vol)
+                    self.show_osd(f"Vol: {new_vol}%")
                 return True
             elif event.type() == QEvent.Type.Resize:
                 if self.speed_osd_label.isVisible():
@@ -259,24 +268,22 @@ class PlayerVideoPage(QWidget):
         self.is_speed_bypassed = not self.is_speed_bypassed
         self._apply_playback_rate()
 
-    def _apply_playback_rate(self):
-        actual_rate = 1.0 if self.is_speed_bypassed else self.target_playback_rate
-        
-        self.player_core.set_playback_rate(actual_rate)
-        
-        self.playback_controls.set_speed_label(self.target_playback_rate, self.is_speed_bypassed)
-            
-        self.speed_osd_label.setText(f"{actual_rate:.1f}x")
+    def show_osd(self, text: str):
+        self.speed_osd_label.setText(text)
         self.speed_osd_label.adjustSize()
-        
         vw_rect = self.video_widget.rect()
         lbl_rect = self.speed_osd_label.rect()
         x = (vw_rect.width() - lbl_rect.width()) // 2
         y = vw_rect.height() - lbl_rect.height() - 30
         self.speed_osd_label.move(x, y)
-        
         self.speed_osd_label.show()
         self.speed_osd_timer.start(2000)
+
+    def _apply_playback_rate(self):
+        actual_rate = 1.0 if self.is_speed_bypassed else self.target_playback_rate
+        self.player_core.set_playback_rate(actual_rate)
+        self.playback_controls.set_speed_label(self.target_playback_rate, self.is_speed_bypassed)
+        self.show_osd(f"{actual_rate:.1f}x")
 
     def zoom_in_timeline(self):
         current_zoom = self.timeline_overlay.zoom_factor
@@ -402,7 +409,10 @@ class PlayerVideoPage(QWidget):
         self.current_json_filename = json_filename
         json_path = os.path.join(self.config.SAVE_DIR, json_filename)
         
-        self.set_target_playback_rate(1.0)
+        self.target_playback_rate = 1.0
+        self.is_speed_bypassed = False
+        self.playback_controls.set_speed_label(1.0, False)
+        self.player_core.set_playback_rate(1.0)
         
         try:
             with open(json_path, 'r', encoding='utf-8') as f:
@@ -520,3 +530,5 @@ class PlayerVideoPage(QWidget):
         if self.player_core.current_mic_volume != mic_vol:
             self.player_core.set_mic_volume(mic_vol * 100)
             self.mic_volume_widget.set_volume(int(mic_vol * 100))
+            
+        self.player_core.set_playback_rate(self.target_playback_rate if not self.is_speed_bypassed else 1.0)

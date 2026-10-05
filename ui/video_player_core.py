@@ -12,6 +12,7 @@ class VideoPlayerCore(QObject):
         super().__init__(parent)
         self.config = config
         self.video_widget = video_widget
+        self.current_playback_rate = 1.0
         
         self.current_sys_volume = float(getattr(self.config, 'PLAYER_SYS_VOLUME', 1.0))
         self.current_mic_volume = float(getattr(self.config, 'PLAYER_MIC_VOLUME', 1.0))
@@ -24,10 +25,17 @@ class VideoPlayerCore(QObject):
         
         self.mic_player = QMediaPlayer(self)
         self.mic_audio_output = QAudioOutput(self)
-        self.mic_audio_output.setVolume(self.current_mic_volume)
+        # トラック分離確立までミュートし位相干渉・二重再生を防止
+        self.mic_audio_output.setVolume(0.0)
         self.mic_player.setAudioOutput(self.mic_audio_output)
-        # 音声専用プレイヤーとして動作させ、映像デコードによるスタックを防止
         self.mic_player.setActiveVideoTrack(-1)
+        
+        for player in (self.media_player, self.mic_player):
+            if hasattr(player, 'setPitchCompensation'):
+                try:
+                    player.setPitchCompensation(True)
+                except Exception:
+                    pass
         
         self.media_loaded = False
         self.mic_loaded = False
@@ -76,13 +84,14 @@ class VideoPlayerCore(QObject):
     def _apply_audio_tracks(self):
         # 完全分離2トラック構成: Track 0 = システム音声単体, Track 1 = マイク音声単体
         media_tracks = self.media_player.audioTracks()
-        num_tracks = len(media_tracks)
+        mic_tracks = self.mic_player.audioTracks()
+        
+        if len(media_tracks) >= 1:
+            self.media_player.setActiveAudioTrack(0)
 
-        if num_tracks >= 2:
-            self.media_player.setActiveAudioTrack(0)
+        if len(mic_tracks) >= 2:
             self.mic_player.setActiveAudioTrack(1)
-        elif num_tracks == 1:
-            self.media_player.setActiveAudioTrack(0)
+        elif len(mic_tracks) == 1:
             self.mic_player.setActiveAudioTrack(-1)
 
     def _on_media_tracks_changed(self):
@@ -111,17 +120,20 @@ class VideoPlayerCore(QObject):
         if self.media_loaded and self.mic_loaded:
             self.media_loaded = False
             self.mic_loaded = False
+            self._apply_audio_tracks()
+            self.set_playback_rate(self.current_playback_rate)
             self.play()
             QTimer.singleShot(150, self._restore_volume)
 
     def _restore_volume(self):
         self.audio_output.setVolume(self.current_sys_volume)
-        tracks = self.mic_player.audioTracks()
-        # 1トラックのみ（過去ファイル等）の場合は重複再生を防止し、それ以外は設定値を復帰
-        if len(tracks) == 1:
-            self.mic_audio_output.setVolume(0)
-        else:
+        mic_tracks = self.mic_player.audioTracks()
+        active_mic_track = self.mic_player.activeAudioTrack()
+        # Track 1が確立されるまでマイク音量を0にし、Track 0二重再生による位相干渉を根絶
+        if len(mic_tracks) >= 2 and active_mic_track == 1:
             self.mic_audio_output.setVolume(self.current_mic_volume)
+        else:
+            self.mic_audio_output.setVolume(0.0)
 
     def _on_playback_state_changed(self, state):
         self.playbackStateChanged.emit(state.value)
@@ -181,6 +193,7 @@ class VideoPlayerCore(QObject):
         self.config.save()
 
     def set_playback_rate(self, rate):
+        self.current_playback_rate = rate
         self.media_player.setPlaybackRate(rate)
         self.mic_player.setPlaybackRate(rate)
 
