@@ -26,6 +26,8 @@ class VideoPlayerCore(QObject):
         self.mic_audio_output = QAudioOutput(self)
         self.mic_audio_output.setVolume(self.current_mic_volume)
         self.mic_player.setAudioOutput(self.mic_audio_output)
+        # 音声専用プレイヤーとして動作させ、映像デコードによるスタックを防止
+        self.mic_player.setActiveVideoTrack(-1)
         
         self.media_loaded = False
         self.mic_loaded = False
@@ -40,6 +42,9 @@ class VideoPlayerCore(QObject):
         
         self.media_player.mediaStatusChanged.connect(self._on_media_player_status_changed)
         self.mic_player.mediaStatusChanged.connect(self._on_mic_player_status_changed)
+        self.media_player.tracksChanged.connect(self._on_media_tracks_changed)
+        self.mic_player.tracksChanged.connect(self._on_mic_tracks_changed)
+        self.mic_player.errorOccurred.connect(self._on_mic_error_occurred)
         
         self.media_player.positionChanged.connect(self._on_position_changed)
         self.media_player.durationChanged.connect(self._on_duration_changed)
@@ -65,23 +70,44 @@ class VideoPlayerCore(QObject):
     def _on_error_occurred(self, error, error_string):
         self.errorOccurred.emit(error, error_string)
 
+    def _on_mic_error_occurred(self, error, error_string):
+        pass
+
+    def _apply_audio_tracks(self):
+        # 3トラック構成: 0=Mix, 1=System, 2=Mic
+        media_tracks = self.media_player.audioTracks()
+        if len(media_tracks) >= 3:
+            self.media_player.setActiveAudioTrack(1)
+        elif len(media_tracks) > 0:
+            self.media_player.setActiveAudioTrack(0)
+
+        mic_tracks = self.mic_player.audioTracks()
+        if len(mic_tracks) >= 3:
+            self.mic_player.setActiveAudioTrack(2)
+        elif len(mic_tracks) == 2:
+            self.mic_player.setActiveAudioTrack(1)
+        elif len(mic_tracks) > 0:
+            self.mic_player.setActiveAudioTrack(-1)
+
+    def _on_media_tracks_changed(self):
+        self._apply_audio_tracks()
+        self._restore_volume()
+
+    def _on_mic_tracks_changed(self):
+        self.mic_player.setActiveVideoTrack(-1)
+        self._apply_audio_tracks()
+        self._restore_volume()
+
     def _on_media_player_status_changed(self, status):
         if status == QMediaPlayer.MediaStatus.LoadedMedia:
-            tracks = self.media_player.audioTracks()
-            if len(tracks) >= 3:
-                self.media_player.setActiveAudioTrack(1)
-            elif len(tracks) > 0:
-                self.media_player.setActiveAudioTrack(0)
+            self._apply_audio_tracks()
             self.media_loaded = True
             self._check_both_loaded_and_play()
 
     def _on_mic_player_status_changed(self, status):
         if status == QMediaPlayer.MediaStatus.LoadedMedia:
-            tracks = self.mic_player.audioTracks()
-            if len(tracks) >= 3:
-                self.mic_player.setActiveAudioTrack(2)
-            elif len(tracks) == 2:
-                self.mic_player.setActiveAudioTrack(1)
+            self.mic_player.setActiveVideoTrack(-1)
+            self._apply_audio_tracks()
             self.mic_loaded = True
             self._check_both_loaded_and_play()
 
@@ -94,10 +120,12 @@ class VideoPlayerCore(QObject):
 
     def _restore_volume(self):
         self.audio_output.setVolume(self.current_sys_volume)
-        if len(self.mic_player.audioTracks()) >= 2:
-            self.mic_audio_output.setVolume(self.current_mic_volume)
-        else:
+        tracks = self.mic_player.audioTracks()
+        # 1トラックのみ（過去ファイル等）の場合は重複再生を防止し、それ以外は設定値を復帰
+        if len(tracks) == 1:
             self.mic_audio_output.setVolume(0)
+        else:
+            self.mic_audio_output.setVolume(self.current_mic_volume)
 
     def _on_playback_state_changed(self, state):
         self.playbackStateChanged.emit(state.value)
@@ -114,6 +142,7 @@ class VideoPlayerCore(QObject):
             url = QUrl.fromLocalFile(os.path.abspath(file_path))
             self.media_player.setSource(url)
             self.mic_player.setSource(url)
+            self.mic_player.setActiveVideoTrack(-1)
         else:
             self.media_player.setSource(QUrl())
             self.mic_player.setSource(QUrl())
@@ -143,10 +172,11 @@ class VideoPlayerCore(QObject):
 
     def set_mic_volume(self, volume_percent):
         self.current_mic_volume = volume_percent / 100.0
-        if len(self.mic_player.audioTracks()) >= 2:
-            self.mic_audio_output.setVolume(self.current_mic_volume)
-        else:
+        tracks = self.mic_player.audioTracks()
+        if len(tracks) == 1:
             self.mic_audio_output.setVolume(0)
+        else:
+            self.mic_audio_output.setVolume(self.current_mic_volume)
         self._save_volume_settings()
 
     def _save_volume_settings(self):

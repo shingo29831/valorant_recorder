@@ -15,17 +15,23 @@ def try_rebuild_native_recorder():
     """
     try:
         base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "cpp", "audio_processor"))
-        cpp_src = os.path.join(base_dir, "NativeRecorder.cpp")
+        cpp_sources = [
+            os.path.join(base_dir, "NativeRecorder.cpp"),
+            os.path.join(base_dir, "WasapiCapture.cpp"),
+            os.path.join(base_dir, "AudioProcessor.cpp"),
+        ]
         build_dir = os.path.join(base_dir, "build")
         dll_path = os.path.join(build_dir, "Release", "native_recorder.dll")
         
-        if not os.path.exists(cpp_src):
+        existing_sources = [p for p in cpp_sources if os.path.exists(p)]
+        if not existing_sources:
             return
             
+        max_src_mtime = max(os.path.getmtime(p) for p in existing_sources)
         needs_build = False
         if not os.path.exists(dll_path):
             needs_build = True
-        elif os.path.getmtime(cpp_src) > os.path.getmtime(dll_path):
+        elif max_src_mtime > os.path.getmtime(dll_path):
             needs_build = True
             
         if needs_build:
@@ -284,8 +290,14 @@ class FFmpegRecorder:
             config_struct.denoise_mode = denoise_mode
             config_struct.preprocess_mode = preprocess_mode
             
-            mic_device = getattr(self.config, 'RECORD_AUDIO_MIC_DEVICE', 'Default')
-            config_struct.mic_device_name = mic_device.encode('utf-8') if mic_device != 'Default' else b""
+            # 設定キー RECORD_AUDIO_MIC と RECORD_AUDIO_MIC_DEVICE の差異を吸収
+            mic_device = getattr(self.config, 'RECORD_AUDIO_MIC', getattr(self.config, 'RECORD_AUDIO_MIC_DEVICE', ''))
+            if mic_device.strip().lower() == 'none':
+                config_struct.mic_device_name = b"__NONE__"
+            elif not mic_device or mic_device.strip().lower() == 'default':
+                config_struct.mic_device_name = b""
+            else:
+                config_struct.mic_device_name = mic_device.encode('utf-8')
             config_struct.ffmpeg_command = cmd_str.encode('utf-8')
             config_struct.save_file_path = self.current_filepath.encode('utf-8')
             config_struct.temp_file_path = self.temp_filepath.encode('utf-8')

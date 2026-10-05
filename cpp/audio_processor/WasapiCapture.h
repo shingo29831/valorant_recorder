@@ -23,10 +23,14 @@ public:
     bool Initialize();
     bool Start();
     void Stop();
+    bool IsInitialized() const { return m_isInitialized; }
 
     // コールバック引数: data, numFrames, channels, sampleRate
     using DataCallback = std::function<void(const float*, uint32_t, uint32_t, uint32_t)>;
     void SetCallback(DataCallback cb) { m_callback = cb; }
+
+    using LoggerCallback = std::function<void(const std::string&)>;
+    void SetLogger(LoggerCallback cb) { m_logger = cb; }
 
     uint32_t GetSampleRate() const { return m_sampleRate; }
     uint32_t GetChannels() const { return m_channels; }
@@ -54,4 +58,5 @@ private:
     uint32_t m_channels = 0;
 
     DataCallback m_callback;
+    LoggerCallback m_logger;
 };

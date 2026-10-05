@@ -63,8 +63,12 @@ bool WasapiCapture::Initialize() {
                             PropVariantInit(&varName);
                             if (SUCCEEDED(pProps->GetValue(PKEY_Device_FriendlyName, &varName))) {
                                 std::string utf8Name = WideToUTF8(varName.pwszVal);
-                                // Python側(soundcard)のデバイス名と部分一致するか確認
-                                if (utf8Name.find(m_deviceName) != std::string::npos || m_deviceName.find(utf8Name) != std::string::npos) {
+                                std::string lowerUtf8 = utf8Name;
+                                std::string lowerTarget = m_deviceName;
+                                std::transform(lowerUtf8.begin(), lowerUtf8.end(), lowerUtf8.begin(), ::tolower);
+                                std::transform(lowerTarget.begin(), lowerTarget.end(), lowerTarget.begin(), ::tolower);
+
+                                if (lowerUtf8.find(lowerTarget) != std::string::npos || lowerTarget.find(lowerUtf8) != std::string::npos) {
                                     m_device = pEndpoint;
                                     m_device->AddRef();
                                     PropVariantClear(&varName);
@@ -82,9 +86,15 @@ bool WasapiCapture::Initialize() {
                 SAFE_RELEASE(pCollection);
             }
             if (!m_device) {
-                SetError("Microphone device not found: " + m_deviceName);
-                SAFE_RELEASE(pEnumerator);
-                return false;
+                if (m_logger) {
+                    m_logger("Warning: Specified mic '" + m_deviceName + "' not found. Falling back to default capture device.");
+                }
+                hr = pEnumerator->GetDefaultAudioEndpoint(eCapture, eConsole, &m_device);
+                if (FAILED(hr) || !m_device) {
+                    SetError("Microphone device not found: " + m_deviceName + " and default fallback failed.");
+                    SAFE_RELEASE(pEnumerator);
+                    return false;
+                }
             }
         }
     }

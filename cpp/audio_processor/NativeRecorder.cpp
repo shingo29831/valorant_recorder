@@ -281,15 +281,21 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
     g_sysCapture = std::make_unique<WasapiCapture>(CaptureType::SystemLoopback);
     g_sysCapture->SetLogger(NativeLog);
     
-    g_micCapture = std::make_unique<WasapiCapture>(CaptureType::Microphone, micDevice);
-    g_micCapture->SetLogger(NativeLog);
-
     if (!g_sysCapture->Initialize()) {
         SetLastErrorMsg("System audio init failed: " + g_sysCapture->GetLastError());
         g_isRunning = false;
         return;
     }
-    g_micCapture->Initialize();
+
+    if (micDevice == "__NONE__") {
+        NativeLog("Notice: Microphone capture is disabled by configuration (None).");
+    } else {
+        g_micCapture = std::make_unique<WasapiCapture>(CaptureType::Microphone, micDevice);
+        g_micCapture->SetLogger(NativeLog);
+        if (!g_micCapture->Initialize()) {
+            NativeLog("[WARNING] Failed to initialize microphone (" + micDevice + "): " + g_micCapture->GetLastError() + ". Continuing with silent mic stream.");
+        }
+    }
 
     AudioSyncQueue sysQueue(2, 2000);
     AudioSyncQueue micQueue(2, 2000);
@@ -434,15 +440,16 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
 
     void* audioProc = nullptr;
     if (configCopy.denoise_mode > 0 || configCopy.preprocess_mode > 0) {
-        if (!dfModelPath.empty()) {
-            audioProc = AudioProcessor_Create(48000, 2, dfModelPath.c_str());
-            if (audioProc) {
-                AudioProcessor_SetPreProcessType(audioProc, configCopy.preprocess_mode);
-                AudioProcessor_SetDenoiseType(audioProc, configCopy.denoise_mode);
-            }
-        }
-        if (!audioProc) {
-            NativeLog("Notice: AudioProcessor initialization bypassed. Continuing standard capture.");
+        const char* modelPathCStr = dfModelPath.empty() ? "" : dfModelPath.c_str();
+        audioProc = AudioProcessor_Create(48000, 2, modelPathCStr);
+        if (audioProc) {
+            AudioProcessor_SetPreProcessType(audioProc, configCopy.preprocess_mode);
+            AudioProcessor_SetDenoiseType(audioProc, configCopy.denoise_mode);
+            NativeLog("AudioProcessor initialized successfully. Preprocess: " + 
+                      std::to_string(configCopy.preprocess_mode) + ", Denoise: " + 
+                      std::to_string(configCopy.denoise_mode));
+        } else {
+            NativeLog("Notice: AudioProcessor initialization bypassed or failed. Continuing standard capture.");
         }
     }
 
@@ -450,7 +457,9 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
     micNoiseGate.SetThreshold(configCopy.noise_gate_threshold);
 
     g_sysCapture->Start();
-    g_micCapture->Start();
+    if (g_micCapture && g_micCapture->IsInitialized()) {
+        g_micCapture->Start();
+    }
 
     AudioSyncQueue outQueue(6, 10000);
     g_isWriterRunning = true;
@@ -541,7 +550,9 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
     NativeLog("Exiting main recording loop...");
 
     g_sysCapture->Stop();
-    g_micCapture->Stop();
+    if (g_micCapture) {
+        g_micCapture->Stop();
+    }
     if (audioProc) {
         AudioProcessor_Destroy(audioProc);
         audioProc = nullptr;

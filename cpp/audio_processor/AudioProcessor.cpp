@@ -43,7 +43,8 @@ AudioProcessor::AudioProcessor(int sample_rate, int channels, const char* model_
             std::replace(path_str.begin(), path_str.end(), '\\', '/');
             
             for (int c = 0; c < channels_; ++c) {
-                DFState* state = df_create(path_str.c_str(), 100.0f, 0);
+                // Rust FFIへのNULL参照による未定義動作を防止
+                DFState* state = df_create(path_str.c_str(), 100.0f, "warn");
                 if (!state) {
                     std::cerr << "[AudioProcessor] Error: df_create returned nullptr for channel " << c << " with path: " << path_str << std::endl;
                 } else {
