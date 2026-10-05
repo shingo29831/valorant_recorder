@@ -186,14 +186,22 @@ public:
 class NoiseGate {
     float m_threshold = 0.0f;
     float m_currentGain = 1.0f;
+    int m_holdFramesRemaining = 0;
+    static constexpr int kHoldFrames = 30; // 10ms * 30 = 300msのホールド時間で語尾・無声子音の途切れを防止
 
 public:
-    void SetThreshold(float threshold) {
-        m_threshold = threshold;
+    void SetThreshold(float thresholdPercent) {
+        float normalized = std::clamp(thresholdPercent, 0.0f, 1.0f);
+        // UIパーセント値を音響学的な実効RMS閾値(0~0.1)へマッピング
+        if (normalized <= 0.001f) {
+            m_threshold = 0.0f;
+        } else {
+            m_threshold = (normalized * normalized) * 0.1f;
+        }
     }
 
     void Process(float* buffer, size_t frames, size_t channels) {
-        if (m_threshold <= 0.0001f) return;
+        if (m_threshold <= 0.00001f) return;
 
         double sumSquares = 0.0;
         size_t totalSamples = frames * channels;
@@ -202,8 +210,17 @@ public:
         }
         float rms = static_cast<float>(std::sqrt(sumSquares / totalSamples));
 
-        float targetGain = (rms < m_threshold) ? 0.0f : 1.0f;
-        float smoothingFactor = (targetGain < m_currentGain) ? 0.05f : 0.2f;
+        bool open = (rms >= m_threshold);
+        if (open) {
+            m_holdFramesRemaining = kHoldFrames;
+        } else if (m_holdFramesRemaining > 0) {
+            --m_holdFramesRemaining;
+            open = true;
+        }
+
+        float targetGain = open ? 1.0f : 0.0f;
+        // 開く時は素早く(約5ms)、閉じる時は緩やかに(約150ms)フェードしてチャタリング・ブツ音を防止
+        float smoothingFactor = open ? 0.35f : 0.03f;
 
         for (size_t f = 0; f < frames; ++f) {
             m_currentGain += (targetGain - m_currentGain) * smoothingFactor;
@@ -505,10 +522,11 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
         size_t reqSysSamples = framesPerChunk * 2;
         size_t reqMicSamples = framesPerChunk * 2;
 
-        // 実時間クロックに合わせて正確に供給し、遅延蓄積時は自動的に最新サンプルに追従
+        // ジッターによるパケットドロップを防ぐため、バッファ許容量を約300ms(framesPerChunk * 30 * 2)に設定
+        const size_t maxAllowedBuffer = framesPerChunk * 30 * 2;
         while (g_isRunning && (totalWrittenFrames + framesPerChunk) <= targetFrames) {
-            sysQueue.PopWithLatencyControl(reqSysSamples, sysBuf, framesPerChunk * 4);
-            micQueue.PopWithLatencyControl(reqMicSamples, micBuf, framesPerChunk * 4);
+            sysQueue.PopWithLatencyControl(reqSysSamples, sysBuf, maxAllowedBuffer);
+            micQueue.PopWithLatencyControl(reqMicSamples, micBuf, maxAllowedBuffer);
 
             micNoiseGate.Process(micBuf.data(), framesPerChunk, 2);
 
