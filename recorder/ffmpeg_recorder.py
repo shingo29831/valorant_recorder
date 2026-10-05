@@ -236,11 +236,9 @@ class FFmpegRecorder:
 
             video_map = "[v_out]"
 
-            # c0,c1: システム音 / c2,c3: マイク音 / c4,c5: 合成音
-            # Track 0: 合成音(外部互換), Track 1: システム音単体, Track 2: マイク音単体
+            # 完全2トラック構成: c0,c1=システム音単体 / c2,c3=マイク音単体
             audio_filter = (
-                "[0:a]asetpts=N/SR/TB,asplit=3[sys_in][mic_in][mix_in];"
-                "[mix_in]pan=stereo|FL=c4|FR=c5,alimiter=limit=0.99[a_mix];"
+                "[0:a]asetpts=N/SR/TB,asplit=2[sys_in][mic_in];"
                 "[sys_in]pan=stereo|FL=c0|FR=c1,alimiter=limit=0.99[a_sys];"
                 "[mic_in]pan=stereo|FL=c2|FR=c3,alimiter=limit=0.99[a_mic]"
             )
@@ -249,19 +247,14 @@ class FFmpegRecorder:
             cmd.extend([
                 "-f", "f32le",
                 "-ar", "48000",
-                "-ac", "6",
+                "-ac", "4",
                 "-i", "pipe:0",
                 "-filter_complex", filter_complex,
                 "-map", video_map,
-                "-map", "[a_mix]",
                 "-map", "[a_sys]",
                 "-map", "[a_mic]",
-                "-metadata:s:a:0", "title=Mixed Audio",
-                "-metadata:s:a:0", "language=und",
-                "-metadata:s:a:1", "title=System Audio",
-                "-metadata:s:a:1", "language=eng",
-                "-metadata:s:a:2", "title=Microphone",
-                "-metadata:s:a:2", "language=jpn",
+                "-metadata:s:a:0", "title=System Audio",
+                "-metadata:s:a:1", "title=Microphone",
             ])
             cmd.extend(encoder_opts)
             cmd.extend([

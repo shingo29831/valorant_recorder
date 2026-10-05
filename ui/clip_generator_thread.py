@@ -39,11 +39,8 @@ class ClipGeneratorThread(QThread):
                 "-b:a", "192k"
             ]
             
-            # 3トラック動画時は Track 1(システム音) と Track 2(マイク音) を合成
-            if self.audio_track_count >= 3:
-                filter_complex = f"[0:a:1]volume={self.sys_volume}[a0];[0:a:2]volume={self.mic_volume}[a1];[a0][a1]amix=inputs=2:duration=longest[aout]"
-                cmd.extend(["-filter_complex", filter_complex, "-map", "[aout]"])
-            elif self.audio_track_count == 2:
+            # 2トラック構成: Track 0(システム音) と Track 1(マイク音) を指定比率で合成
+            if self.audio_track_count >= 2:
                 filter_complex = f"[0:a:0]volume={self.sys_volume}[a0];[0:a:1]volume={self.mic_volume}[a1];[a0][a1]amix=inputs=2:duration=longest[aout]"
                 cmd.extend(["-filter_complex", filter_complex, "-map", "[aout]"])
             else:

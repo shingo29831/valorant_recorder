@@ -277,7 +277,7 @@ static void WriterThreadFunc(HANDLE hWritePipe, AudioSyncQueue* outQueue) {
     NativeLog("Starting WriterThreadFunc...");
     std::vector<float> outBuf;
     const size_t framesPerChunk = 480;
-    const size_t outSamples = framesPerChunk * 6;
+    const size_t outSamples = framesPerChunk * 4; // 4ch (Sys: 2ch, Mic: 2ch)
 
     while (g_isWriterRunning) {
         if (outQueue->PopWait(outSamples, outBuf, 100)) {
@@ -478,7 +478,7 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
         g_micCapture->Start();
     }
 
-    AudioSyncQueue outQueue(6, 10000);
+    AudioSyncQueue outQueue(4, 10000);
     g_isWriterRunning = true;
     g_writerThread = std::thread(WriterThreadFunc, hWritePipe, &outQueue);
 
@@ -489,7 +489,7 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
     std::vector<float> sysBuf(sysSamples);
     std::vector<float> micBuf(micSamples);
     std::vector<float> micProcessed(micSamples);
-    std::vector<float> outBuf(framesPerChunk * 6);
+    std::vector<float> outBuf(framesPerChunk * 4);
 
     timeBeginPeriod(1);
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
@@ -543,17 +543,14 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
                 float micR = micProcessed[i * 2 + 1];
 
                 // c0,c1: システム音声単体 (Track 0)
-                outBuf[i * 6 + 0] = sysL;
-                outBuf[i * 6 + 1] = sysR;
+                outBuf[i * 4 + 0] = sysL;
+                outBuf[i * 4 + 1] = sysR;
                 // c2,c3: マイク音声単体 (Track 1)
-                outBuf[i * 6 + 2] = micL;
-                outBuf[i * 6 + 3] = micR;
-                // c4,c5: システム+マイク合成音声 (Track 2)
-                outBuf[i * 6 + 4] = std::clamp(sysL + micL, -1.0f, 1.0f);
-                outBuf[i * 6 + 5] = std::clamp(sysR + micR, -1.0f, 1.0f);
+                outBuf[i * 4 + 2] = micL;
+                outBuf[i * 4 + 3] = micR;
             }
 
-            std::vector<float> chunkOut(outBuf.begin(), outBuf.begin() + framesPerChunk * 6);
+            std::vector<float> chunkOut(outBuf.begin(), outBuf.begin() + framesPerChunk * 4);
             outQueue.Push(chunkOut);
             totalWrittenFrames += framesPerChunk;
         }

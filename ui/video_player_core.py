@@ -74,45 +74,13 @@ class VideoPlayerCore(QObject):
         pass
 
     def _apply_audio_tracks(self):
-        # 3トラック動画 (標準/過去録画): Track 0=Mix, Track 1=System, Track 2=Mic
-        # 2トラック動画: Track 0=System, Track 1=Mic
-        # 1トラック動画: Track 0=Mix/System
+        # 完全分離2トラック構成: Track 0 = システム音声単体, Track 1 = マイク音声単体
         media_tracks = self.media_player.audioTracks()
         num_tracks = len(media_tracks)
 
-        if num_tracks >= 3:
-            sys_idx = 1
-            mic_idx = 2
-            # メタデータ(タイトル/言語)が存在する場合は優先判別
-            for idx, meta in enumerate(media_tracks):
-                try:
-                    title = str(meta.value(QMediaMetaData.Key.Title) or "").lower()
-                    lang = str(meta.value(QMediaMetaData.Key.Language) or "").lower()
-                    if "sys" in title or lang == "eng":
-                        sys_idx = idx
-                    elif "mic" in title or lang == "jpn":
-                        mic_idx = idx
-                except Exception:
-                    pass
-
-            self.media_player.setActiveAudioTrack(sys_idx)
-            self.mic_player.setActiveAudioTrack(mic_idx)
-        elif num_tracks == 2:
-            sys_idx = 0
-            mic_idx = 1
-            for idx, meta in enumerate(media_tracks):
-                try:
-                    title = str(meta.value(QMediaMetaData.Key.Title) or "").lower()
-                    lang = str(meta.value(QMediaMetaData.Key.Language) or "").lower()
-                    if "sys" in title or lang == "eng":
-                        sys_idx = idx
-                    elif "mic" in title or lang == "jpn":
-                        mic_idx = idx
-                except Exception:
-                    pass
-
-            self.media_player.setActiveAudioTrack(sys_idx)
-            self.mic_player.setActiveAudioTrack(mic_idx)
+        if num_tracks >= 2:
+            self.media_player.setActiveAudioTrack(0)
+            self.mic_player.setActiveAudioTrack(1)
         elif num_tracks == 1:
             self.media_player.setActiveAudioTrack(0)
             self.mic_player.setActiveAudioTrack(-1)
