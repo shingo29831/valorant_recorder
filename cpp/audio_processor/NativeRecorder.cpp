@@ -141,9 +141,8 @@ public:
         }
     }
 
-    void PopWithLatencyControl(size_t samples, std::vector<float>& out, size_t maxAllowedBuffer) {
+    bool PopChunk(size_t samples, std::vector<float>& out, size_t maxAllowedBuffer) {
         std::lock_guard<std::mutex> lock(m_mtx);
-        out.assign(samples, 0.0f);
 
         // バッファ肥大化時は古いサンプルをドレインして実時間に追従
         if (m_buffer.size() > maxAllowedBuffer) {
@@ -152,11 +151,14 @@ public:
             m_buffer.erase(m_buffer.begin(), m_buffer.begin() + excess);
         }
 
-        size_t available = (std::min)(samples, m_buffer.size());
-        if (available > 0) {
-            std::copy(m_buffer.begin(), m_buffer.begin() + available, out.begin());
-            m_buffer.erase(m_buffer.begin(), m_buffer.begin() + available);
+        // 不完全なサンプル数での部分取得（ゼロ埋めによる波形引き伸ばし・低音化）を防止
+        if (m_buffer.size() < samples) {
+            return false;
         }
+
+        out.assign(m_buffer.begin(), m_buffer.begin() + samples);
+        m_buffer.erase(m_buffer.begin(), m_buffer.begin() + samples);
+        return true;
     }
 
     void PopExact(size_t samples, std::vector<float>& out) {
@@ -504,9 +506,10 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
         Sleep(5);
     }
 
-    // 初期化待機中に溜まった古いサンプルをドレインし、最新の1チャンクに同期
-    sysQueue.DrainKeepLatest(framesPerChunk * 2);
-    micQueue.DrainKeepLatest(framesPerChunk * 2);
+    // ジッターによるアンダーランを防ぐため、約60ms分のバッファクッションを蓄積・維持
+    const size_t initialCushionSamples = framesPerChunk * 6 * 2;
+    sysQueue.DrainKeepLatest(initialCushionSamples);
+    micQueue.DrainKeepLatest(initialCushionSamples);
 
     auto startTime = std::chrono::steady_clock::now();
     uint64_t totalWrittenFrames = 0;
@@ -522,11 +525,16 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
         size_t reqSysSamples = framesPerChunk * 2;
         size_t reqMicSamples = framesPerChunk * 2;
 
-        // ジッターによるパケットドロップを防ぐため、バッファ許容量を約300ms(framesPerChunk * 30 * 2)に設定
-        const size_t maxAllowedBuffer = framesPerChunk * 30 * 2;
+        const size_t maxAllowedBuffer = framesPerChunk * 30 * 2; // 最大約300ms
         while (g_isRunning && (totalWrittenFrames + framesPerChunk) <= targetFrames) {
-            sysQueue.PopWithLatencyControl(reqSysSamples, sysBuf, maxAllowedBuffer);
-            micQueue.PopWithLatencyControl(reqMicSamples, micBuf, maxAllowedBuffer);
+            // 完全な1チャンク（480フレーム）が揃うまで待機し、部分的なゼロ埋めによる低音化を防止
+            if (!sysQueue.PopChunk(reqSysSamples, sysBuf, maxAllowedBuffer)) {
+                break;
+            }
+
+            if (!micQueue.PopChunk(reqMicSamples, micBuf, maxAllowedBuffer)) {
+                std::fill(micBuf.begin(), micBuf.end(), 0.0f);
+            }
 
             micNoiseGate.Process(micBuf.data(), framesPerChunk, 2);
 
