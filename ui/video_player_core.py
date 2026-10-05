@@ -129,8 +129,8 @@ class VideoPlayerCore(QObject):
         self.audio_output.setVolume(self.current_sys_volume)
         mic_tracks = self.mic_player.audioTracks()
         active_mic_track = self.mic_player.activeAudioTrack()
-        # Track 1が確立されるまでマイク音量を0にし、Track 0二重再生による位相干渉を根絶
-        if len(mic_tracks) >= 2 and active_mic_track == 1:
+        # Track 1が確立され、かつ音量指定がある場合のみ復帰（二重再生とクロック競合を防止）
+        if len(mic_tracks) >= 2 and active_mic_track == 1 and self.current_mic_volume > 0:
             self.mic_audio_output.setVolume(self.current_mic_volume)
         else:
             self.mic_audio_output.setVolume(0.0)
@@ -157,7 +157,11 @@ class VideoPlayerCore(QObject):
 
     def play(self):
         self.media_player.play()
-        self.mic_player.play()
+        # マイク音量が0またはトラック未確立時はmic_playerを動かさずクロック競合を防止
+        if self.current_mic_volume > 0 and len(self.mic_player.audioTracks()) >= 2:
+            self.mic_player.play()
+        else:
+            self.mic_player.pause()
 
     def pause(self):
         self.media_player.pause()
@@ -181,10 +185,13 @@ class VideoPlayerCore(QObject):
     def set_mic_volume(self, volume_percent):
         self.current_mic_volume = volume_percent / 100.0
         tracks = self.mic_player.audioTracks()
-        if len(tracks) == 1:
-            self.mic_audio_output.setVolume(0)
+        if len(tracks) < 2 or self.current_mic_volume <= 0:
+            self.mic_audio_output.setVolume(0.0)
+            self.mic_player.pause()
         else:
             self.mic_audio_output.setVolume(self.current_mic_volume)
+            if self.media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:
+                self.mic_player.play()
         self._save_volume_settings()
 
     def _save_volume_settings(self):

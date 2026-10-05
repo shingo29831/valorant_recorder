@@ -237,10 +237,11 @@ class FFmpegRecorder:
             video_map = "[v_out]"
 
             # 完全2トラック構成: c0,c1=システム音単体 / c2,c3=マイク音単体
+            # raw PCMへの誤ったasetpts=N/SR/TB(4chでPTSが急進しピッチが崩壊する)を排除し、48kHzを明示
             audio_filter = (
-                "[0:a]asetpts=N/SR/TB,asplit=2[sys_in][mic_in];"
-                "[sys_in]pan=stereo|FL=c0|FR=c1,alimiter=limit=0.99[a_sys];"
-                "[mic_in]pan=stereo|FL=c2|FR=c3,alimiter=limit=0.99[a_mic]"
+                "[0:a]asplit=2[sys_in][mic_in];"
+                "[sys_in]pan=stereo|FL=c0|FR=c1,alimiter=limit=0.99,aresample=48000[a_sys];"
+                "[mic_in]pan=stereo|FL=c2|FR=c3,alimiter=limit=0.99,aresample=48000[a_mic]"
             )
             filter_complex = video_filter + audio_filter
 
@@ -263,6 +264,7 @@ class FFmpegRecorder:
                 "-max_muxing_queue_size", "8192",
                 "-c:a", "aac",
                 "-b:a", "192k",
+                "-ar", "48000",
                 self.temp_filepath
             ])
 
