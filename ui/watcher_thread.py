@@ -42,6 +42,8 @@ class WatcherThread(QThread):
         self.current_region = self.config.REGION
         self._stop_timer = None
         self._is_manual_action = False
+        self._is_manual_recording = False
+        self._processing_video_paths = set()
 
     def _update_current_player(self):
         from scripts.get_local_api_info import get_current_player, get_client_region
@@ -68,16 +70,21 @@ class WatcherThread(QThread):
             self.log_signal.emit(self.t.log_manual_already_recording)
             return
         self.recording_start_time = time.time()
+        self.local_recording_start_time_ms = int(self.recording_start_time * 1000)
+        self.real_match_end_time_ms = None
         self.local_round_events = []
+        self.local_ability_events = []
         self._update_current_player()
         self.log_signal.emit(self.t.log_manual_starting)
         try:
             self.current_video_path = self.recorder.start_recording()
+            self._is_manual_recording = True
             self.log_signal.emit(self.t.log_manual_recording_to.format(path=self.current_video_path))
             self._is_manual_action = True
             self.recording_state_changed.emit(True)
             self._is_manual_action = False
         except Exception as e:
+            self._is_manual_recording = False
             err_str = str(e)
             try:
                 msg = self.t.log_manual_start_failed.format(error=err_str)
@@ -124,6 +131,8 @@ class WatcherThread(QThread):
         self.recording_start_time = time.time()
         self.local_recording_start_time_ms = int(self.recording_start_time * 1000)
         self.local_round_events = []
+        self.local_ability_events = []
+        self._is_manual_recording = False
         self._update_current_player()
         
         if is_recovery:
@@ -207,7 +216,10 @@ class WatcherThread(QThread):
         real_match_end_time_ms = getattr(self, 'real_match_end_time_ms', None)
         
         # UIフリーズを防ぐため、状態を即座にリセット
+        if video_path:
+            self._processing_video_paths.add(os.path.basename(video_path))
         self.current_video_path = None
+        self._is_manual_recording = False
         self.recording_state_changed.emit(False)
         
         # 録画停止処理（FFmpegの終了待ちなど）を別スレッドで実行
@@ -219,44 +231,49 @@ class WatcherThread(QThread):
 
     def _async_stop_and_process(self, video_path, start_time, end_time, events, ability_events, start_time_ms, real_match_end_time_ms=None):
         try:
-            self.recorder.stop_recording()
-        except Exception as e:
-            self.log_signal.emit(self.t.log_stop_failed.format(error=e))
+            try:
+                self.recorder.stop_recording()
+            except Exception as e:
+                self.log_signal.emit(self.t.log_stop_failed.format(error=e))
 
-        # ローカルログから取得したマップ名を使用
-        map_name = getattr(self.watcher, 'current_map_name', 'Fetching...')
-        if map_name == "Unknown":
-            map_name = "Fetching..."
+            # ローカルログから取得したマップ名を使用
+            map_name = getattr(self.watcher, 'current_map_name', 'Fetching...')
+            if map_name == "Unknown":
+                map_name = "Fetching..."
 
-        # API取得前に仮のメタデータを保存し、UIに即時表示させる
-        temp_match_data = {
-            "metadata": {
-                "matchid": f"pending_{int(start_time)}",
-                "map": map_name,
-                "game_start": int(start_time),
-                "game_length": int(end_time - start_time) if end_time > start_time else 0,
-                "mode": "Unknown"
-            },
-            "players": {"all_players": []},
-            "kills": [],
-            "rounds": [],
-            "local_video_path": video_path,
-            "local_match_start_time": start_time,
-            "local_match_end_time": end_time,
-            "local_round_events": events,
-            "local_ability_events": ability_events,
-            "is_fetching_api": True
-        }
-        if start_time_ms is not None:
-            temp_match_data['local_recording_start_time_ms'] = start_time_ms
-        if real_match_end_time_ms is not None:
-            temp_match_data['local_real_match_end_time_ms'] = real_match_end_time_ms
+            # API取得前に仮のメタデータを保存し、UIに即時表示させる
+            temp_match_data = {
+                "metadata": {
+                    "matchid": f"pending_{int(start_time)}",
+                    "map": map_name,
+                    "game_start": int(start_time),
+                    "game_length": int(end_time - start_time) if end_time > start_time else 0,
+                    "mode": "Unknown"
+                },
+                "players": {"all_players": []},
+                "kills": [],
+                "rounds": [],
+                "local_video_path": video_path,
+                "local_match_start_time": start_time,
+                "local_match_end_time": end_time,
+                "local_round_events": events,
+                "local_ability_events": ability_events,
+                "is_fetching_api": True
+            }
+            if start_time_ms is not None:
+                temp_match_data['local_recording_start_time_ms'] = start_time_ms
+            if real_match_end_time_ms is not None:
+                temp_match_data['local_real_match_end_time_ms'] = real_match_end_time_ms
+                
+            temp_filepath = self.store.save_match_metadata(temp_match_data, 0)
+            self.match_saved_signal.emit()
             
-        temp_filepath = self.store.save_match_metadata(temp_match_data, 0)
-        self.match_saved_signal.emit()
-        
-        # API取得処理へ移行（すでに別スレッド内なので直接呼び出し）
-        self._fetch_api_and_save(video_path, start_time, end_time, events, ability_events, temp_filepath, start_time_ms, real_match_end_time_ms)
+            # API取得処理へ移行（すでに別スレッド内なので直接呼び出し）
+            self._fetch_api_and_save(video_path, start_time, end_time, events, ability_events, temp_filepath, start_time_ms, real_match_end_time_ms)
+        finally:
+            if video_path:
+                self._processing_video_paths.discard(os.path.basename(video_path))
+
 
     def _fetch_api_and_save(self, video_path, start_time, end_time, events, ability_events=None, temp_filepath=None, start_time_ms=None, real_match_end_time_ms=None):
         if ability_events is None:
@@ -280,7 +297,12 @@ class WatcherThread(QThread):
                 api_match_data = api.fetch_latest_match()
                 game_start = api_match_data.get('metadata', {}).get('game_start', 0)
                 
-                if abs(game_start - start_time) < 3600:
+                # 長時間録画中に開始された試合も紐付けられるよう録画時間範囲(start_time〜end_time)を許容
+                is_time_match = (
+                    abs(game_start - start_time) < 7200
+                    or (end_time > start_time and (start_time - 1800) <= game_start <= (end_time + 600))
+                )
+                if is_time_match:
                     match_data = api_match_data
                     match_id = match_data['metadata']['matchid']
                     mode = match_data.get('metadata', {}).get('mode', '')
@@ -372,7 +394,10 @@ class WatcherThread(QThread):
         pending = []
         date_pattern = re.compile(r"(\d{8}_\d{6})")
         
+        active_name = os.path.basename(self.current_video_path) if self.current_video_path else None
         for v in videos:
+            if v == active_name or v in self._processing_video_paths:
+                continue
             if v not in handled_videos:
                 v_path = os.path.join(self.config.SAVE_DIR, v)
                 
@@ -460,10 +485,12 @@ class WatcherThread(QThread):
                     with open(filepath, 'r', encoding='utf-8') as jf:
                         data = json.load(jf)
                     
-                    # 動画ファイルが存在しない、または0バイトの古いJSONは削除対象にする
+                    # 動画ファイルが存在しない、または0バイトの古いJSONは削除対象にする（現在録画・Remux処理中のものは除外）
                     video_path = data.get("match_info", data).get("local_video_path", "")
+                    v_base = os.path.basename(video_path) if video_path else ""
+                    is_active = (video_path and video_path == self.current_video_path) or (v_base in self._processing_video_paths)
                     is_broken = False
-                    if not video_path or not os.path.exists(video_path) or os.path.getsize(video_path) == 0:
+                    if not is_active and (not video_path or not os.path.exists(video_path) or os.path.getsize(video_path) == 0):
                         if time.time() - os.path.getmtime(filepath) > 300: # 5分以上経過していれば壊れていると判定
                             is_broken = True
                             
@@ -513,43 +540,47 @@ class WatcherThread(QThread):
             now = time.time()
             
             # --- 1. 録画プロセスの死活監視と自動再開 (クラッシュ対策) ---
-            if self.current_video_path is not None and getattr(self.watcher, 'is_in_match', False):
-                # 録画開始後にマップ名が遅れて判明し、射撃場だった場合のキャンセル処理
-                map_name = getattr(self.watcher, 'current_map_name', '').lower()
-                is_range = getattr(self.watcher, 'is_range', False)
-                if is_range or map_name in ['the range', 'range', 'rangev2', 'poveglia', 'basictraining', 'shooting', 'tutorial']:
-                    self.log_signal.emit(self.t.log_range_transition_cancel)
-                    video_to_delete = self.current_video_path
-                    self.current_video_path = None
-                    self.recording_state_changed.emit(False)
-                    self.watcher.is_in_match = False
-                    
-                    try:
-                        self.recorder.stop_recording()
-                    except Exception as e:
-                        self.log_signal.emit(self.t.log_cancel_stop_failed.format(error=e))
+            if self.current_video_path is not None:
+                if getattr(self.watcher, 'is_in_match', False) and not self._is_manual_recording:
+                    # 自動録画開始後にマップ名が遅れて判明し、射撃場だった場合のキャンセル処理
+                    map_name = getattr(self.watcher, 'current_map_name', '').lower()
+                    is_range = getattr(self.watcher, 'is_range', False)
+                    if is_range or map_name in ['the range', 'range', 'rangev2', 'poveglia', 'basictraining', 'shooting', 'tutorial']:
+                        self.log_signal.emit(self.t.log_range_transition_cancel)
+                        video_to_delete = self.current_video_path
+                        self.current_video_path = None
+                        self.recording_state_changed.emit(False)
+                        self.watcher.is_in_match = False
                         
-                    # 少し待ってからファイルを削除
-                    def delete_cancelled_video(path):
-                        time.sleep(2)
                         try:
-                            if os.path.exists(path):
-                                os.remove(path)
-                                self.log_signal.emit(self.t.log_cancelled_video_deleted.format(path=path))
+                            self.recorder.stop_recording()
                         except Exception as e:
-                            self.log_signal.emit(self.t.log_cancel_delete_failed.format(error=e))
+                            self.log_signal.emit(self.t.log_cancel_stop_failed.format(error=e))
                             
-                    threading.Thread(target=delete_cancelled_video, args=(video_to_delete,), daemon=True).start()
-                    continue
+                        # 少し待ってからファイルを削除
+                        def delete_cancelled_video(path):
+                            time.sleep(2)
+                            try:
+                                if os.path.exists(path):
+                                    os.remove(path)
+                                    self.log_signal.emit(self.t.log_cancelled_video_deleted.format(path=path))
+                            except Exception as e:
+                                self.log_signal.emit(self.t.log_cancel_delete_failed.format(error=e))
+                                
+                        threading.Thread(target=delete_cancelled_video, args=(video_to_delete,), daemon=True).start()
+                        continue
 
                 if not self.recorder.is_recording():
+                    was_manual = self._is_manual_recording
                     self.log_signal.emit(self.t.log_ffmpeg_crashed.format(code=-1))
                     # 現在の録画を保存処理に回す
                     self._stop_and_process_recording()
                     # 少し待機してから再開
                     time.sleep(2)
-                    # リカバリーモードとして再開
-                    self.handle_match_start(is_range=False, is_recovery=True)
+                    if was_manual:
+                        self.start_manual_recording()
+                    elif getattr(self.watcher, 'is_in_match', False):
+                        self.handle_match_start(is_range=False, is_recovery=True)
                     continue
 
             # --- 2. 定期クリーンアップ (1時間ごと) ---
@@ -602,17 +633,22 @@ class WatcherThread(QThread):
                         
                     if not api_match_data:
                         for video_path, vid_time in pending_videos:
-                            if time.time() - vid_time > 3600:
+                            vid_mtime = os.path.getmtime(video_path) if os.path.exists(video_path) else vid_time
+                            if time.time() - vid_mtime > 3600:
                                 self.log_signal.emit(self.t.log_bg_fetch_failed_perm.format(file=os.path.basename(video_path)))
-                                self._create_dummy_metadata(video_path, vid_time)
+                                self._create_dummy_metadata(video_path, vid_time, end_time=vid_mtime)
                         continue
                         
                     game_start = api_match_data.get('metadata', {}).get('game_start', 0)
                     
                     for video_path, vid_time in pending_videos:
-                        diff = abs(game_start - vid_time)
+                        vid_mtime = os.path.getmtime(video_path) if os.path.exists(video_path) else vid_time
+                        is_time_match = (
+                            abs(game_start - vid_time) < 7200
+                            or ((vid_time - 1800) <= game_start <= (vid_mtime + 600))
+                        )
                         
-                        if diff < 3600:
+                        if is_time_match:
                             self.log_signal.emit(self.t.log_bg_match_found.format(file=os.path.basename(video_path)))
                             match_id = api_match_data['metadata']['matchid']
                             mode = api_match_data.get('metadata', {}).get('mode', '')
@@ -629,9 +665,9 @@ class WatcherThread(QThread):
                             self.log_signal.emit(self.t.log_bg_saved.format(path=filepath))
                             self.match_saved_signal.emit()
                             
-                        elif game_start > vid_time + 3600 or time.time() - vid_time > 3600:
+                        elif game_start > vid_mtime + 3600 or time.time() - vid_mtime > 3600:
                             self.log_signal.emit(self.t.log_bg_custom_or_unavailable.format(file=os.path.basename(video_path)))
-                            self._create_dummy_metadata(video_path, vid_time)
+                            self._create_dummy_metadata(video_path, vid_time, end_time=vid_mtime)
                             
                 except Exception as e:
                     self.log_signal.emit(self.t.log_bg_error.format(error=e))

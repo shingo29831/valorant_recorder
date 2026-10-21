@@ -204,6 +204,10 @@ public:
         m_buffer.erase(m_buffer.begin(), m_buffer.begin() + samples);
         return true;
     }
+
+    void NotifyAll() {
+        m_cv.notify_all();
+    }
 };
 
 class NoiseGate {
@@ -301,16 +305,19 @@ static void WriterThreadFunc(HANDLE hWritePipe, AudioSyncQueue* outQueue) {
     const size_t framesPerChunk = 480;
     const size_t outSamples = framesPerChunk * 4; // 4ch (Sys: 2ch, Mic: 2ch)
 
-    while (g_isWriterRunning) {
-        if (outQueue->PopWait(outSamples, outBuf, 100)) {
+    // 停止要求後もキュー内の未書き込み音声を全てパイプへ書き切って末尾欠損を防止
+    while (g_isWriterRunning || outQueue->AvailableSamples() >= outSamples) {
+        if (outQueue->PopWait(outSamples, outBuf, 50)) {
             DWORD written = 0;
             if (!WriteFile(hWritePipe, outBuf.data(), static_cast<DWORD>(outBuf.size() * sizeof(float)), &written, NULL)) {
                 DWORD err = GetLastError();
                 NativeLog("WriteFile failed. Error code: " + std::to_string(err) + ". Pipe closed.");
+                g_isRunning = false;
                 break;
             }
         }
     }
+    FlushFileBuffers(hWritePipe);
     NativeLog("Exiting WriterThreadFunc...");
 }
 
@@ -545,6 +552,9 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
     timeBeginPeriod(1);
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
 
+    // FFmpegのpipe:0ストリーム解析ブロックを即座に解除するため初期1チャンク(10ms)を送出
+    outQueue.Push(std::vector<float>(framesPerChunk * 4, 0.0f));
+
     // キャプチャ開始直後の空バッファによる初回アンダーランを防ぐため、最低50msのプリバッファを確実に蓄積
     const size_t initialCushionSamples = framesPerChunk * 5 * 2;
     auto syncWaitStart = std::chrono::steady_clock::now();
@@ -567,6 +577,44 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
     uint64_t totalWrittenFrames = 0;
     auto lastLogTime = startTime;
 
+    const size_t reqSysSamples = framesPerChunk * 2;
+    const size_t reqMicSamples = framesPerChunk * 2;
+    const size_t maxAllowedBuffer = framesPerChunk * 20 * 2; // 最大約200ms
+
+    auto processAndPushChunk = [&](bool drainMode) {
+        if (drainMode) {
+            sysQueue.PopExact(reqSysSamples, sysBuf);
+            micQueue.PopExact(reqMicSamples, micBuf);
+        } else {
+            if (!sysQueue.PopChunk(reqSysSamples, sysBuf, maxAllowedBuffer)) {
+                std::fill(sysBuf.begin(), sysBuf.end(), 0.0f);
+            }
+            if (!micQueue.PopChunk(reqMicSamples, micBuf, maxAllowedBuffer)) {
+                std::fill(micBuf.begin(), micBuf.end(), 0.0f);
+            }
+        }
+
+        if (audioProc && (configCopy.denoise_mode > 0 || configCopy.preprocess_mode > 0)) {
+            AudioProcessor_Process(audioProc, micBuf.data(), micProcessed.data(), static_cast<int>(framesPerChunk));
+        } else {
+            std::copy(micBuf.begin(), micBuf.begin() + reqMicSamples, micProcessed.begin());
+        }
+
+        // ノイズキャンセリング後のクリーンな音声に対してノイズゲートを適用
+        micNoiseGate.Process(micProcessed.data(), framesPerChunk, 2);
+
+        for (size_t i = 0; i < framesPerChunk; ++i) {
+            outBuf[i * 4 + 0] = sysBuf[i * 2 + 0];
+            outBuf[i * 4 + 1] = sysBuf[i * 2 + 1];
+            outBuf[i * 4 + 2] = micProcessed[i * 2 + 0];
+            outBuf[i * 4 + 3] = micProcessed[i * 2 + 1];
+        }
+
+        std::vector<float> chunkOut(outBuf.begin(), outBuf.begin() + framesPerChunk * 4);
+        outQueue.Push(chunkOut);
+        totalWrittenFrames += framesPerChunk;
+    };
+
     NativeLog("Entering main recording loop (A/V Aligned 48kHz Pipeline)...");
 
     while (g_isRunning) {
@@ -574,54 +622,38 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
         double elapsedSec = std::chrono::duration<double>(now - startTime).count();
         uint64_t targetFrames = static_cast<uint64_t>(elapsedSec * 48000.0);
 
-        size_t reqSysSamples = framesPerChunk * 2;
-        size_t reqMicSamples = framesPerChunk * 2;
-
-        const size_t maxAllowedBuffer = framesPerChunk * 20 * 2; // 最大約200ms
         while (g_isRunning && (totalWrittenFrames + framesPerChunk) <= targetFrames) {
-            if (!sysQueue.PopChunk(reqSysSamples, sysBuf, maxAllowedBuffer)) {
-                std::fill(sysBuf.begin(), sysBuf.end(), 0.0f);
-            }
-
-            if (!micQueue.PopChunk(reqMicSamples, micBuf, maxAllowedBuffer)) {
-                std::fill(micBuf.begin(), micBuf.end(), 0.0f);
-            }
-
-            if (audioProc && (configCopy.denoise_mode > 0 || configCopy.preprocess_mode > 0)) {
-                AudioProcessor_Process(audioProc, micBuf.data(), micProcessed.data(), static_cast<int>(framesPerChunk));
-            } else {
-                std::copy(micBuf.begin(), micBuf.begin() + reqMicSamples, micProcessed.begin());
-            }
-
-            // ノイズキャンセリング後のクリーンな音声に対してノイズゲートを適用
-            micNoiseGate.Process(micProcessed.data(), framesPerChunk, 2);
-
-            for (size_t i = 0; i < framesPerChunk; ++i) {
-                float sysL = sysBuf[i * 2 + 0];
-                float sysR = sysBuf[i * 2 + 1];
-                float micL = micProcessed[i * 2 + 0];
-                float micR = micProcessed[i * 2 + 1];
-
-                // c0,c1: システム音声単体 (Track 0)
-                outBuf[i * 4 + 0] = sysL;
-                outBuf[i * 4 + 1] = sysR;
-                // c2,c3: マイク音声単体 (Track 1)
-                outBuf[i * 4 + 2] = micL;
-                outBuf[i * 4 + 3] = micR;
-            }
-
-            std::vector<float> chunkOut(outBuf.begin(), outBuf.begin() + framesPerChunk * 4);
-            outQueue.Push(chunkOut);
-            totalWrittenFrames += framesPerChunk;
+            processAndPushChunk(false);
         }
 
         if (std::chrono::duration_cast<std::chrono::seconds>(now - lastLogTime).count() >= 5) {
+            if (WaitForSingleObject(pi.hProcess, 0) == WAIT_OBJECT_0) {
+                DWORD exitCode = 0;
+                GetExitCodeProcess(pi.hProcess, &exitCode);
+                SetLastErrorMsg("FFmpeg process terminated unexpectedly with code " + std::to_string(exitCode));
+                g_isRunning = false;
+                break;
+            }
             NativeLog("Status: Running. Total frames written: " + std::to_string(totalWrittenFrames) + 
                       ", Target: " + std::to_string(targetFrames));
             lastLogTime = now;
         }
 
         Sleep(2);
+    }
+
+    // 停止押下時点の映像パイプライン遅延と音声プリバッファ分を確実に回収するためテールキャプチャを実行
+    if (WaitForSingleObject(pi.hProcess, 0) == WAIT_TIMEOUT) {
+        auto tailEnd = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
+        while (std::chrono::steady_clock::now() < tailEnd) {
+            auto now = std::chrono::steady_clock::now();
+            double elapsedSec = std::chrono::duration<double>(now - startTime).count();
+            uint64_t targetFrames = static_cast<uint64_t>(elapsedSec * 48000.0);
+            while ((totalWrittenFrames + framesPerChunk) <= targetFrames) {
+                processAndPushChunk(false);
+            }
+            Sleep(2);
+        }
     }
 
     timeEndPeriod(1);
@@ -631,19 +663,30 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
     if (g_micCapture) {
         g_micCapture->Stop();
     }
+
+    // WASAPI停止後にキューへ残っているプリバッファクッション分を全てドレイン出力
+    if (WaitForSingleObject(pi.hProcess, 0) == WAIT_TIMEOUT) {
+        size_t remainingSamples = (std::max)(sysQueue.AvailableSamples(), micQueue.AvailableSamples());
+        size_t drainChunks = (std::max)(remainingSamples / reqSysSamples + 1, static_cast<size_t>(10));
+        for (size_t c = 0; c < drainChunks; ++c) {
+            processAndPushChunk(true);
+        }
+    }
+
     if (audioProc) {
         AudioProcessor_Destroy(audioProc);
         audioProc = nullptr;
     }
 
     g_isWriterRunning = false;
+    outQueue.NotifyAll();
     if (g_writerThread.joinable()) {
         g_writerThread.join();
     }
 
     CloseHandle(hWritePipe);
     
-    DWORD waitProc = WaitForSingleObject(pi.hProcess, 5000);
+    DWORD waitProc = WaitForSingleObject(pi.hProcess, 10000);
     if (waitProc == WAIT_TIMEOUT) {
         NativeLog("Warning: FFmpeg process did not exit in time. Terminating...");
         TerminateProcess(pi.hProcess, 0);
@@ -659,6 +702,7 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
     if (logReaderThread.joinable()) {
         logReaderThread.join();
     }
+    g_isRunning = false;
 }
 
 EXPORT_API bool Recorder_Start(const RecorderConfig* config) {

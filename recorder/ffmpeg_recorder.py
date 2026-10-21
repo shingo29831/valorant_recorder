@@ -319,6 +319,9 @@ class FFmpegRecorder:
         filter_complex = video_filter + audio_filter
 
         cmd.extend([
+            "-thread_queue_size", "4096",
+            "-probesize", "32",
+            "-analyzeduration", "0",
             "-f", "f32le",
             "-ar", "48000",
             "-ac", "4",
@@ -334,6 +337,7 @@ class FFmpegRecorder:
         cmd.extend([
             "-r", fps,
             "-fps_mode", "cfr",
+            "-shortest",
             "-max_muxing_queue_size", "4096" if is_lightweight else "8192",
             "-c:a", "aac",
             "-b:a", "128k" if is_lightweight else "192k",
@@ -493,6 +497,7 @@ class FFmpegRecorder:
                 except IOError:
                     time.sleep(0.5)
 
+            remux_temp_path = self.current_filepath + ".tmp"
             try:
                 logging.info(f"[FFmpegRecorder] Remuxing MKV to MP4: {self.temp_filepath} -> {self.current_filepath}")
                 remux_cmd = [
@@ -502,7 +507,8 @@ class FFmpegRecorder:
                     "-map", "0",
                     "-c", "copy",
                     "-movflags", "+faststart",
-                    self.current_filepath
+                    "-f", "mp4",
+                    remux_temp_path
                 ]
                 creationflags = 0
                 startupinfo = None
@@ -519,15 +525,26 @@ class FFmpegRecorder:
                     creationflags=creationflags,
                     startupinfo=startupinfo
                 )
-                if remux_process.returncode == 0:
+                if remux_process.returncode == 0 and os.path.exists(remux_temp_path):
+                    os.replace(remux_temp_path, self.current_filepath)
                     try:
                         os.remove(self.temp_filepath)
                     except Exception as rm_err:
                         logging.warning(f"[FFmpegRecorder] Could not remove temp MKV: {rm_err}")
                     logging.info("[FFmpegRecorder] Remux completed successfully.")
                 else:
+                    if os.path.exists(remux_temp_path):
+                        try:
+                            os.remove(remux_temp_path)
+                        except Exception:
+                            pass
                     logging.error(f"[FFmpegRecorder] Remux failed with code {remux_process.returncode}")
             except Exception as e:
+                if os.path.exists(remux_temp_path):
+                    try:
+                        os.remove(remux_temp_path)
+                    except Exception:
+                        pass
                 logging.error(f"[FFmpegRecorder] Remux exception: {e}")
 
     def set_low_priority(self):
