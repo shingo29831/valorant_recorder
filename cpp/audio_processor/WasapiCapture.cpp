@@ -1,7 +1,13 @@
 #include "WasapiCapture.h"
 #include <iostream>
+#include <algorithm>
+#include <cctype>
+#include <chrono>
+#include <cstdint>
+#include <cstring>
 #include <comdef.h>
 #include <functiondiscoverykeys_devpkey.h>
+#include <mmsystem.h>
 
 #define SAFE_RELEASE(punk) if ((punk) != NULL) { (punk)->Release(); (punk) = NULL; }
 
