@@ -216,16 +216,36 @@ class MicMonitorThread(QThread):
                 except Exception:
                     player = None
                     
-                # AudioProcessorWrapper の初期化 (ダウンミックス後のモノラル処理用)
                 processor = None
-                try:
-                    processor = AudioProcessorWrapper(sample_rate=48000, channels=1)
-                except Exception as e:
-                    print(f"Failed to initialize AudioProcessorWrapper: {e}")
-                    
+                processor_init_failed = False
                 last_denoise = None
                 last_preprocess = None
-                    
+
+                def apply_native_dsp(raw_data):
+                    nonlocal processor, processor_init_failed, last_denoise, last_preprocess
+                    needs_dsp = (self.preprocess_mode != "None") or (self.denoise_mode in ("AI (DeepFilterNet)", "AI (RNNoise)"))
+                    if not needs_dsp or processor_init_failed:
+                        return raw_data
+                    if processor is None:
+                        try:
+                            processor = AudioProcessorWrapper(sample_rate=48000, channels=1)
+                        except Exception as e:
+                            print(f"Failed to initialize AudioProcessorWrapper: {e}")
+                            processor_init_failed = True
+                            return raw_data
+                    if last_preprocess != self.preprocess_mode:
+                        processor.set_preprocess_type(self.preprocess_mode)
+                        last_preprocess = self.preprocess_mode
+                    if last_denoise != self.denoise_mode:
+                        if self.denoise_mode == "AI (DeepFilterNet)":
+                            processor.set_denoise_type("DeepFilterNet")
+                        elif self.denoise_mode == "AI (RNNoise)":
+                            processor.set_denoise_type("RNNoise")
+                        else:
+                            processor.set_denoise_type("None")
+                        last_denoise = self.denoise_mode
+                    return processor.process(raw_data)
+
                 if recorder is not None:
                     with recorder:
                         if player is not None:
@@ -233,27 +253,10 @@ class MicMonitorThread(QThread):
                                 while self.running:
                                     data = recorder.record(numframes=2400)
                                     if channels == 2:
-                                        # ステレオの場合は平均をとってモノラルにダウンミックス
                                         data = data.mean(axis=1, keepdims=True)
-                                        
-                                    if processor is not None:
-                                        if last_preprocess != self.preprocess_mode:
-                                            processor.set_preprocess_type(self.preprocess_mode)
-                                            last_preprocess = self.preprocess_mode
-                                        if last_denoise != self.denoise_mode:
-                                            if self.denoise_mode == "AI (DeepFilterNet)":
-                                                processor.set_denoise_type("DeepFilterNet")
-                                            else:
-                                                processor.set_denoise_type("None")
-                                            last_denoise = self.denoise_mode
-                                            
-                                        # 処理が不要な場合はバイパスして無音化リスクを回避
-                                        if self.preprocess_mode != "None" or self.denoise_mode == "AI (DeepFilterNet)":
-                                            data = processor.process(data)
-                                        
+                                    data = apply_native_dsp(data)
                                     processed = self.process_audio(data)
                                     if self.monitor_audio:
-                                        # モノラルをステレオに複製して再生
                                         stereo = np.repeat(processed, 2, axis=1)
                                         player.play(stereo)
                         else:
@@ -261,22 +264,7 @@ class MicMonitorThread(QThread):
                                 data = recorder.record(numframes=2400)
                                 if channels == 2:
                                     data = data.mean(axis=1, keepdims=True)
-                                    
-                                if processor is not None:
-                                    if last_preprocess != self.preprocess_mode:
-                                        processor.set_preprocess_type(self.preprocess_mode)
-                                        last_preprocess = self.preprocess_mode
-                                    if last_denoise != self.denoise_mode:
-                                        if self.denoise_mode == "AI (DeepFilterNet)":
-                                            processor.set_denoise_type("DeepFilterNet")
-                                        else:
-                                            processor.set_denoise_type("None")
-                                        last_denoise = self.denoise_mode
-                                        
-                                    # 処理が不要な場合はバイパスして無音化リスクを回避
-                                    if self.preprocess_mode != "None" or self.denoise_mode == "AI (DeepFilterNet)":
-                                        data = processor.process(data)
-                                    
+                                data = apply_native_dsp(data)
                                 self.process_audio(data)
                 else:
                     while self.running:

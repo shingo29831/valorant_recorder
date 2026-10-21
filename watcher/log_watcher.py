@@ -20,9 +20,13 @@ class LogWatcher:
         self.has_entered_in_progress = False
         self.is_range = False
         self.current_map_name = "Unknown"
+        self._stop_requested = False
         self.map_name_pattern = re.compile(r"(?:Map Name:\s*|\[Map:\s*)(.*?)(?:\s*\||\s*\])")
         self.state_transition_pattern = re.compile(r"(?:State:|Match State Changed from)\s*(\w+)\s*(?:->|to)\s*(\w+)")
         self.time_pattern = re.compile(r"^\[(\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2}:\d{3})\]")
+
+    def stop(self):
+        self._stop_requested = True
 
     def _parse_log_time(self, line: str) -> float:
         match = self.time_pattern.search(line)
@@ -47,10 +51,13 @@ class LogWatcher:
                 raise EnvironmentError("LOCALAPPDATA environment variable not found.")
 
         log_path = os.path.join(local_app_data, 'VALORANT', 'Saved', 'Logs', 'ShooterGame.log')
-        
-        if not os.path.exists(log_path):
-            logging.error(f"Log file not found: {log_path}")
-            raise FileNotFoundError(f"Log file not found: {log_path}")
+        self._stop_requested = False
+
+        # Valorant起動前にアプリが起動された場合もエラー終了せず生成を待機する
+        while not os.path.exists(log_path):
+            if self._stop_requested:
+                return
+            time.sleep(2.0)
 
         logging.info(f"Started watching log file: {log_path}")
 
@@ -59,44 +66,43 @@ class LogWatcher:
             f.seek(0, os.SEEK_END)
             
             try:
-                while True:
-                    try:
-                        current_size = os.path.getsize(log_path)
-                        if current_size < f.tell():
-                            # ファイルがクリアされた(Valorant再起動)場合は開き直す
-                            logging.info("Log file was cleared (Valorant restarted). Reopening...")
-                            f.close()
-                            f = open(log_path, 'r', encoding='utf-8', errors='replace')
-                            f.seek(0, os.SEEK_END)
-                            continue
-                    except OSError as e:
-                        logging.warning(f"OSError while checking log file size: {e}")
-                        pass
-
+                while not self._stop_requested:
                     line = f.readline()
                     if not line:
-                        time.sleep(0.1)
+                        # EOF到達時のみファイルサイズ縮小(Valorant再起動)をチェックしI/Oコールを最小化
+                        try:
+                            current_size = os.path.getsize(log_path)
+                            if current_size < f.tell():
+                                logging.info("Log file was cleared (Valorant restarted). Reopening...")
+                                f.close()
+                                f = open(log_path, 'r', encoding='utf-8', errors='replace')
+                                f.seek(0, os.SEEK_END)
+                                continue
+                        except OSError:
+                            pass
+                        time.sleep(0.15)
                         continue
                     
                     line = line.strip()
                     if not line:
                         continue
 
-                    # マップロード時に射撃訓練場(Range)かどうかを判定し、マップ名も抽出
                     if "LogMapLoadModel: Update:" in line:
                         map_match = self.map_name_pattern.search(line)
                         if map_match:
                             extracted_map_name = map_match.group(1).strip()
-                            # メインメニューやキャラセレなどの非プレイ用マップ名は無視して上書きを防ぐ
                             if extracted_map_name.lower() not in ["mainmenuv2", "mainmenu", "characterselect", "characterselectpersistentlevel"]:
                                 self.current_map_name = extracted_map_name
                             
                         line_lower = line.lower()
-                        # 最近のアップデートで射撃訓練場が「Basic Training」等に変更されたケースに対応
                         if any(x in line_lower for x in ["range", "rangev2", "poveglia", "basictraining", "shooting", "tutorial"]):
                             self.is_range = True
                         else:
                             self.is_range = False
+
+                    # 無関係なログ行での正規表現・時刻パース処理をスキップしてCPU負荷を削減
+                    if not any(k in line for k in ("State:", "Match State", "Broadcasting state", "Loopstate", "LogAbilitySystem:", "LogShooterGame: Match ended", "[Map Complete:", "Leaving session", "Warning:")):
+                        continue
 
                     log_time = self._parse_log_time(line)
 

@@ -5,23 +5,28 @@ import logging
 import time
 from datetime import datetime
 from core.config import Config
-from recorder.ffmpeg_downloader import ensure_ffmpeg_downloaded
+from recorder.ffmpeg_downloader import ensure_ffmpeg_downloaded, ensure_rnnoise_model_downloaded
 from recorder.encoder_utils import test_encoder, get_available_encoders
 
 def try_rebuild_native_recorder():
     """
-    C++のソースファイル(NativeRecorder.cpp)がDLLより新しい場合、
-    バックグラウンドでCMakeビルドを実行して最新化する。
+    C++のソースファイルがDLLより新しい場合、CMakeビルドを実行して最新化する。
     """
     try:
         base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "cpp", "audio_processor"))
         cpp_sources = [
             os.path.join(base_dir, "NativeRecorder.cpp"),
+            os.path.join(base_dir, "NativeRecorder.h"),
             os.path.join(base_dir, "WasapiCapture.cpp"),
+            os.path.join(base_dir, "WasapiCapture.h"),
             os.path.join(base_dir, "AudioProcessor.cpp"),
+            os.path.join(base_dir, "AudioProcessor.h"),
         ]
         build_dir = os.path.join(base_dir, "build")
-        dll_path = os.path.join(build_dir, "Release", "native_recorder.dll")
+        dll_paths = [
+            os.path.join(build_dir, "Release", "native_recorder.dll"),
+            os.path.join(build_dir, "Release", "audio_processor.dll"),
+        ]
         
         existing_sources = [p for p in cpp_sources if os.path.exists(p)]
         if not existing_sources:
@@ -29,10 +34,10 @@ def try_rebuild_native_recorder():
             
         max_src_mtime = max(os.path.getmtime(p) for p in existing_sources)
         needs_build = False
-        if not os.path.exists(dll_path):
-            needs_build = True
-        elif max_src_mtime > os.path.getmtime(dll_path):
-            needs_build = True
+        for dll_p in dll_paths:
+            if not os.path.exists(dll_p) or max_src_mtime > os.path.getmtime(dll_p):
+                needs_build = True
+                break
             
         if needs_build:
             logging.info("[FFmpegRecorder] Newer C++ source detected. Rebuilding native_recorder.dll...")
@@ -65,6 +70,7 @@ class RecorderConfig(ctypes.Structure):
         ("df_model_path", ctypes.c_char_p),
         ("denoise_mode", ctypes.c_int32),
         ("preprocess_mode", ctypes.c_int32),
+        ("low_priority", ctypes.c_int32),
     ]
 
 class FFmpegRecorder:
@@ -73,9 +79,10 @@ class FFmpegRecorder:
         self.current_filepath = None
         self.temp_filepath = None
         
-        app_data_dir = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'ValoReco')
-        os.makedirs(app_data_dir, exist_ok=True)
-        self.ffmpeg_path = ensure_ffmpeg_downloaded(app_data_dir)
+        self.app_data_dir = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'ValoReco')
+        os.makedirs(self.app_data_dir, exist_ok=True)
+        self.ffmpeg_path = ensure_ffmpeg_downloaded(self.app_data_dir)
+        self._last_configured_encoder = self.config.RECORD_ENCODER
         self.actual_encoder = self._determine_encoder()
         
         try_rebuild_native_recorder()
@@ -124,6 +131,9 @@ class FFmpegRecorder:
         self.native_lib.Recorder_Stop.argtypes = []
         self.native_lib.Recorder_IsRunning.restype = ctypes.c_bool
         self.native_lib.Recorder_GetLastError.restype = ctypes.c_char_p
+        if hasattr(self.native_lib, 'Recorder_SetLowPriority'):
+            self.native_lib.Recorder_SetLowPriority.argtypes = [ctypes.c_bool]
+            self.native_lib.Recorder_SetLowPriority.restype = None
 
     def _determine_encoder(self) -> str:
         encoder = self.config.RECORD_ENCODER
@@ -178,12 +188,175 @@ class FFmpegRecorder:
         except Exception as write_err:
             logging.error(f"[FFmpegRecorder] Failed to write diagnostic log: {write_err}")
 
+    def _get_desktop_resolution(self) -> tuple[int, int]:
+        if os.name == 'nt':
+            try:
+                user32 = ctypes.windll.user32
+                return int(user32.GetSystemMetrics(0)), int(user32.GetSystemMetrics(1))
+            except Exception:
+                pass
+        return 1920, 1080
+
+    def _parse_target_resolution(self) -> tuple[int, int]:
+        res_str = str(getattr(self.config, 'RECORD_RESOLUTION', '1920x1080'))
+        try:
+            parts = res_str.lower().split('x')
+            if len(parts) == 2:
+                w = (int(parts[0]) // 2) * 2
+                h = (int(parts[1]) // 2) * 2
+                if w > 0 and h > 0:
+                    return w, h
+        except Exception:
+            pass
+        return 1920, 1080
+
+    def _resolve_rnnoise_filter(self) -> str:
+        from recorder.audio_processor_wrapper import get_short_path_name
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        candidates = [
+            os.path.join(project_root, "bin", "sh.rnnn"),
+            os.path.join(self.app_data_dir, "bin", "sh.rnnn"),
+        ]
+        rnnn_path = None
+        for c in candidates:
+            if os.path.isfile(c) and os.path.getsize(c) > 100:
+                rnnn_path = c
+                break
+        if not rnnn_path:
+            try:
+                rnnn_path = ensure_rnnoise_model_downloaded(self.app_data_dir)
+            except Exception as e:
+                logging.warning(f"[FFmpegRecorder] Could not prepare RNNoise model: {e}")
+                return ""
+        if rnnn_path and os.path.exists(rnnn_path):
+            short_p = get_short_path_name(os.path.abspath(rnnn_path)).replace('\\', '/').replace(':', '\\:')
+            return f"arnndn=m='{short_p}',"
+        return ""
+
+    def _build_ffmpeg_command(self, force_sw_download: bool = False) -> str:
+        is_lightweight = bool(getattr(self.config, 'LIGHTWEIGHT_MODE', False))
+        enc_lower = self.actual_encoder.lower()
+        is_nvenc = "nvenc" in enc_lower
+        is_amf = "amf" in enc_lower
+        is_qsv = "qsv" in enc_lower
+
+        fps = str(getattr(self.config, 'RECORD_FPS', '60'))
+        gop_size = fps
+        target_w, target_h = self._parse_target_resolution()
+        screen_w, screen_h = self._get_desktop_resolution()
+        needs_scale = (target_w != screen_w or target_h != screen_h)
+
+        # Windowsのコロンを含むパスでFFmpegがクラッシュする原因となるFFREPORT環境変数を排除
+        os.environ.pop("FFREPORT", None)
+
+        cmd = [
+            self.ffmpeg_path,
+            "-y",
+            "-loglevel", "info",
+        ]
+
+        use_d3d11_direct = is_nvenc and not needs_scale and not force_sw_download
+        if use_d3d11_direct:
+            cmd.extend(["-init_hw_device", "d3d11va"])
+            video_filter = f"ddagrab=output_idx=0:framerate={fps}:draw_mouse=1[v_out];"
+        else:
+            scale_part = f",scale={target_w}:{target_h}:flags=fast_bilinear" if needs_scale else ""
+            video_filter = (
+                f"ddagrab=output_idx=0:framerate={fps}:draw_mouse=1,"
+                f"hwdownload,format=bgra{scale_part},format=yuv420p[v_out];"
+            )
+
+        if is_nvenc:
+            nv_preset = "p1" if is_lightweight else "p2"
+            nv_tune = "ull" if is_lightweight else "ll"
+            nv_cq = "24" if is_lightweight else "20"
+            encoder_opts = [
+                "-c:v", self.actual_encoder,
+                "-preset", nv_preset,
+                "-tune", nv_tune,
+                "-rc", "vbr",
+                "-cq", nv_cq,
+                "-b:v", "0",
+                "-delay", "0",
+                "-zerolatency", "1",
+                "-g", gop_size,
+                "-keyint_min", gop_size,
+                "-forced-idr", "1",
+            ]
+        elif is_amf:
+            encoder_opts = [
+                "-c:v", self.actual_encoder,
+                "-usage", "ultralowlatency",
+                "-quality", "speed",
+                "-b:v", "8M" if is_lightweight else "12M",
+                "-g", gop_size,
+            ]
+        elif is_qsv:
+            encoder_opts = [
+                "-c:v", self.actual_encoder,
+                "-preset", "veryfast",
+                "-b:v", "8M" if is_lightweight else "12M",
+                "-g", gop_size,
+            ]
+        else:
+            encoder_opts = [
+                "-c:v", self.actual_encoder,
+                "-preset", "ultrafast",
+                "-tune", "zerolatency",
+                "-crf", "26" if is_lightweight else "23",
+                "-g", gop_size,
+                "-keyint_min", gop_size,
+            ]
+            if is_lightweight:
+                encoder_opts.extend(["-threads", "2"])
+
+        denoise_str = str(getattr(self.config, 'RECORD_AUDIO_MIC_DENOISE', 'None')).lower()
+        rnnoise_filter = ""
+        if "rnnoise" in denoise_str or (is_lightweight and "deepfilter" in denoise_str):
+            rnnoise_filter = self._resolve_rnnoise_filter()
+
+        audio_filter = (
+            "[0:a]asplit=2[sys_in][mic_in];"
+            "[sys_in]pan=stereo|FL=c0|FR=c1,alimiter=limit=0.99,aresample=48000[a_sys];"
+            f"[mic_in]pan=stereo|FL=c2|FR=c3,{rnnoise_filter}alimiter=limit=0.99,aresample=48000[a_mic]"
+        )
+        filter_complex = video_filter + audio_filter
+
+        cmd.extend([
+            "-f", "f32le",
+            "-ar", "48000",
+            "-ac", "4",
+            "-i", "pipe:0",
+            "-filter_complex", filter_complex,
+            "-map", "[v_out]",
+            "-map", "[a_sys]",
+            "-map", "[a_mic]",
+            "-metadata:s:a:0", "title=System Audio",
+            "-metadata:s:a:1", "title=Microphone",
+        ])
+        cmd.extend(encoder_opts)
+        cmd.extend([
+            "-r", fps,
+            "-fps_mode", "cfr",
+            "-max_muxing_queue_size", "4096" if is_lightweight else "8192",
+            "-c:a", "aac",
+            "-b:a", "128k" if is_lightweight else "192k",
+            "-ar", "48000",
+            self.temp_filepath
+        ])
+        return subprocess.list2cmdline(cmd)
+
     def start_recording(self) -> str:
         if self.native_lib.Recorder_IsRunning():
             logging.info("[FFmpegRecorder] Already recording.")
             return self.current_filepath
 
         try:
+            # 設定画面でエンコーダが変更された場合にリアルタイムで反映
+            if self.config.RECORD_ENCODER != self._last_configured_encoder:
+                self._last_configured_encoder = self.config.RECORD_ENCODER
+                self.actual_encoder = self._determine_encoder()
+
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"match_record_{timestamp}.mp4"
             temp_filename = f"match_record_{timestamp}.mkv"
@@ -191,96 +364,21 @@ class FFmpegRecorder:
             self.temp_filepath = os.path.join(self.config.SAVE_DIR, temp_filename)
             os.makedirs(self.config.SAVE_DIR, exist_ok=True)
 
-            is_nvenc = "nvenc" in self.actual_encoder.lower()
-            preset = "p1" if is_nvenc else "ultrafast"
-            tune = "ull" if is_nvenc else "zerolatency"
+            is_lightweight = bool(getattr(self.config, 'LIGHTWEIGHT_MODE', False))
+            cmd_str = self._build_ffmpeg_command(force_sw_download=False)
 
-            cmd = [
-                self.ffmpeg_path,
-                "-y",
-                "-stats",
-                "-benchmark",
-                "-loglevel", "verbose",
-            ]
-
-            # ddagrabをfilter_complex内部ソースに直結し、1秒ごとのIDRキーフレームで爆速シークを実現
-            gop_size = str(self.config.RECORD_FPS)
-            if is_nvenc:
-                cmd.extend([
-                    "-init_hw_device", "d3d11va",
-                ])
-                video_filter = f"ddagrab=output_idx=0:framerate={self.config.RECORD_FPS}:draw_mouse=1[v_out];"
-                encoder_opts = [
-                    "-c:v", self.actual_encoder,
-                    "-preset", "p2",
-                    "-tune", "ll",
-                    "-rc", "vbr",
-                    "-cq", "20",
-                    "-b:v", "0",
-                    "-delay", "0",
-                    "-zerolatency", "1",
-                    "-g", gop_size,
-                    "-keyint_min", gop_size,
-                    "-forced-idr", "1",
-                ]
-            else:
-                video_filter = f"ddagrab=output_idx=0:framerate={self.config.RECORD_FPS}:draw_mouse=1,hwdownload,format=bgra,format=yuv420p[v_out];"
-                encoder_opts = [
-                    "-c:v", self.actual_encoder,
-                    "-preset", preset,
-                    "-tune", tune,
-                    "-b:v", "10M",
-                    "-g", gop_size,
-                    "-keyint_min", gop_size,
-                ]
-
-            video_map = "[v_out]"
-
-            # 完全2トラック構成: c0,c1=システム音単体 / c2,c3=マイク音単体
-            # raw PCMへの誤ったasetpts=N/SR/TB(4chでPTSが急進しピッチが崩壊する)を排除し、48kHzを明示
-            audio_filter = (
-                "[0:a]asplit=2[sys_in][mic_in];"
-                "[sys_in]pan=stereo|FL=c0|FR=c1,alimiter=limit=0.99,aresample=48000[a_sys];"
-                "[mic_in]pan=stereo|FL=c2|FR=c3,alimiter=limit=0.99,aresample=48000[a_mic]"
-            )
-            filter_complex = video_filter + audio_filter
-
-            cmd.extend([
-                "-f", "f32le",
-                "-ar", "48000",
-                "-ac", "4",
-                "-i", "pipe:0",
-                "-filter_complex", filter_complex,
-                "-map", video_map,
-                "-map", "[a_sys]",
-                "-map", "[a_mic]",
-                "-metadata:s:a:0", "title=System Audio",
-                "-metadata:s:a:1", "title=Microphone",
-            ])
-            cmd.extend(encoder_opts)
-            cmd.extend([
-                "-r", str(self.config.RECORD_FPS),
-                "-fps_mode", "cfr",
-                "-max_muxing_queue_size", "8192",
-                "-c:a", "aac",
-                "-b:a", "192k",
-                "-ar", "48000",
-                self.temp_filepath
-            ])
-
-            cmd_str = subprocess.list2cmdline(cmd)
-            
-            report_path = os.path.join(self.config.SAVE_DIR, "ffmpeg_crash_report.log").replace('\\', '/')
-            os.environ["FFREPORT"] = f"file='{report_path}':level=48"
-            
             gate_level = float(getattr(self.config, 'RECORD_AUDIO_MIC_NOISE_GATE', '0')) / 100.0
-            denoise_str = str(getattr(self.config, 'RECORD_AUDIO_MIC_DENOISE', 'None'))
-            # UI表記(AI (DeepFilterNet))との不整合を解消
-            denoise_mode = 1 if "deepfilter" in denoise_str.lower() else 0
+            denoise_str = str(getattr(self.config, 'RECORD_AUDIO_MIC_DENOISE', 'None')).lower()
+            if "deepfilter" in denoise_str:
+                denoise_mode = 2 if is_lightweight else 1
+            elif "rnnoise" in denoise_str or "speex" in denoise_str:
+                denoise_mode = 2
+            else:
+                denoise_mode = 0
+
             preprocess_str = str(getattr(self.config, 'RECORD_AUDIO_MIC_PREPROCESS', 'SpeexDSP'))
             preprocess_mode = 1 if preprocess_str == 'SpeexDSP' else 0
 
-            # 過去互換性および設定キー名の揺らぎを吸収
             raw_mic_gain = float(getattr(self.config, 'RECORD_AUDIO_MIC_GAIN', 1.0))
             mic_gain = raw_mic_gain / 100.0 if raw_mic_gain > 10.0 else raw_mic_gain
             raw_sys_gain = float(getattr(self.config, 'RECORD_AUDIO_SYSTEM_GAIN', getattr(self.config, 'RECORD_AUDIO_SYS_GAIN', 1.0)))
@@ -292,8 +390,8 @@ class FFmpegRecorder:
             config_struct.noise_gate_threshold = gate_level
             config_struct.denoise_mode = denoise_mode
             config_struct.preprocess_mode = preprocess_mode
-            
-            # 設定キー RECORD_AUDIO_MIC と RECORD_AUDIO_MIC_DEVICE の差異を吸収
+            config_struct.low_priority = 1 if is_lightweight else 0
+
             mic_device = getattr(self.config, 'RECORD_AUDIO_MIC', getattr(self.config, 'RECORD_AUDIO_MIC_DEVICE', ''))
             if mic_device.strip().lower() == 'none':
                 config_struct.mic_device_name = b"__NONE__"
@@ -305,7 +403,7 @@ class FFmpegRecorder:
             config_struct.save_file_path = self.current_filepath.encode('utf-8')
             config_struct.temp_file_path = self.temp_filepath.encode('utf-8')
             config_struct.ffmpeg_path = self.ffmpeg_path.encode('utf-8')
-            
+
             project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
             possible_model_paths = [
                 os.path.join(project_root, "cpp", "audio_processor", "models", "DeepFilterNet3", "DeepFilterNet3_onnx.tar.gz"),
@@ -315,40 +413,53 @@ class FFmpegRecorder:
                 os.path.join(project_root, "models", "DeepFilterNet3_onnx.tar.gz"),
             ]
             df_model_path = ""
-            for p in possible_model_paths:
-                if os.path.isfile(p) and os.path.getsize(p) > 1024:
-                    df_model_path = p
-                    break
-                    
-            if not df_model_path:
-                for root, _, files in os.walk(project_root):
-                    for f in files:
-                        if f.endswith(".tar.gz") and "deepfilter" in f.lower():
-                            cand = os.path.join(root, f)
-                            if os.path.getsize(cand) > 1024:
-                                df_model_path = cand
-                                break
-                    if df_model_path:
+            if denoise_mode == 1:
+                for p in possible_model_paths:
+                    if os.path.isfile(p) and os.path.getsize(p) > 1024:
+                        df_model_path = p
                         break
+
+                if not df_model_path:
+                    for root, _, files in os.walk(project_root):
+                        for f in files:
+                            if f.endswith(".tar.gz") and "deepfilter" in f.lower():
+                                cand = os.path.join(root, f)
+                                if os.path.getsize(cand) > 1024:
+                                    df_model_path = cand
+                                    break
+                        if df_model_path:
+                            break
 
             from recorder.audio_processor_wrapper import get_short_path_name
             if df_model_path:
                 df_model_path = get_short_path_name(df_model_path).replace('\\', '/')
-                
+
             config_struct.df_model_path = df_model_path.encode('utf-8')
-            
-            logging.info(f"[FFmpegRecorder] Starting NativeRecorder. Encoder: {self.actual_encoder}")
+
+            logging.info(f"[FFmpegRecorder] Starting NativeRecorder. Encoder: {self.actual_encoder}, Lightweight: {is_lightweight}")
             logging.info(f"[FFmpegRecorder] Command: {cmd_str}")
-            
-            if not self.native_lib.Recorder_Start(ctypes.byref(config_struct)):
-                err = self.native_lib.Recorder_GetLastError().decode('utf-8', errors='replace')
-                full_err = f"NativeRecorder failed to start: {err}"
-                logging.error(f"[FFmpegRecorder] {full_err}")
-                self._collect_and_save_diagnostic(full_err)
-                raise RuntimeError(full_err)
-                
-            time.sleep(0.4)
-            if not self.native_lib.Recorder_IsRunning():
+
+            started_ok = self.native_lib.Recorder_Start(ctypes.byref(config_struct))
+            if started_ok:
+                time.sleep(0.4)
+                started_ok = self.native_lib.Recorder_IsRunning()
+
+            # Optimus環境やHDRデスクトップ等でD3D11直結が失敗した場合、互換性の高いhwdownloadパイプラインで自動再試行
+            if not started_ok and "nvenc" in self.actual_encoder.lower() and "hwdownload" not in cmd_str:
+                logging.warning("[FFmpegRecorder] Direct D3D11 NVENC capture failed. Retrying with hwdownload compatibility mode...")
+                try:
+                    self.native_lib.Recorder_Stop()
+                except Exception:
+                    pass
+                cmd_str = self._build_ffmpeg_command(force_sw_download=True)
+                config_struct.ffmpeg_command = cmd_str.encode('utf-8')
+                logging.info(f"[FFmpegRecorder] Fallback Command: {cmd_str}")
+                started_ok = self.native_lib.Recorder_Start(ctypes.byref(config_struct))
+                if started_ok:
+                    time.sleep(0.4)
+                    started_ok = self.native_lib.Recorder_IsRunning()
+
+            if not started_ok:
                 err = self.native_lib.Recorder_GetLastError().decode('utf-8', errors='replace')
                 if not err:
                     err = "FFmpeg or audio capture pipeline terminated unexpectedly (see recording_diagnostic.log)"
@@ -424,4 +535,8 @@ class FFmpegRecorder:
                 logging.error(f"[FFmpegRecorder] Remux exception: {e}")
 
     def set_low_priority(self):
-        pass
+        if hasattr(self.native_lib, 'Recorder_SetLowPriority'):
+            try:
+                self.native_lib.Recorder_SetLowPriority(True)
+            except Exception as e:
+                logging.warning(f"[FFmpegRecorder] Failed to set low priority: {e}")

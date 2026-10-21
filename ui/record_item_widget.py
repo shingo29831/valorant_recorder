@@ -54,6 +54,7 @@ class RecordItemWidget(QWidget):
         self.thumb_label.setFixedSize(240, 135)
         self.thumb_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         
+        self._thumb_retries = 0
         if self.thumb_path and os.path.exists(self.thumb_path):
             self._load_thumbnail()
         else:
@@ -168,8 +169,11 @@ class RecordItemWidget(QWidget):
             self.thumb_label.setStyleSheet("background-color: black; color: white;")
 
     def _check_thumbnail(self):
+        self._thumb_retries += 1
         if self.thumb_path and os.path.exists(self.thumb_path):
             self._load_thumbnail()
+            self.thumb_timer.stop()
+        elif self._thumb_retries >= 15:
             self.thumb_timer.stop()
 
     def _on_checkbox_toggled(self, checked):

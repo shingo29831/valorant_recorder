@@ -47,14 +47,25 @@ class SettingsTab(QWidget):
         self.tab_widget.addTab(self.general_widget, self.t.tab_general)
         self.tab_widget.addTab(self.record_widget, self.t.tab_record)
         self.tab_widget.addTab(self.playback_widget, self.t.tab_playback)
+        self.tab_widget.currentChanged.connect(self._on_subtab_changed)
         
         main_layout.addWidget(self.tab_widget)
         
         self.setLayout(main_layout)
 
+    def _on_subtab_changed(self, index):
+        # 録画設定タブ表示中かつ非録画時のみ音声モニターを稼働させリソース競合と負荷を防止
+        if self.isVisible() and self.tab_widget.currentWidget() == self.record_widget:
+            main_win = self.window()
+            is_rec = getattr(main_win, 'rec_button', None) and main_win.rec_button.isChecked()
+            if not is_rec:
+                self.record_widget.start_monitors()
+        else:
+            self.record_widget.stop_monitors()
+
     def showEvent(self, event):
         super().showEvent(event)
-        self.record_widget.start_monitors()
+        self._on_subtab_changed(self.tab_widget.currentIndex())
 
     def hideEvent(self, event):
         super().hideEvent(event)

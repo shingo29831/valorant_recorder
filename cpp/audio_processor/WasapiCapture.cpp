@@ -54,6 +54,10 @@ bool WasapiCapture::Initialize() {
             if (SUCCEEDED(hr)) {
                 UINT count = 0;
                 pCollection->GetCount(&count);
+                std::string lowerTarget = m_deviceName;
+                std::transform(lowerTarget.begin(), lowerTarget.end(), lowerTarget.begin(), ::tolower);
+                IMMDevice* partialMatchDevice = nullptr;
+
                 for (UINT i = 0; i < count; i++) {
                     IMMDevice* pEndpoint = nullptr;
                     if (SUCCEEDED(pCollection->Item(i, &pEndpoint))) {
@@ -64,17 +68,18 @@ bool WasapiCapture::Initialize() {
                             if (SUCCEEDED(pProps->GetValue(PKEY_Device_FriendlyName, &varName))) {
                                 std::string utf8Name = WideToUTF8(varName.pwszVal);
                                 std::string lowerUtf8 = utf8Name;
-                                std::string lowerTarget = m_deviceName;
                                 std::transform(lowerUtf8.begin(), lowerUtf8.end(), lowerUtf8.begin(), ::tolower);
-                                std::transform(lowerTarget.begin(), lowerTarget.end(), lowerTarget.begin(), ::tolower);
 
-                                if (lowerUtf8.find(lowerTarget) != std::string::npos || lowerTarget.find(lowerUtf8) != std::string::npos) {
+                                if (lowerUtf8 == lowerTarget) {
                                     m_device = pEndpoint;
                                     m_device->AddRef();
                                     PropVariantClear(&varName);
                                     SAFE_RELEASE(pProps);
                                     SAFE_RELEASE(pEndpoint);
                                     break;
+                                } else if (!partialMatchDevice && (lowerUtf8.find(lowerTarget) != std::string::npos || lowerTarget.find(lowerUtf8) != std::string::npos)) {
+                                    partialMatchDevice = pEndpoint;
+                                    partialMatchDevice->AddRef();
                                 }
                             }
                             PropVariantClear(&varName);
@@ -82,6 +87,11 @@ bool WasapiCapture::Initialize() {
                         }
                         SAFE_RELEASE(pEndpoint);
                     }
+                }
+                if (!m_device && partialMatchDevice) {
+                    m_device = partialMatchDevice;
+                } else {
+                    SAFE_RELEASE(partialMatchDevice);
                 }
                 SAFE_RELEASE(pCollection);
             }
@@ -225,9 +235,11 @@ void WasapiCapture::CaptureThreadFunc() {
         Sleep(3);
 
         HRESULT hr = m_captureClient->GetNextPacketSize(&packetLength);
-        if (FAILED(hr)) continue;
+        if (FAILED(hr)) {
+            packetLength = 0;
+        }
 
-        // ループバック無音時にパケットが途絶えレートが0.95xに減速するのを防ぐ正確なキープアライブ
+        // ループバック無音時やデバイス遷移時にパケットが途絶えるのを防ぐ正確なキープアライブ
         if (packetLength == 0 && m_type == CaptureType::SystemLoopback) {
             auto now = std::chrono::steady_clock::now();
             double silentSec = std::chrono::duration<double>(now - lastPacketTime).count();

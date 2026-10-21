@@ -650,6 +650,12 @@ class WatcherThread(QThread):
 
     def stop(self):
         self._is_running = False
+        if self._stop_timer is not None:
+            self._stop_timer.cancel()
+            self._stop_timer = None
+        if hasattr(self, 'watcher') and hasattr(self.watcher, 'stop'):
+            self.watcher.stop()
         if self.current_video_path is not None:
             self.recorder.stop_recording()
-        self.terminate()
+        if not self.wait(2000):
+            self.terminate()

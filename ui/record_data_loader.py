@@ -11,12 +11,22 @@ from ui.player_utils import find_video_for_json, get_agent_name, get_match_resul
 # バックグラウンドでサムネイルを生成するためのスレッドプール（同時実行数1でPCへの負荷を防ぐ）
 _thumb_executor = ThreadPoolExecutor(max_workers=1)
 
+def _get_ffmpeg_exe() -> str:
+    app_data_dir = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'ValoReco')
+    cand = os.path.join(app_data_dir, "bin", "ffmpeg.exe")
+    if os.path.exists(cand):
+        return cand
+    return "ffmpeg"
+
 def _generate_thumbnail(video_path, thumb_path, time_offset="00:00:06"):
     try:
+        # -ss を -i の前に配置してキーフレームへ高速シークしデコード負荷を最小化
         cmd = [
-            "ffmpeg", "-y", "-i", video_path,
-            "-ss", time_offset, "-vframes", "1",
-            "-vf", "scale=240:-1", thumb_path
+            _get_ffmpeg_exe(), "-y",
+            "-ss", time_offset,
+            "-i", video_path,
+            "-vframes", "1",
+            "-vf", "scale=240:-2", thumb_path
         ]
         # CREATE_NO_WINDOW に加え、CREATE_NEW_PROCESS_GROUP と DETACHED_PROCESS(0x08) を指定し、
         # stdinをDEVNULLにすることで、フォーカススティーリングを完全に防ぐ

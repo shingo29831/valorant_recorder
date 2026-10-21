@@ -175,7 +175,7 @@ class PlayerListPage(QWidget):
         if not hasattr(self, 'filtered_records'):
             return
             
-        batch_size = 20
+        batch_size = 12 if getattr(self.config, 'LIGHTWEIGHT_MODE', False) else 20
         start = self.displayed_count
         end = min(start + batch_size, len(self.filtered_records))
         

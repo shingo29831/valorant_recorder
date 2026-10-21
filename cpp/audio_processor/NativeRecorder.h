@@ -23,10 +23,12 @@ struct RecorderConfig {
 
     int32_t denoise_mode;
     int32_t preprocess_mode;
+    int32_t low_priority;
 };
 
 // Python (ctypes) から呼び出すAPI
 EXPORT_API bool Recorder_Start(const RecorderConfig* config);
 EXPORT_API void Recorder_Stop();
 EXPORT_API bool Recorder_IsRunning();
+EXPORT_API void Recorder_SetLowPriority(bool lowPriority);
 EXPORT_API const char* Recorder_GetLastError();

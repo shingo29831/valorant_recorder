@@ -29,8 +29,9 @@ class RecordSettingsWidget(QWidget):
         
         from recorder.ffmpeg_downloader import ensure_ffmpeg_downloaded
         from recorder.ffmpeg_recorder import get_available_encoders
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        ffmpeg_path = ensure_ffmpeg_downloaded(project_root)
+        app_data_dir = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'ValoReco')
+        os.makedirs(app_data_dir, exist_ok=True)
+        ffmpeg_path = ensure_ffmpeg_downloaded(app_data_dir)
         available_encoders, encoder_warning_keys = get_available_encoders(ffmpeg_path)
         
         self.encoder_input = QComboBox()
@@ -63,7 +64,12 @@ class RecordSettingsWidget(QWidget):
         video_layout.addRow(self.t.encoder, encoder_layout)
         video_layout.addRow(self.t.resolution, self.res_input)
 
-        self.perf_control_cb = QCheckBox("自動負荷コントロールを有効にする (ゲームのFPS低下を防ぐ)")
+        self.lightweight_mode_cb = QCheckBox(getattr(self.t, 'lightweight_mode', "軽量モードを有効にする (低負荷録画・省メモリ動作)"))
+        self.lightweight_mode_cb.setChecked(getattr(self.config, 'LIGHTWEIGHT_MODE', False))
+        self.lightweight_mode_cb.toggled.connect(self._on_lightweight_mode_toggled)
+        video_layout.addRow("", self.lightweight_mode_cb)
+
+        self.perf_control_cb = QCheckBox(getattr(self.t, 'auto_perf_control', "自動負荷コントロールを有効にする (ゲームのFPS低下を防ぐ)"))
         self.perf_control_cb.setChecked(getattr(self.config, 'AUTO_PERFORMANCE_CONTROL', False))
         self.perf_control_cb.toggled.connect(self._save_settings)
         video_layout.addRow("", self.perf_control_cb)
@@ -211,6 +217,13 @@ class RecordSettingsWidget(QWidget):
         
         self.setLayout(main_layout)
 
+    def _on_lightweight_mode_toggled(self, checked):
+        if checked and not self.perf_control_cb.isChecked():
+            self.perf_control_cb.blockSignals(True)
+            self.perf_control_cb.setChecked(True)
+            self.perf_control_cb.blockSignals(False)
+        self._save_settings()
+
     def _on_system_gain_changed(self, value):
         gain = value / 100.0
         self.system_gain_label.setText(f"{gain:.2f}x")
@@ -306,6 +319,7 @@ class RecordSettingsWidget(QWidget):
         self.config.RECORD_FPS = self.fps_input.currentText()
         self.config.RECORD_ENCODER = self.encoder_input.currentText()
         self.config.RECORD_RESOLUTION = self.res_input.currentText()
+        self.config.LIGHTWEIGHT_MODE = self.lightweight_mode_cb.isChecked()
         self.config.AUTO_PERFORMANCE_CONTROL = self.perf_control_cb.isChecked()
         
         self.config.RECORD_AUDIO_SYSTEM_GAIN = str(self.system_gain_slider.value() / 100.0)

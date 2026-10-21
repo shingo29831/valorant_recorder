@@ -274,7 +274,9 @@ class MainWindow(QMainWindow):
         self.rec_button.blockSignals(False)
         if is_recording:
             self.rec_button.setText(getattr(self.t, 'stop_recording', "⏹ Stop Recording"))
-            # 録画開始時、リソース競合を防ぐために動画再生を一時停止する
+            # 録画開始時、WASAPIデバイス競合とGPU/CPU負荷を防ぐため設定モニターと動画再生を停止する
+            if hasattr(self, 'settings_tab') and hasattr(self.settings_tab, 'record_widget'):
+                self.settings_tab.record_widget.stop_monitors()
             if hasattr(self, 'player_tab') and hasattr(self.player_tab, 'video_page'):
                 try:
                     self.player_tab.video_page.player_core.pause()
@@ -282,6 +284,8 @@ class MainWindow(QMainWindow):
                     print(f"[MainWindow] Failed to pause video on recording start: {e}")
         else:
             self.rec_button.setText(getattr(self.t, 'start_recording', "🔴 Start Recording"))
+            if hasattr(self, 'settings_tab') and self.settings_tab.isVisible():
+                self.settings_tab._on_subtab_changed(self.settings_tab.tab_widget.currentIndex())
 
     def show_recording_notification(self, is_recording):
         # ゲーム中（試合中）かどうかを取得

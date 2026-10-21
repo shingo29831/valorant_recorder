@@ -360,8 +360,9 @@ class PlayerVideoPage(QWidget):
         
         from recorder.ffmpeg_recorder import get_available_encoders
         from recorder.ffmpeg_downloader import ensure_ffmpeg_downloaded
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        ffmpeg_path = ensure_ffmpeg_downloaded(project_root)
+        app_data_dir = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'ValoReco')
+        os.makedirs(app_data_dir, exist_ok=True)
+        ffmpeg_path = ensure_ffmpeg_downloaded(app_data_dir)
         
         available, _ = get_available_encoders(ffmpeg_path)
         h264_encoders = [enc for enc in available if "h264" in enc]

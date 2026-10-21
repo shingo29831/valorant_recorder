@@ -36,20 +36,26 @@ class AudioProcessorWrapper:
     @classmethod
     def is_available(cls) -> bool:
         try:
+            import sys
             ext = ".dll" if platform.system() == "Windows" else ".so"
-            base_dir = os.path.join(os.path.dirname(__file__), "..", "cpp", "audio_processor", "build")
-            
-            if platform.system() == "Windows":
-                release_path = os.path.join(base_dir, "Release", f"audio_processor{ext}")
-                if os.path.exists(release_path):
-                    dll_path = release_path
-                else:
-                    dll_path = os.path.join(base_dir, f"audio_processor{ext}")
+            if hasattr(sys, '_MEIPASS'):
+                root_dir = sys._MEIPASS
             else:
-                dll_path = os.path.join(base_dir, f"audio_processor{ext}")
-                
-            if not os.path.exists(dll_path):
-                print(f"[AudioProcessorWrapper] DLL not found at: {dll_path}")
+                root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+            possible_paths = [
+                os.path.join(root_dir, "cpp", "audio_processor", "build", "Release", f"audio_processor{ext}"),
+                os.path.join(root_dir, "cpp", "audio_processor", "build", f"audio_processor{ext}"),
+                os.path.join(root_dir, "bin", f"audio_processor{ext}"),
+                os.path.join(root_dir, f"audio_processor{ext}"),
+            ]
+            dll_path = None
+            for p in possible_paths:
+                if os.path.exists(p):
+                    dll_path = p
+                    break
+
+            if not dll_path:
                 return False
                 
             # ロードテスト (依存DLLを解決するために winmode=0 を指定)
@@ -138,6 +144,7 @@ class AudioProcessorWrapper:
 
         # DeepFilterNet C API (df_create) は .tar.gz ファイルの直接のパスを要求する
         possible_model_tar_paths = [
+            os.path.join(base_dir, "cpp", "audio_processor", "DeepFilterNet3_onnx.tar.gz"),
             os.path.join(base_dir, "models", "DeepFilterNet3", "DeepFilterNet3_onnx.tar.gz"),
             os.path.join(base_dir, "cpp", "audio_processor", "models", "DeepFilterNet3", "DeepFilterNet3_onnx.tar.gz"),
             os.path.join(base_dir, "models", "DeepFilterNet3_onnx.tar.gz"),
@@ -155,8 +162,9 @@ class AudioProcessorWrapper:
         if not model_path_to_use:
             # ディレクトリ内から再帰的に tar.gz を探索
             search_dirs = [
+                base_dir,
+                os.path.join(base_dir, "cpp"),
                 os.path.join(base_dir, "models"),
-                os.path.join(base_dir, "cpp", "audio_processor", "models"),
             ]
             for s_dir in search_dirs:
                 if os.path.exists(s_dir):
@@ -176,6 +184,7 @@ class AudioProcessorWrapper:
 
         if not model_path_to_use:
             print("[AudioProcessorWrapper] Warning: DeepFilterNet model archive (.tar.gz) not found. AI Denoise will be disabled.")
+            self.processor_ptr = None
         else:
             # 非ASCII文字(日本語など)を含むパスによるRust側でのパニックを防ぐため、短いパス(8.3形式)に変換して渡す
             try:
@@ -185,11 +194,13 @@ class AudioProcessorWrapper:
             except Exception as e:
                 print(f"[AudioProcessorWrapper] Failed to get short path for model: {e}")
             
-        self.processor_ptr = self.lib.AudioProcessor_Create(sample_rate, channels, model_path_to_use)
-        if not self.processor_ptr:
-            raise RuntimeError("Failed to initialize AudioProcessor in C++ (returned null pointer).")
+            self.processor_ptr = self.lib.AudioProcessor_Create(sample_rate, channels, model_path_to_use)
+            if not self.processor_ptr:
+                print("[AudioProcessorWrapper] Failed to initialize AudioProcessor in C++ (returned null pointer).")
 
     def set_preprocess_type(self, type_str: str):
+        if not self.processor_ptr:
+            return
         if type_str == "SpeexDSP":
             type_int = 1
         elif type_str == "WebRTC":
@@ -199,8 +210,13 @@ class AudioProcessorWrapper:
         self.lib.AudioProcessor_SetPreProcessType(self.processor_ptr, type_int)
 
     def set_denoise_type(self, type_str: str):
-        if type_str == "DeepFilterNet":
+        if not self.processor_ptr:
+            return
+        t_lower = str(type_str).lower()
+        if "deepfilter" in t_lower:
             type_int = 1
+        elif "rnnoise" in t_lower or "speex" in t_lower:
+            type_int = 2
         else:
             type_int = 0
         self.lib.AudioProcessor_SetDenoiseType(self.processor_ptr, type_int)
@@ -210,6 +226,9 @@ class AudioProcessorWrapper:
         音声データを処理する
         input_data: shape=(frames, channels) または (frames * channels,) のfloat32配列
         """
+        if not self.processor_ptr:
+            return input_data.copy()
+
         input_flat = np.ascontiguousarray(input_data.flatten(), dtype=np.float32)
         output_flat = np.zeros_like(input_flat)
         num_frames = len(input_flat) // self.channels

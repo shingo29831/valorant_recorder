@@ -44,6 +44,8 @@ static std::atomic<bool> g_isRunning{false};
 static std::string g_lastError = "";
 static std::mutex g_errorMutex;
 static std::thread g_recordingThread;
+static std::mutex g_processMutex;
+static HANDLE g_ffmpegProcess = NULL;
 
 static std::unique_ptr<WasapiCapture> g_sysCapture;
 static std::unique_ptr<WasapiCapture> g_micCapture;
@@ -194,25 +196,24 @@ class NoiseGate {
 public:
     void SetThreshold(float thresholdPercent) {
         float normalized = std::clamp(thresholdPercent, 0.0f, 1.0f);
-        // UIパーセント値を音響学的な実効RMS閾値(0~0.1)へマッピング
+        // VolumeMeterの表示スケール(level = sqrt(peak))と一致するピーク振幅閾値へ変換
         if (normalized <= 0.001f) {
             m_threshold = 0.0f;
         } else {
-            m_threshold = (normalized * normalized) * 0.1f;
+            m_threshold = normalized * normalized;
         }
     }
 
     void Process(float* buffer, size_t frames, size_t channels) {
         if (m_threshold <= 0.00001f) return;
 
-        double sumSquares = 0.0;
+        float peak = 0.0f;
         size_t totalSamples = frames * channels;
         for (size_t i = 0; i < totalSamples; ++i) {
-            sumSquares += buffer[i] * buffer[i];
+            peak = (std::max)(peak, std::fabs(buffer[i]));
         }
-        float rms = static_cast<float>(std::sqrt(sumSquares / totalSamples));
 
-        bool open = (rms >= m_threshold);
+        bool open = (peak >= m_threshold);
         if (open) {
             m_holdFramesRemaining = kHoldFrames;
         } else if (m_holdFramesRemaining > 0) {
@@ -301,9 +302,7 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
     g_sysCapture->SetLogger(NativeLog);
     
     if (!g_sysCapture->Initialize()) {
-        SetLastErrorMsg("System audio init failed: " + g_sysCapture->GetLastError());
-        g_isRunning = false;
-        return;
+        NativeLog("[WARNING] System audio init failed: " + g_sysCapture->GetLastError() + ". Continuing with silent system audio track.");
     }
 
     if (micDevice == "__NONE__") {
@@ -338,17 +337,32 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
         sysQueue.Push(stereoOut);
     });
 
-    g_micCapture->SetCallback([&](const float* data, uint32_t frames, uint32_t channels, uint32_t sampleRate) {
-        std::lock_guard<std::mutex> lock(micResamplerMtx);
-        if (!micResampler) micResampler = std::make_unique<Resampler>(channels, sampleRate, 48000);
-        std::vector<float> resampled;
-        micResampler->Process(data, frames, resampled);
-        
-        uint32_t outFrames = static_cast<uint32_t>(resampled.size() / channels);
-        std::vector<float> stereoOut;
-        DownmixToStereo(resampled, outFrames, channels, micGain, stereoOut);
-        micQueue.Push(stereoOut);
-    });
+    if (g_micCapture) {
+        g_micCapture->SetCallback([&](const float* data, uint32_t frames, uint32_t channels, uint32_t sampleRate) {
+            std::lock_guard<std::mutex> lock(micResamplerMtx);
+            if (!micResampler) micResampler = std::make_unique<Resampler>(channels, sampleRate, 48000);
+            std::vector<float> resampled;
+            micResampler->Process(data, frames, resampled);
+            
+            uint32_t outFrames = static_cast<uint32_t>(resampled.size() / channels);
+            std::vector<float> stereoOut;
+            DownmixToStereo(resampled, outFrames, channels, micGain, stereoOut);
+            // 2ch USBオーディオインターフェースで片chのみに入力がある場合の片耳化を防止
+            if (channels == 2 && outFrames > 0) {
+                float peakL = 0.0f, peakR = 0.0f;
+                for (uint32_t i = 0; i < outFrames; ++i) {
+                    peakL = (std::max)(peakL, std::fabs(stereoOut[i * 2 + 0]));
+                    peakR = (std::max)(peakR, std::fabs(stereoOut[i * 2 + 1]));
+                }
+                if (peakL > 1e-4f && peakR < peakL * 0.05f) {
+                    for (uint32_t i = 0; i < outFrames; ++i) stereoOut[i * 2 + 1] = stereoOut[i * 2 + 0];
+                } else if (peakR > 1e-4f && peakL < peakR * 0.05f) {
+                    for (uint32_t i = 0; i < outFrames; ++i) stereoOut[i * 2 + 0] = stereoOut[i * 2 + 1];
+                }
+            }
+            micQueue.Push(stereoOut);
+        });
+    }
 
     HANDLE hReadPipe, hWritePipe;
     SECURITY_ATTRIBUTES saAttr;
@@ -404,7 +418,8 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
 
     NativeLog("Executing FFmpeg command: " + ffmpegCmd);
 
-    if (!CreateProcessA(NULL, cmdBuf.data(), NULL, NULL, TRUE, CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | ABOVE_NORMAL_PRIORITY_CLASS, NULL, NULL, &si, &pi)) {
+    DWORD priorityClass = (configCopy.low_priority != 0) ? BELOW_NORMAL_PRIORITY_CLASS : ABOVE_NORMAL_PRIORITY_CLASS;
+    if (!CreateProcessA(NULL, cmdBuf.data(), NULL, NULL, TRUE, CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | priorityClass, NULL, NULL, &si, &pi)) {
         DWORD err = GetLastError();
         SetLastErrorMsg("Failed to start FFmpeg process (CreateProcessA error: " + std::to_string(err) + ")");
         CloseHandle(hReadPipe);
@@ -416,6 +431,11 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
     }
     CloseHandle(hReadPipe);
     CloseHandle(hErrWritePipe); // 子プロセスへの継承後に書き込み端を閉じる
+
+    {
+        std::lock_guard<std::mutex> lock(g_processMutex);
+        g_ffmpegProcess = pi.hProcess;
+    }
 
     // FFmpegのログを非同期受信し、エンコード開始（ddagrab初期化完了）を検知
     std::atomic<bool> ffmpegCaptureStarted{false};
@@ -429,7 +449,10 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
             buf[bytesRead] = '\0';
             if (logFile.is_open()) {
                 logFile.write(buf, bytesRead);
-                logFile.flush();
+                // 起動完了後は毎パケットのディスクflushを抑止してI/O負荷を削減
+                if (!ffmpegCaptureStarted) {
+                    logFile.flush();
+                }
             }
             if (!ffmpegCaptureStarted) {
                 accumulated.append(buf, bytesRead);
@@ -444,13 +467,17 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
         CloseHandle(hErrReadPipe);
     });
 
-    DWORD waitResult = WaitForSingleObject(pi.hProcess, 150);
+    DWORD waitResult = WaitForSingleObject(pi.hProcess, 200);
     if (waitResult == WAIT_OBJECT_0) {
         DWORD exitCode = 0;
         GetExitCodeProcess(pi.hProcess, &exitCode);
         SetLastErrorMsg("FFmpeg process crashed immediately with exit code " + std::to_string(exitCode));
         CloseHandle(hWritePipe);
         if (logReaderThread.joinable()) logReaderThread.join();
+        {
+            std::lock_guard<std::mutex> lock(g_processMutex);
+            g_ffmpegProcess = NULL;
+        }
         CloseHandle(pi.hProcess);
         CloseHandle(pi.hThread);
         g_isRunning = false;
@@ -475,7 +502,9 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
     NoiseGate micNoiseGate;
     micNoiseGate.SetThreshold(configCopy.noise_gate_threshold);
 
-    g_sysCapture->Start();
+    if (g_sysCapture && g_sysCapture->IsInitialized()) {
+        g_sysCapture->Start();
+    }
     if (g_micCapture && g_micCapture->IsInitialized()) {
         g_micCapture->Start();
     }
@@ -527,22 +556,27 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
 
         const size_t maxAllowedBuffer = framesPerChunk * 30 * 2; // 最大約300ms
         while (g_isRunning && (totalWrittenFrames + framesPerChunk) <= targetFrames) {
-            // 完全な1チャンク（480フレーム）が揃うまで待機し、部分的なゼロ埋めによる低音化を防止
+            // システム音声が50ms以上遅延している場合は無音補填し、FFmpegパイプ詰まりとddagrabクラッシュを防止
             if (!sysQueue.PopChunk(reqSysSamples, sysBuf, maxAllowedBuffer)) {
-                break;
+                if (targetFrames - totalWrittenFrames > framesPerChunk * 5) {
+                    std::fill(sysBuf.begin(), sysBuf.end(), 0.0f);
+                } else {
+                    break;
+                }
             }
 
             if (!micQueue.PopChunk(reqMicSamples, micBuf, maxAllowedBuffer)) {
                 std::fill(micBuf.begin(), micBuf.end(), 0.0f);
             }
 
-            micNoiseGate.Process(micBuf.data(), framesPerChunk, 2);
-
             if (audioProc && (configCopy.denoise_mode > 0 || configCopy.preprocess_mode > 0)) {
                 AudioProcessor_Process(audioProc, micBuf.data(), micProcessed.data(), static_cast<int>(framesPerChunk));
             } else {
                 std::copy(micBuf.begin(), micBuf.begin() + reqMicSamples, micProcessed.begin());
             }
+
+            // ノイズキャンセリング後のクリーンな音声に対してノイズゲートを適用
+            micNoiseGate.Process(micProcessed.data(), framesPerChunk, 2);
 
             for (size_t i = 0; i < framesPerChunk; ++i) {
                 float sysL = sysBuf[i * 2 + 0];
@@ -598,6 +632,10 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
         WaitForSingleObject(pi.hProcess, 2000);
     }
 
+    {
+        std::lock_guard<std::mutex> lock(g_processMutex);
+        g_ffmpegProcess = NULL;
+    }
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
     if (logReaderThread.joinable()) {
@@ -680,6 +718,15 @@ EXPORT_API void Recorder_Stop() {
 
 EXPORT_API bool Recorder_IsRunning() {
     return g_isRunning;
+}
+
+EXPORT_API void Recorder_SetLowPriority(bool lowPriority) {
+    std::lock_guard<std::mutex> lock(g_processMutex);
+    if (g_ffmpegProcess != NULL) {
+        DWORD prio = lowPriority ? BELOW_NORMAL_PRIORITY_CLASS : NORMAL_PRIORITY_CLASS;
+        SetPriorityClass(g_ffmpegProcess, prio);
+        NativeLog(std::string("Updated FFmpeg process priority to ") + (lowPriority ? "BELOW_NORMAL" : "NORMAL"));
+    }
 }
 
 EXPORT_API const char* Recorder_GetLastError() {

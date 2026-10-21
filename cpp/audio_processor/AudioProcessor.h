@@ -34,6 +34,17 @@ private:
     
     // Internal buffers (int16_t, for SpeexDSP)
     std::vector<int16_t> int16_buffer_;
+
+    // 2nd-order Butterworth High-Pass Filter (80Hz) state
+    float hpf_x1_ = 0.0f;
+    float hpf_x2_ = 0.0f;
+    float hpf_y1_ = 0.0f;
+    float hpf_y2_ = 0.0f;
+    float hpf_b0_ = 1.0f;
+    float hpf_b1_ = 0.0f;
+    float hpf_b2_ = 0.0f;
+    float hpf_a1_ = 0.0f;
+    float hpf_a2_ = 0.0f;
 };
 
 extern "C" {

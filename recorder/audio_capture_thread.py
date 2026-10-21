@@ -84,14 +84,16 @@ class AudioCaptureThread(threading.Thread):
                     gate_hold_frames = 0
                     MAX_HOLD_FRAMES = 10  # 50ms * 10 = 500ms のホールドタイム（声の途切れ防止）
                     
-                    if denoise_mode == 'AI (DeepFilterNet)' or preprocess_mode != 'None':
+                    is_lightweight = bool(getattr(self.config, 'LIGHTWEIGHT_MODE', False))
+                    if denoise_mode in ('AI (DeepFilterNet)', 'AI (RNNoise)') or preprocess_mode != 'None':
                         try:
                             from recorder.audio_processor_wrapper import AudioProcessorWrapper
-                            # DeepFilterNetはモノラル専用のため、マイクのチャンネル数に関わらず常にchannels=1で初期化する
                             processor = AudioProcessorWrapper(sample_rate=samplerate, channels=1)
                             processor.set_preprocess_type(preprocess_mode)
-                            if denoise_mode == 'AI (DeepFilterNet)':
+                            if denoise_mode == 'AI (DeepFilterNet)' and not is_lightweight:
                                 processor.set_denoise_type("DeepFilterNet")
+                            elif denoise_mode in ('AI (DeepFilterNet)', 'AI (RNNoise)'):
+                                processor.set_denoise_type("RNNoise")
                             else:
                                 processor.set_denoise_type("None")
                         except Exception as e:
