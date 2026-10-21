@@ -110,28 +110,6 @@ class MicMonitorThread(QThread):
     def process_audio(self, data):
         data = data * self.gain
 
-        # RNNoiseの場合はPython側で簡易的なノイズリダクションをシミュレート（モニター用）
-        if self.denoise_mode == "AI (RNNoise)":
-            rms = np.sqrt(np.mean(data**2) + 1e-8)
-            if rms < self.noise_floor:
-                self.noise_floor = 0.8 * self.noise_floor + 0.2 * rms
-            else:
-                self.noise_floor = 0.995 * self.noise_floor + 0.005 * rms
-            
-            snr = rms / self.noise_floor
-            if snr < 3.0:
-                target_reduction = max(0.05, (snr - 1.0) / 2.0)
-            else:
-                target_reduction = 1.0
-                
-            # ゲインを滑らかに適用 (プツプツ音防止)
-            if self.current_rnnoise_gain != target_reduction:
-                gains = np.linspace(self.current_rnnoise_gain, target_reduction, len(data), dtype=np.float32).reshape(-1, 1)
-                data = data * gains
-                self.current_rnnoise_gain = target_reduction
-            else:
-                data = data * target_reduction
-
         # メーター表示用のレベル計算（ゲート適用前）
         peak = np.max(np.abs(data))
         level = min(1.0, peak ** 0.5)

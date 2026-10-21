@@ -310,15 +310,11 @@ class FFmpegRecorder:
             if is_lightweight:
                 encoder_opts.extend(["-threads", "2"])
 
-        denoise_str = str(getattr(self.config, 'RECORD_AUDIO_MIC_DENOISE', 'None')).lower()
-        rnnoise_filter = ""
-        if "rnnoise" in denoise_str or (is_lightweight and "deepfilter" in denoise_str):
-            rnnoise_filter = self._resolve_rnnoise_filter()
-
+        # C++側AudioProcessorでノイズ抑制とクランプが完結しているため、FFmpeg側での重複フィルタによる音質劣化・こもりを防止
         audio_filter = (
             "[0:a]asplit=2[sys_in][mic_in];"
-            "[sys_in]pan=stereo|FL=c0|FR=c1,alimiter=limit=0.99,aresample=48000[a_sys];"
-            f"[mic_in]pan=stereo|FL=c2|FR=c3,{rnnoise_filter}alimiter=limit=0.99,aresample=48000[a_mic]"
+            "[sys_in]pan=stereo|FL=c0|FR=c1[a_sys];"
+            "[mic_in]pan=stereo|FL=c2|FR=c3[a_mic]"
         )
         filter_complex = video_filter + audio_filter
 

@@ -57,16 +57,27 @@ def patch_soundcard_lib():
             # -----------------------------
             
             channels_count = len(set(self.channelmap))
-            channelmask = 0
-            for ch in self.channelmap:
-                channelmask |= 1 << ch
+            if channels_count == 1:
+                channelmask = 0x4
+            elif channels_count == 2:
+                channelmask = 0x3
+            else:
+                channelmask = (1 << channels_count) - 1
                 
             ppMixFormat[0][0].Format.nChannels = channels_count
             ppMixFormat[0][0].Format.nSamplesPerSec = int(samplerate)
             ppMixFormat[0][0].Format.nAvgBytesPerSec = int(samplerate) * channels_count * 4
             ppMixFormat[0][0].Format.nBlockAlign = channels_count * 4
             ppMixFormat[0][0].Format.wBitsPerSample = 32
-            ppMixFormat[0][0].Samples = dict(wValidBitsPerSample=32)
+            if ppMixFormat[0][0].Format.wFormatTag == 0xFFFE:
+                ppMixFormat[0][0].Samples = dict(wValidBitsPerSample=32)
+                ppMixFormat[0][0].dwChannelMask = channelmask
+                ppMixFormat[0][0].SubFormat.Data1 = 0x00000003
+                ppMixFormat[0][0].SubFormat.Data2 = 0x0000
+                ppMixFormat[0][0].SubFormat.Data3 = 0x0010
+                ppMixFormat[0][0].SubFormat.Data4 = [0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71]
+            else:
+                ppMixFormat[0][0].Format.wFormatTag = 0x0003
             
             if exclusive_mode:
                 sharemode = mf._ole32.AUDCLNT_SHAREMODE_EXCLUSIVE

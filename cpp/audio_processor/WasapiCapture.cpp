@@ -186,6 +186,7 @@ void WasapiCapture::Stop() {
 
 void WasapiCapture::CaptureThreadFunc() {
     CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    timeBeginPeriod(1);
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
 
     UINT32 packetLength = 0;
@@ -229,27 +230,29 @@ void WasapiCapture::CaptureThreadFunc() {
     }
 
     std::vector<float> floatBuffer;
-    auto lastPacketTime = std::chrono::steady_clock::now();
+    auto lastRealPacketTime = std::chrono::steady_clock::now();
+    auto lastSilenceEmitTime = lastRealPacketTime;
 
     while (m_isRunning) {
-        Sleep(3);
+        Sleep(1);
 
         HRESULT hr = m_captureClient->GetNextPacketSize(&packetLength);
         if (FAILED(hr)) {
             packetLength = 0;
         }
 
-        // ループバック無音時やデバイス遷移時にパケットが途絶えるのを防ぐ正確なキープアライブ
+        // 通常パケット周期(10〜25ms)での誤発火による波形伸長・低音化を防ぐため、完全無音(60ms以上)時のみ10ms単位で補填
         if (packetLength == 0 && m_type == CaptureType::SystemLoopback) {
             auto now = std::chrono::steady_clock::now();
-            double silentSec = std::chrono::duration<double>(now - lastPacketTime).count();
-            if (silentSec >= 0.010) {
-                uint32_t silentFrames = static_cast<uint32_t>(silentSec * m_sampleRate);
+            double idleSec = std::chrono::duration<double>(now - lastRealPacketTime).count();
+            double sinceLastEmitSec = std::chrono::duration<double>(now - lastSilenceEmitTime).count();
+            if (idleSec >= 0.060 && sinceLastEmitSec >= 0.010) {
+                uint32_t silentFrames = m_sampleRate / 100;
                 if (silentFrames > 0 && m_callback) {
                     floatBuffer.assign(silentFrames * m_channels, 0.0f);
                     m_callback(floatBuffer.data(), silentFrames, m_channels, m_sampleRate);
                 }
-                lastPacketTime = now;
+                lastSilenceEmitTime = now;
             }
         }
 
@@ -290,8 +293,10 @@ void WasapiCapture::CaptureThreadFunc() {
 
             hr = m_captureClient->ReleaseBuffer(numFramesAvailable);
             hr = m_captureClient->GetNextPacketSize(&packetLength);
-            lastPacketTime = std::chrono::steady_clock::now();
+            lastRealPacketTime = std::chrono::steady_clock::now();
+            lastSilenceEmitTime = lastRealPacketTime;
         }
     }
+    timeEndPeriod(1);
     CoUninitialize();
 }

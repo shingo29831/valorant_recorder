@@ -71,6 +71,10 @@ class VideoPlayerCore(QObject):
             self.pending_play_after_seek = False
             self._failsafe_play_timer.stop()
             self.play()
+        elif (self.media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState and
+              self.mic_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState):
+            if abs(self.mic_player.position() - pos) > 60:
+                self.mic_player.setPosition(pos)
 
     def _on_duration_changed(self, duration):
         self.durationChanged.emit(duration)
@@ -129,8 +133,10 @@ class VideoPlayerCore(QObject):
         self.audio_output.setVolume(self.current_sys_volume)
         mic_tracks = self.mic_player.audioTracks()
         active_mic_track = self.mic_player.activeAudioTrack()
-        # Track 1が確立され、かつ音量指定がある場合のみ復帰（二重再生とクロック競合を防止）
+        # Track 1が確立され、かつ音量指定がある場合のみ同期して復帰（二重再生とクロック競合を防止）
         if len(mic_tracks) >= 2 and active_mic_track == 1 and self.current_mic_volume > 0:
+            if abs(self.mic_player.position() - self.media_player.position()) > 30:
+                self.mic_player.setPosition(self.media_player.position())
             self.mic_audio_output.setVolume(self.current_mic_volume)
         else:
             self.mic_audio_output.setVolume(0.0)

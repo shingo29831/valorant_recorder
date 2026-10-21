@@ -69,7 +69,10 @@ public:
         : m_channels(channels), m_inRate(inRate), m_outRate(outRate) {
         if (m_inRate != m_outRate) {
             int err = 0;
-            m_state = speex_resampler_init(m_channels, m_inRate, m_outRate, 3, &err);
+            m_state = speex_resampler_init(m_channels, m_inRate, m_outRate, 5, &err);
+            if (m_state) {
+                speex_resampler_skip_zeros(m_state);
+            }
         }
     }
 
@@ -111,10 +114,14 @@ class AudioSyncQueue {
     std::condition_variable m_cv;
     size_t m_channels;
     size_t m_maxBufferSamples;
+    size_t m_minStartSamples;
+    bool m_isBuffering = true;
 
 public:
-    AudioSyncQueue(size_t channels = 2, size_t maxDelayMs = 80)
-        : m_channels(channels), m_maxBufferSamples((48000 * channels * maxDelayMs) / 1000) {}
+    AudioSyncQueue(size_t channels = 2, size_t maxDelayMs = 2000)
+        : m_channels(channels),
+          m_maxBufferSamples((48000 * channels * maxDelayMs) / 1000),
+          m_minStartSamples(480 * 3 * channels) {}
 
     size_t AvailableSamples() {
         std::lock_guard<std::mutex> lock(m_mtx);
@@ -141,20 +148,32 @@ public:
             drop = (drop / m_channels) * m_channels;
             m_buffer.erase(m_buffer.begin(), m_buffer.begin() + drop);
         }
+        m_isBuffering = (m_buffer.size() < m_minStartSamples);
     }
 
     bool PopChunk(size_t samples, std::vector<float>& out, size_t maxAllowedBuffer) {
         std::lock_guard<std::mutex> lock(m_mtx);
 
-        // バッファ肥大化時は古いサンプルをドレインして実時間に追従
+        // クロックドリフト蓄積時は中間クッション量(50ms)まで戻し頻繁な破棄を防止
         if (m_buffer.size() > maxAllowedBuffer) {
-            size_t excess = m_buffer.size() - maxAllowedBuffer;
-            excess = (excess / m_channels) * m_channels;
-            m_buffer.erase(m_buffer.begin(), m_buffer.begin() + excess);
+            size_t targetKeep = (std::max)(samples * 5, m_minStartSamples);
+            if (m_buffer.size() > targetKeep) {
+                size_t excess = m_buffer.size() - targetKeep;
+                excess = (excess / m_channels) * m_channels;
+                m_buffer.erase(m_buffer.begin(), m_buffer.begin() + excess);
+            }
         }
 
-        // 不完全なサンプル数での部分取得（ゼロ埋めによる波形引き伸ばし・低音化）を防止
+        // ヒステリシス付きプリバッファリングでパケット境界競合による周期的ゼロ埋め(低音化)を防止
+        if (m_isBuffering) {
+            if (m_buffer.size() < m_minStartSamples) {
+                return false;
+            }
+            m_isBuffering = false;
+        }
+
         if (m_buffer.size() < samples) {
+            m_isBuffering = true;
             return false;
         }
 
@@ -250,17 +269,17 @@ static void DownmixToStereo(const std::vector<float>& in, uint32_t frames, uint3
     } else if (channels >= 6) {
         for (uint32_t i = 0; i < frames; ++i) {
             const float* ch = &in[i * channels];
-            float fl  = ch[0];
-            float fr  = ch[1];
-            float fc  = ch[2];
-            float lfe = ch[3];
-            float sl  = ch[4];
-            float sr  = ch[5];
-            float rl  = (channels >= 8) ? ch[6] : 0.0f;
-            float rr  = (channels >= 8) ? ch[7] : 0.0f;
+            float fl = ch[0];
+            float fr = ch[1];
+            float fc = ch[2];
+            float sl = ch[4];
+            float sr = ch[5];
+            float rl = (channels >= 8) ? ch[6] : 0.0f;
+            float rr = (channels >= 8) ? ch[7] : 0.0f;
 
-            float left  = (fl + 0.7071f * fc + 0.5f * lfe + 0.7071f * sl + 0.7071f * rl) * 0.6f * gain;
-            float right = (fr + 0.7071f * fc + 0.5f * lfe + 0.7071f * sr + 0.7071f * rr) * 0.6f * gain;
+            // ITU-R BS.775準拠: LFEを除外して低域過多・位相干渉を防止
+            float left  = (fl + 0.7071f * fc + 0.7071f * sl + 0.7071f * rl) * 0.7071f * gain;
+            float right = (fr + 0.7071f * fc + 0.7071f * sr + 0.7071f * rr) * 0.7071f * gain;
 
             stereoOut[i * 2 + 0] = std::clamp(left, -1.0f, 1.0f);
             stereoOut[i * 2 + 1] = std::clamp(right, -1.0f, 1.0f);
@@ -327,39 +346,40 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
 
     g_sysCapture->SetCallback([&](const float* data, uint32_t frames, uint32_t channels, uint32_t sampleRate) {
         std::lock_guard<std::mutex> lock(sysResamplerMtx);
-        if (!sysResampler) sysResampler = std::make_unique<Resampler>(channels, sampleRate, 48000);
-        std::vector<float> resampled;
-        sysResampler->Process(data, frames, resampled);
-        
-        uint32_t outFrames = static_cast<uint32_t>(resampled.size() / channels);
+        std::vector<float> rawIn(data, data + frames * channels);
+        std::vector<float> stereoIn;
+        DownmixToStereo(rawIn, frames, channels, sysGain, stereoIn);
+
+        if (!sysResampler) sysResampler = std::make_unique<Resampler>(2, sampleRate, 48000);
         std::vector<float> stereoOut;
-        DownmixToStereo(resampled, outFrames, channels, sysGain, stereoOut);
+        sysResampler->Process(stereoIn.data(), frames, stereoOut);
         sysQueue.Push(stereoOut);
     });
 
     if (g_micCapture) {
         g_micCapture->SetCallback([&](const float* data, uint32_t frames, uint32_t channels, uint32_t sampleRate) {
             std::lock_guard<std::mutex> lock(micResamplerMtx);
-            if (!micResampler) micResampler = std::make_unique<Resampler>(channels, sampleRate, 48000);
-            std::vector<float> resampled;
-            micResampler->Process(data, frames, resampled);
-            
-            uint32_t outFrames = static_cast<uint32_t>(resampled.size() / channels);
-            std::vector<float> stereoOut;
-            DownmixToStereo(resampled, outFrames, channels, micGain, stereoOut);
+            std::vector<float> rawIn(data, data + frames * channels);
+            std::vector<float> stereoIn;
+            DownmixToStereo(rawIn, frames, channels, micGain, stereoIn);
+
             // 2ch USBオーディオインターフェースで片chのみに入力がある場合の片耳化を防止
-            if (channels == 2 && outFrames > 0) {
+            if (channels == 2 && frames > 0) {
                 float peakL = 0.0f, peakR = 0.0f;
-                for (uint32_t i = 0; i < outFrames; ++i) {
-                    peakL = (std::max)(peakL, std::fabs(stereoOut[i * 2 + 0]));
-                    peakR = (std::max)(peakR, std::fabs(stereoOut[i * 2 + 1]));
+                for (uint32_t i = 0; i < frames; ++i) {
+                    peakL = (std::max)(peakL, std::fabs(stereoIn[i * 2 + 0]));
+                    peakR = (std::max)(peakR, std::fabs(stereoIn[i * 2 + 1]));
                 }
                 if (peakL > 1e-4f && peakR < peakL * 0.05f) {
-                    for (uint32_t i = 0; i < outFrames; ++i) stereoOut[i * 2 + 1] = stereoOut[i * 2 + 0];
+                    for (uint32_t i = 0; i < frames; ++i) stereoIn[i * 2 + 1] = stereoIn[i * 2 + 0];
                 } else if (peakR > 1e-4f && peakL < peakR * 0.05f) {
-                    for (uint32_t i = 0; i < outFrames; ++i) stereoOut[i * 2 + 0] = stereoOut[i * 2 + 1];
+                    for (uint32_t i = 0; i < frames; ++i) stereoIn[i * 2 + 0] = stereoIn[i * 2 + 1];
                 }
             }
+
+            if (!micResampler) micResampler = std::make_unique<Resampler>(2, sampleRate, 48000);
+            std::vector<float> stereoOut;
+            micResampler->Process(stereoIn.data(), frames, stereoOut);
             micQueue.Push(stereoOut);
         });
     }
@@ -525,18 +545,21 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
     timeBeginPeriod(1);
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
 
-    // FFmpegがddagrabの初期化を終えてエンコードを開始する瞬間を同期待機（最大800ms）
+    // キャプチャ開始直後の空バッファによる初回アンダーランを防ぐため、最低50msのプリバッファを確実に蓄積
+    const size_t initialCushionSamples = framesPerChunk * 5 * 2;
     auto syncWaitStart = std::chrono::steady_clock::now();
-    while (g_isRunning && !ffmpegCaptureStarted) {
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - syncWaitStart).count() >= 800) {
-            NativeLog("Notice: Sync wait timed out, starting audio stream with fallback.");
+    while (g_isRunning) {
+        auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - syncWaitStart
+        ).count();
+        bool hasCushion = (sysQueue.AvailableSamples() >= initialCushionSamples) &&
+                          (!g_micCapture || !g_micCapture->IsInitialized() || micQueue.AvailableSamples() >= initialCushionSamples);
+        if ((ffmpegCaptureStarted && hasCushion) || elapsedMs >= 500) {
             break;
         }
         Sleep(5);
     }
 
-    // ジッターによるアンダーランを防ぐため、約60ms分のバッファクッションを蓄積・維持
-    const size_t initialCushionSamples = framesPerChunk * 6 * 2;
     sysQueue.DrainKeepLatest(initialCushionSamples);
     micQueue.DrainKeepLatest(initialCushionSamples);
 
@@ -554,15 +577,10 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
         size_t reqSysSamples = framesPerChunk * 2;
         size_t reqMicSamples = framesPerChunk * 2;
 
-        const size_t maxAllowedBuffer = framesPerChunk * 30 * 2; // 最大約300ms
+        const size_t maxAllowedBuffer = framesPerChunk * 20 * 2; // 最大約200ms
         while (g_isRunning && (totalWrittenFrames + framesPerChunk) <= targetFrames) {
-            // システム音声が50ms以上遅延している場合は無音補填し、FFmpegパイプ詰まりとddagrabクラッシュを防止
             if (!sysQueue.PopChunk(reqSysSamples, sysBuf, maxAllowedBuffer)) {
-                if (targetFrames - totalWrittenFrames > framesPerChunk * 5) {
-                    std::fill(sysBuf.begin(), sysBuf.end(), 0.0f);
-                } else {
-                    break;
-                }
+                std::fill(sysBuf.begin(), sysBuf.end(), 0.0f);
             }
 
             if (!micQueue.PopChunk(reqMicSamples, micBuf, maxAllowedBuffer)) {
