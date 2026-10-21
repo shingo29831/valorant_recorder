@@ -22,3 +22,14 @@ Valorantのプレイをバックグラウンドで自動録画し、試合終了
 2. **依存パッケージのインストール**
    ```bash
    pip install -r requirements.txt
+   ```
+
+3. **C++音声処理モジュール (DLL) のビルド**
+   CMake および Visual Studio (C++ デスクトップ開発ワークロード / MSVC) を使用してネイティブライブラリをビルドします。
+   ```bash
+   cd cpp/audio_processor
+   cmake -B build -S .
+   cmake --build build --config Release
+   cd ../..
+   ```
+   ※ ビルド完了後、`cpp/audio_processor/build/Release/` に `native_recorder.dll` および `audio_processor.dll` が生成されます。
