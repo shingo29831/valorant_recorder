@@ -56,8 +56,11 @@ class RecordSettingsWidget(QWidget):
         encoder_layout.setSpacing(2)
         
         self.res_input = QComboBox()
-        self.res_input.addItems(["1920x1080", "2560x1440", "1280x720"])
-        self.res_input.setCurrentText(self.config.RECORD_RESOLUTION)
+        self.res_input.addItems(["2560x1440", "1920x1080", "1600x900", "1280x720"])
+        if self.config.RECORD_RESOLUTION in ["2560x1440", "1920x1080", "1600x900", "1280x720"]:
+            self.res_input.setCurrentText(self.config.RECORD_RESOLUTION)
+        else:
+            self.res_input.setCurrentText("1920x1080")
         self.res_input.currentTextChanged.connect(self._save_settings)
         
         video_layout.addRow(self.t.recording_fps, self.fps_input)
@@ -67,7 +70,18 @@ class RecordSettingsWidget(QWidget):
         self.lightweight_mode_cb = QCheckBox(getattr(self.t, 'lightweight_mode', "軽量モードを有効にする (低負荷録画・省メモリ動作)"))
         self.lightweight_mode_cb.setChecked(getattr(self.config, 'LIGHTWEIGHT_MODE', False))
         self.lightweight_mode_cb.toggled.connect(self._on_lightweight_mode_toggled)
-        video_layout.addRow("", self.lightweight_mode_cb)
+        self.lightweight_hint_label = QLabel(
+            "※低スペックPC向けにエンコード負荷・音声処理を軽量化します（各設定は個別に変更可能です）"
+            if getattr(self.config, 'LANGUAGE', 'ja') == 'ja'
+            else "* Optimizes encoder & audio load for low-spec PCs (individual settings remain customizable)."
+        )
+        self.lightweight_hint_label.setStyleSheet("color: #AAAAAA; font-size: 11px;")
+        self.lightweight_hint_label.setVisible(self.lightweight_mode_cb.isChecked())
+        lw_layout = QVBoxLayout()
+        lw_layout.setSpacing(2)
+        lw_layout.addWidget(self.lightweight_mode_cb)
+        lw_layout.addWidget(self.lightweight_hint_label)
+        video_layout.addRow("", lw_layout)
 
         self.perf_control_cb = QCheckBox(getattr(self.t, 'auto_perf_control', "自動負荷コントロールを有効にする (ゲームのFPS低下を防ぐ)"))
         self.perf_control_cb.setChecked(getattr(self.config, 'AUTO_PERFORMANCE_CONTROL', False))
@@ -156,9 +170,10 @@ class RecordSettingsWidget(QWidget):
         none_opt = getattr(self.t, 'none_option', "None")
         self.mic_preprocess_combo.addItem(f"{none_opt} (無効化)", "None")
         self.mic_preprocess_combo.addItem("SpeexDSP (HPF有効)", "SpeexDSP")
-        self.mic_preprocess_combo.addItem("WebRTC (Coming Soon)", "WebRTC")
         
         pre_val = getattr(self.config, 'RECORD_AUDIO_MIC_PREPROCESS', 'SpeexDSP')
+        if pre_val == "WebRTC":
+            pre_val = "SpeexDSP"
         idx = self.mic_preprocess_combo.findData(pre_val)
         if idx >= 0:
             self.mic_preprocess_combo.setCurrentIndex(idx)
@@ -218,10 +233,34 @@ class RecordSettingsWidget(QWidget):
         self.setLayout(main_layout)
 
     def _on_lightweight_mode_toggled(self, checked):
-        if checked and not self.perf_control_cb.isChecked():
-            self.perf_control_cb.blockSignals(True)
-            self.perf_control_cb.setChecked(True)
-            self.perf_control_cb.blockSignals(False)
+        if hasattr(self, 'lightweight_hint_label'):
+            self.lightweight_hint_label.setVisible(checked)
+        if checked:
+            if not self.perf_control_cb.isChecked():
+                self.perf_control_cb.blockSignals(True)
+                self.perf_control_cb.setChecked(True)
+                self.perf_control_cb.blockSignals(False)
+            # 高フレームレート(120/144)が選択されている場合は60FPSへ最適化
+            if self.fps_input.currentText() in ("120", "144"):
+                self.fps_input.blockSignals(True)
+                self.fps_input.setCurrentText("60")
+                self.fps_input.blockSignals(False)
+            # 1440pが選択されている場合は1080pへ最適化
+            if self.res_input.currentText() == "2560x1440":
+                self.res_input.blockSignals(True)
+                self.res_input.setCurrentText("1920x1080")
+                self.res_input.blockSignals(False)
+            # 高負荷なDeepFilterNet選択時は軽量なAI (RNNoise)へ自動切替
+            if self.mic_denoise_combo.currentData() == "AI (DeepFilterNet)":
+                rn_idx = self.mic_denoise_combo.findData("AI (RNNoise)")
+                if rn_idx >= 0:
+                    self.mic_denoise_combo.blockSignals(True)
+                    self.mic_denoise_combo.setCurrentIndex(rn_idx)
+                    self.mic_denoise_combo.blockSignals(False)
+                    if self.monitor_thread and self.mic_monitor_cb.isChecked():
+                        self.monitor_thread.set_denoise("AI (RNNoise)")
+            if self.mic_monitor_cb.isChecked():
+                self.mic_monitor_cb.setChecked(False)
         self._save_settings()
 
     def _on_system_gain_changed(self, value):
@@ -247,7 +286,9 @@ class RecordSettingsWidget(QWidget):
 
     def _on_monitor_changed(self, state):
         if self.monitor_thread:
-            self.monitor_thread.set_monitor_audio(self.mic_monitor_cb.isChecked())
+            is_listening = self.mic_monitor_cb.isChecked()
+            self.monitor_thread.set_denoise(self.mic_denoise_combo.currentData() if is_listening else "None")
+            self.monitor_thread.set_monitor_audio(is_listening)
 
     def _on_preprocess_changed(self, index):
         mode = self.mic_preprocess_combo.currentData()
@@ -277,7 +318,7 @@ class RecordSettingsWidget(QWidget):
                 mode = "AI (RNNoise)"
         
         if self.monitor_thread:
-            self.monitor_thread.set_denoise(mode)
+            self.monitor_thread.set_denoise(mode if self.mic_monitor_cb.isChecked() else "None")
         self._save_settings()
 
     def _on_mic_changed(self):
@@ -287,14 +328,15 @@ class RecordSettingsWidget(QWidget):
         self._save_settings()
 
     def start_monitors(self):
-        if self.monitor_thread is None:
-            mic_name = self.mic_input.currentData()
+        mic_name = self.mic_input.currentData()
+        if self.monitor_thread is None and mic_name and mic_name != "None":
             gain = self.mic_gain_slider.value() / 100.0
-            denoise_mode = self.mic_denoise_combo.currentData()
+            is_listening = self.mic_monitor_cb.isChecked()
+            denoise_mode = self.mic_denoise_combo.currentData() if is_listening else "None"
             gate = self.mic_gate_slider.value() / 100.0
             pre_mode = self.mic_preprocess_combo.currentData()
             self.monitor_thread = MicMonitorThread(mic_name, gain, denoise_mode, gate, pre_mode)
-            self.monitor_thread.set_monitor_audio(self.mic_monitor_cb.isChecked())
+            self.monitor_thread.set_monitor_audio(is_listening)
             self.monitor_thread.level_ready.connect(self.volume_meter.set_level)
             self.monitor_thread.start()
             

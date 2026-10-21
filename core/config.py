@@ -8,7 +8,7 @@ class Config:
         self.LANGUAGE = os.environ.get("LANGUAGE", "ja")
         self.REGION = os.environ.get("VALORANT_REGION", "ap")
         self.LIGHTWEIGHT_MODE = os.environ.get("LIGHTWEIGHT_MODE", "False").lower() == "true"
-        self.AUTO_PERFORMANCE_CONTROL = os.environ.get("AUTO_PERFORMANCE_CONTROL", "False").lower() == "true"
+        self.AUTO_PERFORMANCE_CONTROL = os.environ.get("AUTO_PERFORMANCE_CONTROL", "True").lower() == "true"
         self.RIOT_ID = os.environ.get("RIOT_ID", "")
         self.TAG_LINE = os.environ.get("TAG_LINE", "")
         self.SAVE_DIR = os.environ.get("RECORD_SAVE_DIR", "./records")
@@ -21,7 +21,8 @@ class Config:
         self.RECORD_AUDIO_MIC_GAIN = os.environ.get("RECORD_AUDIO_MIC_GAIN", "1.0")
         self.RECORD_AUDIO_MIC_NOISE_GATE = os.environ.get("RECORD_AUDIO_MIC_NOISE_GATE", "0")
         self.RECORD_AUDIO_MIC_DENOISE = os.environ.get("RECORD_AUDIO_MIC_DENOISE", "None")
-        self.RECORD_AUDIO_MIC_PREPROCESS = os.environ.get("RECORD_AUDIO_MIC_PREPROCESS", "SpeexDSP")
+        pre_env = os.environ.get("RECORD_AUDIO_MIC_PREPROCESS", "SpeexDSP")
+        self.RECORD_AUDIO_MIC_PREPROCESS = "SpeexDSP" if pre_env == "WebRTC" else pre_env
         self.RECORD_ENCODER = os.environ.get("RECORD_ENCODER", "h264_nvenc")
         self.RECORD_FPS = os.environ.get("RECORD_FPS", "60")
         self.RECORD_RESOLUTION = os.environ.get("RECORD_RESOLUTION", "1920x1080")

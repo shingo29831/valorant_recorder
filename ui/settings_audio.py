@@ -89,13 +89,11 @@ class AudioSettingsWidget(QWidget):
         self.mic_preprocess_combo = QComboBox()
         self.mic_preprocess_combo.addItem("None")
         self.mic_preprocess_combo.addItem("SpeexDSP")
-        self.mic_preprocess_combo.addItem("WebRTC (Coming Soon)")
         
         pre_val = getattr(self.config, 'RECORD_AUDIO_MIC_PREPROCESS', 'SpeexDSP')
         if pre_val == "WebRTC":
-            idx = self.mic_preprocess_combo.findText("WebRTC (Coming Soon)")
-        else:
-            idx = self.mic_preprocess_combo.findText(pre_val)
+            pre_val = "SpeexDSP"
+        idx = self.mic_preprocess_combo.findText(pre_val)
         if idx >= 0:
             self.mic_preprocess_combo.setCurrentIndex(idx)
         self.mic_preprocess_combo.currentIndexChanged.connect(self._on_preprocess_changed)
@@ -164,7 +162,9 @@ class AudioSettingsWidget(QWidget):
 
     def _on_monitor_changed(self, state):
         if self.monitor_thread:
-            self.monitor_thread.set_monitor_audio(self.mic_monitor_cb.isChecked())
+            is_listening = self.mic_monitor_cb.isChecked()
+            self.monitor_thread.set_denoise(self.mic_denoise_combo.currentText() if is_listening else "None")
+            self.monitor_thread.set_monitor_audio(is_listening)
 
     def _on_preprocess_changed(self, index):
         mode = self.mic_preprocess_combo.currentText()
@@ -197,7 +197,7 @@ class AudioSettingsWidget(QWidget):
                 mode = "AI (RNNoise)"
         
         if self.monitor_thread:
-            self.monitor_thread.set_denoise(mode)
+            self.monitor_thread.set_denoise(mode if self.mic_monitor_cb.isChecked() else "None")
         self._save_settings()
 
     def _on_mic_changed(self):
@@ -207,18 +207,15 @@ class AudioSettingsWidget(QWidget):
         self._save_settings()
 
     def start_monitors(self):
-        if self.monitor_thread is None:
-            mic_name = self.mic_input.currentText()
+        mic_name = self.mic_input.currentText()
+        if self.monitor_thread is None and mic_name and mic_name != "None":
             gain = self.mic_gain_slider.value() / 100.0
-            denoise_mode = self.mic_denoise_combo.currentText()
+            is_listening = self.mic_monitor_cb.isChecked()
+            denoise_mode = self.mic_denoise_combo.currentText() if is_listening else "None"
             gate = self.mic_gate_slider.value() / 100.0
-            
             pre_mode = self.mic_preprocess_combo.currentText()
-            if pre_mode == "WebRTC (Coming Soon)":
-                pre_mode = "WebRTC"
-                
             self.monitor_thread = MicMonitorThread(mic_name, gain, denoise_mode, gate, pre_mode)
-            self.monitor_thread.set_monitor_audio(self.mic_monitor_cb.isChecked())
+            self.monitor_thread.set_monitor_audio(is_listening)
             self.monitor_thread.level_ready.connect(self.volume_meter.set_level)
             self.monitor_thread.start()
             

@@ -347,47 +347,45 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
     std::unique_ptr<Resampler> micResampler;
     std::mutex sysResamplerMtx;
     std::mutex micResamplerMtx;
+    std::vector<float> sysRawIn, sysStereoIn, sysStereoOut;
+    std::vector<float> micRawIn, micStereoIn, micStereoOut;
 
     float sysGain = configCopy.system_gain;
     float micGain = configCopy.mic_gain;
 
     g_sysCapture->SetCallback([&](const float* data, uint32_t frames, uint32_t channels, uint32_t sampleRate) {
         std::lock_guard<std::mutex> lock(sysResamplerMtx);
-        std::vector<float> rawIn(data, data + frames * channels);
-        std::vector<float> stereoIn;
-        DownmixToStereo(rawIn, frames, channels, sysGain, stereoIn);
+        sysRawIn.assign(data, data + frames * channels);
+        DownmixToStereo(sysRawIn, frames, channels, sysGain, sysStereoIn);
 
         if (!sysResampler) sysResampler = std::make_unique<Resampler>(2, sampleRate, 48000);
-        std::vector<float> stereoOut;
-        sysResampler->Process(stereoIn.data(), frames, stereoOut);
-        sysQueue.Push(stereoOut);
+        sysResampler->Process(sysStereoIn.data(), frames, sysStereoOut);
+        sysQueue.Push(sysStereoOut);
     });
 
     if (g_micCapture) {
         g_micCapture->SetCallback([&](const float* data, uint32_t frames, uint32_t channels, uint32_t sampleRate) {
             std::lock_guard<std::mutex> lock(micResamplerMtx);
-            std::vector<float> rawIn(data, data + frames * channels);
-            std::vector<float> stereoIn;
-            DownmixToStereo(rawIn, frames, channels, micGain, stereoIn);
+            micRawIn.assign(data, data + frames * channels);
+            DownmixToStereo(micRawIn, frames, channels, micGain, micStereoIn);
 
             // 2ch USBオーディオインターフェースで片chのみに入力がある場合の片耳化を防止
             if (channels == 2 && frames > 0) {
                 float peakL = 0.0f, peakR = 0.0f;
                 for (uint32_t i = 0; i < frames; ++i) {
-                    peakL = (std::max)(peakL, std::fabs(stereoIn[i * 2 + 0]));
-                    peakR = (std::max)(peakR, std::fabs(stereoIn[i * 2 + 1]));
+                    peakL = (std::max)(peakL, std::fabs(micStereoIn[i * 2 + 0]));
+                    peakR = (std::max)(peakR, std::fabs(micStereoIn[i * 2 + 1]));
                 }
                 if (peakL > 1e-4f && peakR < peakL * 0.05f) {
-                    for (uint32_t i = 0; i < frames; ++i) stereoIn[i * 2 + 1] = stereoIn[i * 2 + 0];
+                    for (uint32_t i = 0; i < frames; ++i) micStereoIn[i * 2 + 1] = micStereoIn[i * 2 + 0];
                 } else if (peakR > 1e-4f && peakL < peakR * 0.05f) {
-                    for (uint32_t i = 0; i < frames; ++i) stereoIn[i * 2 + 0] = stereoIn[i * 2 + 1];
+                    for (uint32_t i = 0; i < frames; ++i) micStereoIn[i * 2 + 0] = micStereoIn[i * 2 + 1];
                 }
             }
 
             if (!micResampler) micResampler = std::make_unique<Resampler>(2, sampleRate, 48000);
-            std::vector<float> stereoOut;
-            micResampler->Process(stereoIn.data(), frames, stereoOut);
-            micQueue.Push(stereoOut);
+            micResampler->Process(micStereoIn.data(), frames, micStereoOut);
+            micQueue.Push(micStereoOut);
         });
     }
 
@@ -511,9 +509,10 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
         return;
     }
 
+    const bool hasActiveMic = (g_micCapture && g_micCapture->IsInitialized());
     void* audioProc = nullptr;
-    if (configCopy.denoise_mode > 0 || configCopy.preprocess_mode > 0) {
-        const char* modelPathCStr = dfModelPath.empty() ? "" : dfModelPath.c_str();
+    if (hasActiveMic && (configCopy.denoise_mode > 0 || configCopy.preprocess_mode > 0)) {
+        const char* modelPathCStr = (configCopy.denoise_mode == 1 && !dfModelPath.empty()) ? dfModelPath.c_str() : "";
         audioProc = AudioProcessor_Create(48000, 2, modelPathCStr);
         if (audioProc) {
             AudioProcessor_SetPreProcessType(audioProc, configCopy.preprocess_mode);
@@ -550,7 +549,7 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
     std::vector<float> outBuf(framesPerChunk * 4);
 
     timeBeginPeriod(1);
-    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
+    SetThreadPriority(GetCurrentThread(), (configCopy.low_priority != 0) ? THREAD_PRIORITY_NORMAL : THREAD_PRIORITY_ABOVE_NORMAL);
 
     // FFmpegのpipe:0ストリーム解析ブロックを即座に解除するため初期1チャンク(10ms)を送出
     outQueue.Push(std::vector<float>(framesPerChunk * 4, 0.0f));
@@ -584,24 +583,31 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
     auto processAndPushChunk = [&](bool drainMode) {
         if (drainMode) {
             sysQueue.PopExact(reqSysSamples, sysBuf);
-            micQueue.PopExact(reqMicSamples, micBuf);
+            if (hasActiveMic) {
+                micQueue.PopExact(reqMicSamples, micBuf);
+            }
         } else {
             if (!sysQueue.PopChunk(reqSysSamples, sysBuf, maxAllowedBuffer)) {
                 std::fill(sysBuf.begin(), sysBuf.end(), 0.0f);
             }
-            if (!micQueue.PopChunk(reqMicSamples, micBuf, maxAllowedBuffer)) {
-                std::fill(micBuf.begin(), micBuf.end(), 0.0f);
+            if (hasActiveMic) {
+                if (!micQueue.PopChunk(reqMicSamples, micBuf, maxAllowedBuffer)) {
+                    std::fill(micBuf.begin(), micBuf.end(), 0.0f);
+                }
             }
         }
 
-        if (audioProc && (configCopy.denoise_mode > 0 || configCopy.preprocess_mode > 0)) {
-            AudioProcessor_Process(audioProc, micBuf.data(), micProcessed.data(), static_cast<int>(framesPerChunk));
+        if (hasActiveMic) {
+            if (audioProc && (configCopy.denoise_mode > 0 || configCopy.preprocess_mode > 0)) {
+                AudioProcessor_Process(audioProc, micBuf.data(), micProcessed.data(), static_cast<int>(framesPerChunk));
+            } else {
+                std::copy(micBuf.begin(), micBuf.begin() + reqMicSamples, micProcessed.begin());
+            }
+            // ノイズキャンセリング後のクリーンな音声に対してノイズゲートを適用
+            micNoiseGate.Process(micProcessed.data(), framesPerChunk, 2);
         } else {
-            std::copy(micBuf.begin(), micBuf.begin() + reqMicSamples, micProcessed.begin());
+            std::fill(micProcessed.begin(), micProcessed.end(), 0.0f);
         }
-
-        // ノイズキャンセリング後のクリーンな音声に対してノイズゲートを適用
-        micNoiseGate.Process(micProcessed.data(), framesPerChunk, 2);
 
         for (size_t i = 0; i < framesPerChunk; ++i) {
             outBuf[i * 4 + 0] = sysBuf[i * 2 + 0];
@@ -610,8 +616,7 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
             outBuf[i * 4 + 3] = micProcessed[i * 2 + 1];
         }
 
-        std::vector<float> chunkOut(outBuf.begin(), outBuf.begin() + framesPerChunk * 4);
-        outQueue.Push(chunkOut);
+        outQueue.Push(outBuf);
         totalWrittenFrames += framesPerChunk;
     };
 
@@ -639,7 +644,7 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
             lastLogTime = now;
         }
 
-        Sleep(2);
+        Sleep((configCopy.low_priority != 0) ? 4 : 2);
     }
 
     // 停止押下時点の映像パイプライン遅延と音声プリバッファ分を確実に回収するためテールキャプチャを実行

@@ -254,13 +254,18 @@ class FFmpegRecorder:
             "-y",
             "-loglevel", "info",
         ]
+        if is_lightweight:
+            # フィルタグラフの過剰スレッド生成を抑止してゲームのCPU競合を防止
+            cmd.extend(["-filter_threads", "1", "-filter_complex_threads", "1"])
 
-        use_d3d11_direct = is_nvenc and not needs_scale and not force_sw_download
+        use_d3d11_direct = is_nvenc and not force_sw_download
         if use_d3d11_direct:
             cmd.extend(["-init_hw_device", "d3d11va"])
-            video_filter = f"ddagrab=output_idx=0:framerate={fps}:draw_mouse=1[v_out];"
+            d3d_scale = f",scale_d3d11=w={target_w}:h={target_h}" if needs_scale else ""
+            video_filter = f"ddagrab=output_idx=0:framerate={fps}:draw_mouse=1{d3d_scale}[v_out];"
         else:
-            scale_part = f",scale={target_w}:{target_h}:flags=fast_bilinear" if needs_scale else ""
+            sw_flag = "neighbor" if is_lightweight else "fast_bilinear"
+            scale_part = f",scale={target_w}:{target_h}:flags={sw_flag}" if needs_scale else ""
             video_filter = (
                 f"ddagrab=output_idx=0:framerate={fps}:draw_mouse=1,"
                 f"hwdownload,format=bgra{scale_part},format=yuv420p[v_out];"
@@ -269,7 +274,9 @@ class FFmpegRecorder:
         if is_nvenc:
             nv_preset = "p1" if is_lightweight else "p2"
             nv_tune = "ull" if is_lightweight else "ll"
-            nv_cq = "24" if is_lightweight else "20"
+            nv_cq = "26" if is_lightweight else "20"
+            nv_maxrate = "8M" if is_lightweight else "20M"
+            nv_bufsize = "16M" if is_lightweight else "40M"
             encoder_opts = [
                 "-c:v", self.actual_encoder,
                 "-preset", nv_preset,
@@ -277,38 +284,59 @@ class FFmpegRecorder:
                 "-rc", "vbr",
                 "-cq", nv_cq,
                 "-b:v", "0",
+                "-maxrate", nv_maxrate,
+                "-bufsize", nv_bufsize,
                 "-delay", "0",
                 "-zerolatency", "1",
                 "-g", gop_size,
                 "-keyint_min", gop_size,
                 "-forced-idr", "1",
             ]
+            if is_lightweight:
+                encoder_opts.extend(["-spatial-aq", "0", "-temporal-aq", "0", "-rc-lookahead", "0", "-no-scenecut", "1"])
         elif is_amf:
+            amf_br = "6M" if is_lightweight else "12M"
+            amf_max = "8M" if is_lightweight else "16M"
+            amf_buf = "16M" if is_lightweight else "32M"
             encoder_opts = [
                 "-c:v", self.actual_encoder,
                 "-usage", "ultralowlatency",
                 "-quality", "speed",
-                "-b:v", "8M" if is_lightweight else "12M",
+                "-b:v", amf_br,
+                "-maxrate", amf_max,
+                "-bufsize", amf_buf,
                 "-g", gop_size,
             ]
         elif is_qsv:
+            qsv_br = "6M" if is_lightweight else "12M"
+            qsv_max = "8M" if is_lightweight else "16M"
+            qsv_buf = "16M" if is_lightweight else "32M"
             encoder_opts = [
                 "-c:v", self.actual_encoder,
                 "-preset", "veryfast",
-                "-b:v", "8M" if is_lightweight else "12M",
+                "-b:v", qsv_br,
+                "-maxrate", qsv_max,
+                "-bufsize", qsv_buf,
                 "-g", gop_size,
             ]
+            if is_lightweight:
+                encoder_opts.extend(["-async_depth", "1"])
         else:
             encoder_opts = [
                 "-c:v", self.actual_encoder,
                 "-preset", "ultrafast",
                 "-tune", "zerolatency",
-                "-crf", "26" if is_lightweight else "23",
+                "-crf", "28" if is_lightweight else "23",
+                "-maxrate", "6M" if is_lightweight else "15M",
+                "-bufsize", "12M" if is_lightweight else "30M",
                 "-g", gop_size,
                 "-keyint_min", gop_size,
             ]
             if is_lightweight:
-                encoder_opts.extend(["-threads", "2"])
+                encoder_opts.extend([
+                    "-threads", "2",
+                    "-x264-params", "sliced-threads=0:sync-lookahead=0:rc-lookahead=0:ref=1:subme=0:me=dia:trellis=0",
+                ])
 
         # C++側AudioProcessorでノイズ抑制とクランプが完結しているため、FFmpeg側での重複フィルタによる音質劣化・こもりを防止
         audio_filter = (
@@ -319,7 +347,7 @@ class FFmpegRecorder:
         filter_complex = video_filter + audio_filter
 
         cmd.extend([
-            "-thread_queue_size", "4096",
+            "-thread_queue_size", "1024" if is_lightweight else "4096",
             "-probesize", "32",
             "-analyzeduration", "0",
             "-f", "f32le",
@@ -340,7 +368,7 @@ class FFmpegRecorder:
             "-shortest",
             "-max_muxing_queue_size", "4096" if is_lightweight else "8192",
             "-c:a", "aac",
-            "-b:a", "128k" if is_lightweight else "192k",
+            "-b:a", "96k" if is_lightweight else "192k",
             "-ar", "48000",
             self.temp_filepath
         ])
@@ -513,7 +541,8 @@ class FFmpegRecorder:
                 creationflags = 0
                 startupinfo = None
                 if os.name == 'nt':
-                    creationflags = subprocess.CREATE_NO_WINDOW
+                    BELOW_NORMAL_PRIORITY_CLASS = 0x00004000
+                    creationflags = subprocess.CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS
                     startupinfo = subprocess.STARTUPINFO()
                     startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                     startupinfo.wShowWindow = subprocess.SW_HIDE

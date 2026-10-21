@@ -90,10 +90,17 @@ void AudioProcessor::set_preprocess_type(int type) {
 
 void AudioProcessor::set_denoise_type(int type) {
     denoise_type_ = type;
+    bool use_speex_denoise = (denoise_type_ == 2) || (denoise_type_ == 1 && df_states_.empty());
+    if (use_speex_denoise && speex_pre_states_.empty()) {
+        int frame_size = sample_rate_ / 100;
+        SpeexPreprocessState* pre_st = speex_preprocess_state_init(frame_size, sample_rate_);
+        if (pre_st) {
+            speex_pre_states_.push_back(pre_st);
+        }
+    }
     if (!speex_pre_states_.empty() && speex_pre_states_[0]) {
         SpeexPreprocessState* pre_st = static_cast<SpeexPreprocessState*>(speex_pre_states_[0]);
         // DeepFilterNetが利用不能な場合や軽量RNNoise/SpeexDSP選択時はSpeexDSPノイズ抑制を有効化
-        bool use_speex_denoise = (denoise_type_ == 2) || (denoise_type_ == 1 && df_states_.empty());
         int denoise = use_speex_denoise ? 1 : 0;
         int noise_suppress = -25;
         speex_preprocess_ctl(pre_st, SPEEX_PREPROCESS_SET_DENOISE, &denoise);

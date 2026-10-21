@@ -193,7 +193,7 @@ void WasapiCapture::Stop() {
 void WasapiCapture::CaptureThreadFunc() {
     CoInitializeEx(NULL, COINIT_MULTITHREADED);
     timeBeginPeriod(1);
-    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_HIGHEST);
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
 
     UINT32 packetLength = 0;
     BYTE* pData = nullptr;
@@ -240,7 +240,7 @@ void WasapiCapture::CaptureThreadFunc() {
     auto lastSilenceEmitTime = lastRealPacketTime;
 
     while (m_isRunning) {
-        Sleep(1);
+        Sleep(3);
 
         HRESULT hr = m_captureClient->GetNextPacketSize(&packetLength);
         if (FAILED(hr)) {
