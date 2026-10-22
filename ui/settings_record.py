@@ -13,6 +13,7 @@ class RecordSettingsWidget(QWidget):
         
         self.monitor_thread = None
         self.sys_monitor_thread = None
+        self._stopping_threads = []
         
         main_layout = QVBoxLayout()
         main_layout.setSpacing(15)
@@ -346,15 +347,28 @@ class RecordSettingsWidget(QWidget):
             self.sys_monitor_thread.level_ready.connect(self.system_volume_meter.set_level)
             self.sys_monitor_thread.start()
 
+    def _retire_thread(self, thread):
+        try:
+            thread.level_ready.disconnect()
+        except Exception:
+            pass
+        thread.stop()
+        if thread.isRunning():
+            # 実行中QThreadのGC破棄によるqFatalクラッシュを防ぐため終了まで参照を保持
+            self._stopping_threads.append(thread)
+            thread.finished.connect(lambda t=thread: self._stopping_threads.remove(t) if t in self._stopping_threads else None)
+
     def stop_monitors(self):
         if self.monitor_thread:
-            self.monitor_thread.stop()
+            t = self.monitor_thread
             self.monitor_thread = None
+            self._retire_thread(t)
             self.volume_meter.set_level(0.0)
             
         if self.sys_monitor_thread:
-            self.sys_monitor_thread.stop()
+            t = self.sys_monitor_thread
             self.sys_monitor_thread = None
+            self._retire_thread(t)
             self.system_volume_meter.set_level(0.0)
 
     def _save_settings(self):

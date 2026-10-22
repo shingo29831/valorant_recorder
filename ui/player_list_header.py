@@ -111,7 +111,7 @@ class PlayerListHeader(QWidget):
         
         settings_btn.setIcon(QIcon(pixmap))
         settings_btn.setIconSize(QSize(20, 20))
-        settings_btn.clicked.connect(self.settingsRequested.emit)
+        settings_btn.clicked.connect(self.settingsRequested)
         
         layout.addWidget(settings_btn)
 

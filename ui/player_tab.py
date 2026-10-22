@@ -23,7 +23,7 @@ class PlayerTab(QWidget):
         self.stacked_widget.addWidget(self.list_page)
         self.stacked_widget.addWidget(self.video_page)
         
-        self.list_page.settingsRequested.connect(self.settingsRequested.emit)
+        self.list_page.settingsRequested.connect(self.settingsRequested)
         self.list_page.recordSelected.connect(self.on_record_selected)
         self.video_page.backRequested.connect(self.on_back_requested)
         

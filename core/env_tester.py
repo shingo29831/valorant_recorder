@@ -55,6 +55,14 @@ class EnvTesterThread(QThread):
                 errors.append(("Failed to test video encoder.", err_detail))
 
         # 3. Audio Device Test
+        com_initialized = False
+        if os.name == 'nt':
+            try:
+                import ctypes
+                hr = ctypes.windll.ole32.CoInitializeEx(None, 0)
+                com_initialized = (hr in (0, 1))
+            except Exception:
+                pass
         try:
             import soundcard as sc
             speaker = sc.default_speaker()
@@ -66,6 +74,13 @@ class EnvTesterThread(QThread):
             err_detail = traceback.format_exc()
             logging.error(f"[EnvTest] Audio device test failed: {e}")
             errors.append(("Could not detect default audio devices (Speaker/Mic).", err_detail))
+        finally:
+            if com_initialized:
+                try:
+                    import ctypes
+                    ctypes.windll.ole32.CoUninitialize()
+                except Exception:
+                    pass
 
         # 4. Log Access Test
         try:

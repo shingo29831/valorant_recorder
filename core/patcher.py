@@ -10,19 +10,8 @@ def patch_soundcard_lib():
 
     try:
         import ctypes
-        # PyQt6(Qt)はSTA(Single-Threaded Apartment)を要求するため、
-        # soundcardがMTAで初期化してしまう前にSTAでCOMを初期化しておく
-        try:
-            ctypes.windll.ole32.CoInitialize(None)
-        except Exception:
-            pass
-
-        try:
-            import soundcard
-        except RuntimeError:
-            # COM初期化エラー(S_FALSE等)が発生しても無視してパッチを適用する
-            pass
-            
+        # soundcard内部のMTA初期化がRPC_E_CHANGED_MODEで失敗しないよう先にインポートする
+        import soundcard
         import soundcard.mediafoundation as mf
         import collections
 
@@ -121,9 +110,15 @@ def patch_soundcard_lib():
 
         mf._COMLibrary.__init__ = patched_com_library_init
         
-        # 既に初期化されている _com インスタンスを再初期化する
+        # メインスレッドのMTAを一旦解除し、PyQt6が要求するSTAでCOMを再初期化する
         if hasattr(mf, '_com') and isinstance(mf._com, mf._COMLibrary):
-            mf._com.__init__()
+            if getattr(mf._com, 'com_loaded', False):
+                ctypes.windll.ole32.CoUninitialize()
+                mf._com.com_loaded = False
+        try:
+            ctypes.windll.ole32.CoInitialize(None)
+        except Exception:
+            pass
 
         print("[Patcher] Successfully applied monkey patch to soundcard library.")
             

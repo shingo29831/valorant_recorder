@@ -45,7 +45,7 @@ class PlayerListPage(QWidget):
         self.header.tabChanged.connect(self._on_tab_clicked)
         self.header.deleteModeToggled.connect(self.toggle_delete_mode)
         self.header.favoriteModeToggled.connect(self.toggle_favorite_mode)
-        self.header.settingsRequested.connect(self.settingsRequested.emit)
+        self.header.settingsRequested.connect(self.settingsRequested)
         layout.addWidget(self.header)
         
         self.scroll_area = QScrollArea()

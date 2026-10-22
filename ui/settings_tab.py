@@ -23,7 +23,7 @@ class SettingsTab(QWidget):
         
         back_btn = QPushButton(self.t.back_to_recordings)
         back_btn.setFixedWidth(200)
-        back_btn.clicked.connect(self.backRequested.emit)
+        back_btn.clicked.connect(self.backRequested)
         
         header_layout.addWidget(title)
         header_layout.addStretch()

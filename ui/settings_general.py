@@ -215,8 +215,8 @@ class GeneralSettingsWidget(QWidget):
         dialog.exec()
 
     def _browse_save_dir(self):
-        if self.parent_tab and hasattr(self.parent_tab, 'audio_widget'):
-            self.parent_tab.audio_widget.stop_monitors()
+        if self.parent_tab and hasattr(self.parent_tab, 'record_widget'):
+            self.parent_tab.record_widget.stop_monitors()
             
         new_dir = change_save_directory(self, self.config.SAVE_DIR, self.t, suffix="/valorant_records")
         
@@ -225,12 +225,12 @@ class GeneralSettingsWidget(QWidget):
             self.config.SAVE_DIR = new_dir
             self.config.save()
             
-        if self.parent_tab and hasattr(self.parent_tab, 'audio_widget'):
-            self.parent_tab.audio_widget.start_monitors()
+        if self.parent_tab and hasattr(self.parent_tab, '_on_subtab_changed'):
+            self.parent_tab._on_subtab_changed(self.parent_tab.tab_widget.currentIndex())
 
     def _browse_clip_dir(self):
-        if self.parent_tab and hasattr(self.parent_tab, 'audio_widget'):
-            self.parent_tab.audio_widget.stop_monitors()
+        if self.parent_tab and hasattr(self.parent_tab, 'record_widget'):
+            self.parent_tab.record_widget.stop_monitors()
             
         new_dir = change_save_directory(self, self.config.CLIP_SAVE_DIR, self.t, suffix="/valorant_clips")
         
@@ -239,8 +239,8 @@ class GeneralSettingsWidget(QWidget):
             self.config.CLIP_SAVE_DIR = new_dir
             self.config.save()
             
-        if self.parent_tab and hasattr(self.parent_tab, 'audio_widget'):
-            self.parent_tab.audio_widget.start_monitors()
+        if self.parent_tab and hasattr(self.parent_tab, '_on_subtab_changed'):
+            self.parent_tab._on_subtab_changed(self.parent_tab.tab_widget.currentIndex())
 
     def _apply_auto_delete(self):
         new_days = self.auto_delete_spin.value()

@@ -34,9 +34,18 @@ class SystemAudioMonitorThread(QThread):
         return data
 
     def run(self):
+        import sys
         import warnings
         warnings.filterwarnings("ignore", message=".*data discontinuity.*")
         warnings.filterwarnings("ignore", module=".*soundcard.*")
+        com_initialized = False
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                hr = ctypes.windll.ole32.CoInitializeEx(None, 0)
+                com_initialized = (hr in (0, 1))
+            except Exception:
+                pass
         try:
             import soundcard as sc
             warnings.simplefilter("ignore", category=sc.SoundcardRuntimeWarning)
@@ -46,7 +55,9 @@ class SystemAudioMonitorThread(QThread):
             
             with spk_mic.recorder(samplerate=48000, channels=2) as recorder:
                 while self.running:
-                    data = recorder.record(numframes=2400)
+                    data = recorder.record(numframes=1200)
+                    if not self.running:
+                        break
                     # ステレオの場合は平均をとってモノラルにダウンミックスしてレベル計算
                     data_mono = data.mean(axis=1, keepdims=True)
                     self.process_audio(data_mono)
@@ -61,6 +72,13 @@ class SystemAudioMonitorThread(QThread):
             log_path = os.path.join(app_data_dir, "sys_audio_error.log")
             with open(log_path, "a", encoding="utf-8") as f:
                 f.write(f"SystemAudioMonitorThread error:\n{traceback.format_exc()}\n")
+        finally:
+            if com_initialized:
+                try:
+                    import ctypes
+                    ctypes.windll.ole32.CoUninitialize()
+                except Exception:
+                    pass
 
     def stop(self):
         self.running = False
@@ -149,9 +167,18 @@ class MicMonitorThread(QThread):
         return data
 
     def run(self):
+        import sys
         import warnings
         warnings.filterwarnings("ignore", message=".*data discontinuity.*")
         warnings.filterwarnings("ignore", module=".*soundcard.*")
+        com_initialized = False
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                hr = ctypes.windll.ole32.CoInitializeEx(None, 0)
+                com_initialized = (hr in (0, 1))
+            except Exception:
+                pass
         try:
             import soundcard as sc
             from recorder.audio_processor_wrapper import AudioProcessorWrapper
@@ -263,6 +290,13 @@ class MicMonitorThread(QThread):
             log_path = os.path.join(app_data_dir, "mic_error.log")
             with open(log_path, "a", encoding="utf-8") as f:
                 f.write(f"MicMonitorThread error:\n{traceback.format_exc()}\n")
+        finally:
+            if com_initialized:
+                try:
+                    import ctypes
+                    ctypes.windll.ole32.CoUninitialize()
+                except Exception:
+                    pass
 
     def stop(self):
         self.running = False

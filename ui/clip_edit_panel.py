@@ -13,19 +13,19 @@ class ClipEditPanel(QWidget):
         layout = QHBoxLayout(self)
         
         self.start_btn = QPushButton(t.set_start)
-        self.start_btn.clicked.connect(self.setStartRequested.emit)
+        self.start_btn.clicked.connect(self.setStartRequested)
         self.start_label = QLabel("00:00")
         
         self.end_btn = QPushButton(t.set_end)
-        self.end_btn.clicked.connect(self.setEndRequested.emit)
+        self.end_btn.clicked.connect(self.setEndRequested)
         self.end_label = QLabel("00:00")
         
         self.generate_btn = QPushButton(t.generate)
         self.generate_btn.setStyleSheet("background-color: #FF4655; font-weight: bold;")
-        self.generate_btn.clicked.connect(self.generateRequested.emit)
+        self.generate_btn.clicked.connect(self.generateRequested)
         
         self.cancel_edit_btn = QPushButton(t.cancel)
-        self.cancel_edit_btn.clicked.connect(self.cancelRequested.emit)
+        self.cancel_edit_btn.clicked.connect(self.cancelRequested)
         
         layout.addWidget(self.start_btn)
         layout.addWidget(self.start_label)
