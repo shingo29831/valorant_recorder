@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (QWidget, QFormLayout, QComboBox, QSlider, 
                              QLabel, QHBoxLayout, QVBoxLayout, QCheckBox, QMessageBox)
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from ui.volume_meter import VolumeMeter
 from ui.audio_monitor_threads import SystemAudioMonitorThread, MicMonitorThread
 
@@ -234,7 +234,9 @@ class AudioSettingsWidget(QWidget):
         thread.stop()
         if thread.isRunning():
             self._stopping_threads.append(thread)
-            thread.finished.connect(lambda t=thread: self._stopping_threads.remove(t) if t in self._stopping_threads else None)
+            thread.finished.connect(
+                lambda t=thread: QTimer.singleShot(0, lambda: self._stopping_threads.remove(t) if t in self._stopping_threads else None)
+            )
 
     def stop_monitors(self):
         if self.monitor_thread:

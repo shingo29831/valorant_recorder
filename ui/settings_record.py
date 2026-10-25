@@ -1,7 +1,7 @@
 import os
 from PyQt6.QtWidgets import (QWidget, QFormLayout, QComboBox, QVBoxLayout, QLabel, 
                              QGroupBox, QSlider, QHBoxLayout, QCheckBox, QMessageBox)
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from ui.volume_meter import VolumeMeter
 from ui.audio_monitor_threads import SystemAudioMonitorThread, MicMonitorThread
 
@@ -354,9 +354,11 @@ class RecordSettingsWidget(QWidget):
             pass
         thread.stop()
         if thread.isRunning():
-            # 実行中QThreadのGC破棄によるqFatalクラッシュを防ぐため終了まで参照を保持
+            # ワーカースレッド自身のfinished直結実行による自己GC破棄(qFatal)を防ぐためメインスレッドへ遅延させる
             self._stopping_threads.append(thread)
-            thread.finished.connect(lambda t=thread: self._stopping_threads.remove(t) if t in self._stopping_threads else None)
+            thread.finished.connect(
+                lambda t=thread: QTimer.singleShot(0, lambda: self._stopping_threads.remove(t) if t in self._stopping_threads else None)
+            )
 
     def stop_monitors(self):
         if self.monitor_thread:

@@ -78,8 +78,13 @@ class AudioProcessorWrapper:
 
     def __init__(self, sample_rate: int, channels: int, dll_path: str = None):
         self.processor = None
+        self.processor_ptr = None
         self.lib = None
+        self.sample_rate = sample_rate
         self.channels = channels
+        self._preprocess_type = 1
+        self._df_loaded = False
+        self._model_path = b""
         
         import sys
         # PyInstaller/Nuitka実行時のリソースパス(リリース版対応)
@@ -182,32 +187,32 @@ class AudioProcessorWrapper:
                 if model_path_to_use:
                     break
 
-        if not model_path_to_use:
-            print("[AudioProcessorWrapper] Warning: DeepFilterNet model archive (.tar.gz) not found. AI Denoise will be disabled.")
-            self.processor_ptr = None
-        else:
+        if model_path_to_use:
             # 非ASCII文字(日本語など)を含むパスによるRust側でのパニックを防ぐため、短いパス(8.3形式)に変換して渡す
             try:
                 short_tar_path = get_short_path_name(model_path_to_use.decode('utf-8'))
                 model_path_to_use = short_tar_path.replace('\\', '/').encode('utf-8')
-                print(f"[AudioProcessorWrapper] Using short model path: {short_tar_path}")
             except Exception as e:
                 print(f"[AudioProcessorWrapper] Failed to get short path for model: {e}")
-            
-            self.processor_ptr = self.lib.AudioProcessor_Create(sample_rate, channels, model_path_to_use)
-            if not self.processor_ptr:
-                print("[AudioProcessorWrapper] Failed to initialize AudioProcessor in C++ (returned null pointer).")
+            self._model_path = model_path_to_use
+        else:
+            print("[AudioProcessorWrapper] Warning: DeepFilterNet model archive (.tar.gz) not found. AI Denoise will fallback to SpeexDSP.")
+
+        # 初期状態はDeepFilterNetモデルをロードせず軽量に生成し、DeepFilterNet選択時のみ遅延ロードする
+        self.processor_ptr = self.lib.AudioProcessor_Create(sample_rate, channels, b"")
+        if not self.processor_ptr:
+            print("[AudioProcessorWrapper] Failed to initialize AudioProcessor in C++ (returned null pointer).")
 
     def set_preprocess_type(self, type_str: str):
-        if not self.processor_ptr:
-            return
         if type_str == "SpeexDSP":
             type_int = 1
         elif type_str == "WebRTC":
             type_int = 2
         else:
             type_int = 0
-        self.lib.AudioProcessor_SetPreProcessType(self.processor_ptr, type_int)
+        self._preprocess_type = type_int
+        if self.processor_ptr:
+            self.lib.AudioProcessor_SetPreProcessType(self.processor_ptr, type_int)
 
     def set_denoise_type(self, type_str: str):
         if not self.processor_ptr:
@@ -215,6 +220,13 @@ class AudioProcessorWrapper:
         t_lower = str(type_str).lower()
         if "deepfilter" in t_lower:
             type_int = 1
+            if not self._df_loaded and self._model_path:
+                new_ptr = self.lib.AudioProcessor_Create(self.sample_rate, self.channels, self._model_path)
+                if new_ptr:
+                    self.lib.AudioProcessor_Destroy(self.processor_ptr)
+                    self.processor_ptr = new_ptr
+                    self.lib.AudioProcessor_SetPreProcessType(self.processor_ptr, self._preprocess_type)
+                    self._df_loaded = True
         elif "rnnoise" in t_lower or "speex" in t_lower:
             type_int = 2
         else:

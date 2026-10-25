@@ -10,80 +10,109 @@ def patch_soundcard_lib():
 
     try:
         import ctypes
+        import struct
+        import threading
         # soundcard内部のMTA初期化がRPC_E_CHANGED_MODEで失敗しないよう先にインポートする
         import soundcard
         import soundcard.mediafoundation as mf
         import collections
 
-        # _AudioClient.__init__ のモンキーパッチ (assertの無効化)
+        _soundcard_lock = threading.RLock()
+        setattr(soundcard, '_lock', _soundcard_lock)
+
+        # soundcardのCFFI定義は非パック(44B)であり実メモリ(40B)への直接書き込みはヒープ破壊を起こすためバイナリ構築する
         def patched_audio_client_init(self, ptr, samplerate, channels, blocksize, isloopback, exclusive_mode=False):
-            self._ptr = ptr
-            if isinstance(channels, int):
-                self.channelmap = list(range(channels))
-            elif isinstance(channels, collections.abc.Iterable):
-                self.channelmap = channels
-            else:
-                raise TypeError('channels must be iterable or integer')
-                
-            if list(range(len(set(self.channelmap)))) != sorted(list(set(self.channelmap))):
-                raise TypeError('Due to limitations of WASAPI, channel maps on Windows '
-                                'must be a combination of `range(0, x)`.')
-                                
-            if blocksize is None:
-                blocksize = self.deviceperiod[0] * samplerate
-                
-            ppMixFormat = mf._ffi.new('WAVEFORMATEXTENSIBLE**')
-            hr = self._ptr[0][0].lpVtbl.GetMixFormat(self._ptr[0], ppMixFormat)
-            mf._com.check_error(hr)
-            
-            # --- パッチ: assertを削除 ---
-            # assert ppMixFormat[0][0].Format.wFormatTag == 0xFFFE
-            # assert ppMixFormat[0][0].Format.cbSize == 22
-            # assert ppMixFormat[0][0].SubFormat.Data1 == 0x100000
-            # assert ppMixFormat[0][0].SubFormat.Data2 == 0x0080
-            # assert ppMixFormat[0][0].SubFormat.Data3 == 0xaa00
-            # assert [int(x) for x in ppMixFormat[0][0].SubFormat.Data4[0:4]] == [0, 56, 155, 113]
-            # -----------------------------
-            
-            channels_count = len(set(self.channelmap))
-            if channels_count == 1:
-                channelmask = 0x4
-            elif channels_count == 2:
-                channelmask = 0x3
-            else:
-                channelmask = (1 << channels_count) - 1
-                
-            ppMixFormat[0][0].Format.nChannels = channels_count
-            ppMixFormat[0][0].Format.nSamplesPerSec = int(samplerate)
-            ppMixFormat[0][0].Format.nAvgBytesPerSec = int(samplerate) * channels_count * 4
-            ppMixFormat[0][0].Format.nBlockAlign = channels_count * 4
-            ppMixFormat[0][0].Format.wBitsPerSample = 32
-            if ppMixFormat[0][0].Format.wFormatTag == 0xFFFE:
-                ppMixFormat[0][0].Samples = dict(wValidBitsPerSample=32)
-                ppMixFormat[0][0].dwChannelMask = channelmask
-                ppMixFormat[0][0].SubFormat.Data1 = 0x00000003
-                ppMixFormat[0][0].SubFormat.Data2 = 0x0000
-                ppMixFormat[0][0].SubFormat.Data3 = 0x0010
-                ppMixFormat[0][0].SubFormat.Data4 = [0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71]
-            else:
-                ppMixFormat[0][0].Format.wFormatTag = 0x0003
-            
-            if exclusive_mode:
-                sharemode = mf._ole32.AUDCLNT_SHAREMODE_EXCLUSIVE
-            else:
-                sharemode = mf._ole32.AUDCLNT_SHAREMODE_SHARED
-                
-            streamflags = 0x00100000 | 0x80000000 | 0x08000000 | 0x00080000
-            if isloopback:
-                streamflags |= 0x00020000 #loopback
-                
-            bufferduration = int(blocksize / samplerate * 10000000)
-            hr = self._ptr[0][0].lpVtbl.Initialize(self._ptr[0], sharemode, streamflags, bufferduration, 0, ppMixFormat[0], mf._ffi.NULL)
-            mf._com.check_error(hr)
-            mf._ole32.CoTaskMemFree(ppMixFormat[0])
-            
-            self.samplerate = samplerate
-            self._idle_start_time = None
+            with _soundcard_lock:
+                self._ptr = ptr
+                if isinstance(channels, int):
+                    self.channelmap = list(range(channels))
+                elif isinstance(channels, collections.abc.Iterable):
+                    self.channelmap = list(channels)
+                else:
+                    raise TypeError('channels must be iterable or integer')
+
+                if list(range(len(set(self.channelmap)))) != sorted(list(set(self.channelmap))):
+                    raise TypeError('Due to limitations of WASAPI, channel maps on Windows '
+                                    'must be a combination of `range(0, x)`.')
+
+                if blocksize is None:
+                    blocksize = self.deviceperiod[0] * samplerate
+
+                ppMixFormat = mf._ffi.new('WAVEFORMATEXTENSIBLE**')
+                hr = self._ptr[0][0].lpVtbl.GetMixFormat(self._ptr[0], ppMixFormat)
+                mf._com.check_error(hr)
+                try:
+                    orig_tag = int(ppMixFormat[0][0].Format.wFormatTag)
+                finally:
+                    mf._ole32.CoTaskMemFree(ppMixFormat[0])
+
+                channels_count = len(set(self.channelmap))
+                if channels_count == 1:
+                    channelmask = 0x4
+                elif channels_count == 2:
+                    channelmask = 0x3
+                else:
+                    channelmask = (1 << channels_count) - 1
+
+                sr = int(samplerate)
+                block_align = channels_count * 4
+                avg_bytes = sr * block_align
+
+                # 40バイト完全パック済みのWAVEFORMATEXTENSIBLE (KSDATAFORMAT_SUBTYPE_IEEE_FLOAT)
+                raw_ext = struct.pack(
+                    '<HHIIHHHHIIHH8B',
+                    0xFFFE,
+                    channels_count,
+                    sr,
+                    avg_bytes,
+                    block_align,
+                    32,
+                    22,
+                    32,
+                    channelmask,
+                    0x00000003,
+                    0x0000,
+                    0x0010,
+                    0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71,
+                )
+                ext_buf = mf._ffi.new('char[]', raw_ext)
+                ext_ptr = mf._ffi.cast('WAVEFORMATEXTENSIBLE*', ext_buf)
+
+                raw_pcm = struct.pack(
+                    '<HHIIHHH',
+                    0x0003,
+                    channels_count,
+                    sr,
+                    avg_bytes,
+                    block_align,
+                    32,
+                    0,
+                )
+                pcm_buf = mf._ffi.new('char[]', raw_pcm)
+                pcm_ptr = mf._ffi.cast('WAVEFORMATEXTENSIBLE*', pcm_buf)
+
+                if exclusive_mode:
+                    sharemode = mf._ole32.AUDCLNT_SHAREMODE_EXCLUSIVE
+                else:
+                    sharemode = mf._ole32.AUDCLNT_SHAREMODE_SHARED
+
+                streamflags = 0x80000000 | 0x08000000 | 0x00080000
+                if isloopback:
+                    streamflags |= 0x00020000
+
+                bufferduration = int(blocksize / samplerate * 10000000)
+                first_ptr, second_ptr = (ext_ptr, pcm_ptr) if orig_tag == 0xFFFE else (pcm_ptr, ext_ptr)
+                hr = self._ptr[0][0].lpVtbl.Initialize(
+                    self._ptr[0], sharemode, streamflags, bufferduration, 0, first_ptr, mf._ffi.NULL
+                )
+                if hr != 0:
+                    hr = self._ptr[0][0].lpVtbl.Initialize(
+                        self._ptr[0], sharemode, streamflags, bufferduration, 0, second_ptr, mf._ffi.NULL
+                    )
+                mf._com.check_error(hr)
+
+                self.samplerate = samplerate
+                self._idle_start_time = None
 
         mf._AudioClient.__init__ = patched_audio_client_init
 
@@ -109,7 +138,15 @@ def patch_soundcard_lib():
                     raise e
 
         mf._COMLibrary.__init__ = patched_com_library_init
-        
+
+        # スレッド終了やSTA再初期化でMTAが破棄されIMMDeviceEnumeratorが無効化されるのを防ぐ
+        try:
+            _mta_cookie = ctypes.c_void_p()
+            ctypes.windll.ole32.CoIncrementMTAUsage(ctypes.byref(_mta_cookie))
+            setattr(mf, '_mta_cookie', _mta_cookie)
+        except Exception:
+            pass
+
         # メインスレッドのMTAを一旦解除し、PyQt6が要求するSTAでCOMを再初期化する
         if hasattr(mf, '_com') and isinstance(mf._com, mf._COMLibrary):
             if getattr(mf._com, 'com_loaded', False):
