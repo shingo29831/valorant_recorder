@@ -4,6 +4,10 @@ project(AudioProcessorModule)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+if(MSVC)
+    add_compile_options(/utf-8)
+endif()
+
 # 共有ライブラリ (DLL / SO) としてビルド
 add_library(audio_processor SHARED
     AudioProcessor.cpp
@@ -47,13 +51,17 @@ target_link_libraries(audio_processor PRIVATE
 )
 
 # 録画コアに必要なWindows APIライブラリを追加
+target_include_directories(native_recorder PRIVATE ${SPEEX_INCLUDE_DIR} ${DEEPFILTER_INCLUDE_DIR})
 target_link_libraries(native_recorder PRIVATE
+    audio_processor
+    ${SPEEX_LIB}
     mmdevapi.lib
     ole32.lib
     oleaut32.lib
     avrt.lib
     d3d11.lib
     dxgi.lib
+    winmm.lib
 )
 
 # --- 実行時バイナリのコピー ---
