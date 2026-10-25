@@ -251,6 +251,15 @@ class RecordSettingsWidget(QWidget):
                 self.res_input.blockSignals(True)
                 self.res_input.setCurrentText("1920x1080")
                 self.res_input.blockSignals(False)
+            # HEVCが選択されている場合は同一GPUベンダーのより軽量なH.264エンコーダへ最適化
+            cur_enc = self.encoder_input.currentText()
+            if cur_enc.startswith("hevc_"):
+                h264_cand = cur_enc.replace("hevc_", "h264_", 1)
+                h264_idx = self.encoder_input.findText(h264_cand)
+                if h264_idx >= 0:
+                    self.encoder_input.blockSignals(True)
+                    self.encoder_input.setCurrentIndex(h264_idx)
+                    self.encoder_input.blockSignals(False)
             # 高負荷なDeepFilterNet選択時は軽量なAI (RNNoise)へ自動切替
             if self.mic_denoise_combo.currentData() == "AI (DeepFilterNet)":
                 rn_idx = self.mic_denoise_combo.findData("AI (RNNoise)")

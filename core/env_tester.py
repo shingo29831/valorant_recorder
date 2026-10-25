@@ -40,8 +40,24 @@ class EnvTesterThread(QThread):
         # 2. Encoder Test
         if ffmpeg_path:
             try:
-                from recorder.encoder_utils import test_encoder
+                from recorder.encoder_utils import test_encoder, get_available_encoders
                 success, msg = test_encoder(ffmpeg_path, self.config.RECORD_ENCODER)
+                if not success:
+                    # 初回起動時(デフォルトh264_nvenc)やGPU変更時に非対応環境でエラーにならないよう最適エンコーダへ自動切替
+                    available, _ = get_available_encoders(ffmpeg_path)
+                    if available:
+                        fallback_enc = available[0]
+                        fb_success, fb_msg = test_encoder(ffmpeg_path, fallback_enc)
+                        if fb_success:
+                            logging.info(f"[EnvTest] Switched encoder from {self.config.RECORD_ENCODER} to supported {fallback_enc}")
+                            self.config.RECORD_ENCODER = fallback_enc
+                            try:
+                                self.config.save()
+                            except Exception:
+                                pass
+                            success, msg = True, ""
+                        else:
+                            msg = fb_msg
                 if success:
                     logging.info(f"[EnvTest] Encoder test ({self.config.RECORD_ENCODER}): PASSED")
                     successes.append(f"Video Encoder ({self.config.RECORD_ENCODER})")

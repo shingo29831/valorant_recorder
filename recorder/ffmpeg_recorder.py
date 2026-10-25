@@ -82,8 +82,9 @@ class FFmpegRecorder:
         self.app_data_dir = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'ValoReco')
         os.makedirs(self.app_data_dir, exist_ok=True)
         self.ffmpeg_path = ensure_ffmpeg_downloaded(self.app_data_dir)
-        self._last_configured_encoder = self.config.RECORD_ENCODER
+        self._sw_download_fallback_encoders: set[str] = set()
         self.actual_encoder = self._determine_encoder()
+        self._last_configured_encoder = self.config.RECORD_ENCODER
         
         try_rebuild_native_recorder()
         
@@ -137,12 +138,20 @@ class FFmpegRecorder:
 
     def _determine_encoder(self) -> str:
         encoder = self.config.RECORD_ENCODER
-        success, _ = test_encoder(self.ffmpeg_path, encoder)
-        if success:
-            return encoder
+        if encoder:
+            success, _ = test_encoder(self.ffmpeg_path, encoder)
+            if success:
+                return encoder
         
         available, _ = get_available_encoders(self.ffmpeg_path)
-        return available[0]
+        best_encoder = available[0] if available else "libx264"
+        if self.config.RECORD_ENCODER != best_encoder:
+            self.config.RECORD_ENCODER = best_encoder
+            try:
+                self.config.save()
+            except Exception:
+                pass
+        return best_encoder
 
     def _collect_and_save_diagnostic(self, err_msg: str):
         project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -258,17 +267,28 @@ class FFmpegRecorder:
             # フィルタグラフの過剰スレッド生成を抑止してゲームのCPU競合を防止
             cmd.extend(["-filter_threads", "1", "-filter_complex_threads", "1"])
 
-        use_d3d11_direct = is_nvenc and not force_sw_download
+        # NVENCとAMD AMFはD3D11テクスチャの直接入力に対応しているためゼロコピーで処理する
+        use_d3d11_direct = (is_nvenc or is_amf) and not force_sw_download
+        # Intel QSVはGPU上のscale_d3d11で縮小後にネイティブのnv12へ変換してCPU負荷と転送量を最小化する
+        use_qsv_gpu_scale = is_qsv and not force_sw_download
         if use_d3d11_direct:
             cmd.extend(["-init_hw_device", "d3d11va"])
             d3d_scale = f",scale_d3d11=w={target_w}:h={target_h}" if needs_scale else ""
             video_filter = f"ddagrab=output_idx=0:framerate={fps}:draw_mouse=1{d3d_scale}[v_out];"
+        elif use_qsv_gpu_scale:
+            cmd.extend(["-init_hw_device", "d3d11va"])
+            d3d_scale = f",scale_d3d11=w={target_w}:h={target_h}" if needs_scale else ""
+            video_filter = (
+                f"ddagrab=output_idx=0:framerate={fps}:draw_mouse=1{d3d_scale},"
+                f"hwdownload,format=bgra,format=nv12[v_out];"
+            )
         else:
+            out_pix_fmt = "nv12" if (is_nvenc or is_amf or is_qsv) else "yuv420p"
             sw_flag = "neighbor" if is_lightweight else "fast_bilinear"
             scale_part = f",scale={target_w}:{target_h}:flags={sw_flag}" if needs_scale else ""
             video_filter = (
                 f"ddagrab=output_idx=0:framerate={fps}:draw_mouse=1,"
-                f"hwdownload,format=bgra{scale_part},format=yuv420p[v_out];"
+                f"hwdownload,format=bgra{scale_part},format={out_pix_fmt}[v_out];"
             )
 
         if is_nvenc:
@@ -295,32 +315,34 @@ class FFmpegRecorder:
             if is_lightweight:
                 encoder_opts.extend(["-spatial-aq", "0", "-temporal-aq", "0", "-rc-lookahead", "0", "-no-scenecut", "1"])
         elif is_amf:
-            amf_br = "6M" if is_lightweight else "12M"
-            amf_max = "8M" if is_lightweight else "16M"
-            amf_buf = "16M" if is_lightweight else "32M"
+            amf_usage = "ultralowlatency" if is_lightweight else "lowlatency"
+            amf_rc = "vbr_latency" if is_lightweight else "vbr_peak"
+            amf_br = "6M" if is_lightweight else "14M"
+            amf_max = "8M" if is_lightweight else "20M"
+            amf_buf = "16M" if is_lightweight else "40M"
             encoder_opts = [
                 "-c:v", self.actual_encoder,
-                "-usage", "ultralowlatency",
+                "-usage", amf_usage,
                 "-quality", "speed",
+                "-rc", amf_rc,
                 "-b:v", amf_br,
                 "-maxrate", amf_max,
                 "-bufsize", amf_buf,
                 "-g", gop_size,
             ]
         elif is_qsv:
-            qsv_br = "6M" if is_lightweight else "12M"
-            qsv_max = "8M" if is_lightweight else "16M"
-            qsv_buf = "16M" if is_lightweight else "32M"
+            qsv_br = "6M" if is_lightweight else "14M"
+            qsv_max = "8M" if is_lightweight else "20M"
+            qsv_buf = "16M" if is_lightweight else "40M"
             encoder_opts = [
                 "-c:v", self.actual_encoder,
                 "-preset", "veryfast",
+                "-async_depth", "1" if is_lightweight else "4",
                 "-b:v", qsv_br,
                 "-maxrate", qsv_max,
                 "-bufsize", qsv_buf,
                 "-g", gop_size,
             ]
-            if is_lightweight:
-                encoder_opts.extend(["-async_depth", "1"])
         else:
             encoder_opts = [
                 "-c:v", self.actual_encoder,
@@ -337,6 +359,8 @@ class FFmpegRecorder:
                     "-threads", "2",
                     "-x264-params", "sliced-threads=0:sync-lookahead=0:rc-lookahead=0:ref=1:subme=0:me=dia:trellis=0",
                 ])
+            else:
+                encoder_opts.extend(["-threads", "4"])
 
         # C++側AudioProcessorでノイズ抑制とクランプが完結しているため、FFmpeg側での重複フィルタによる音質劣化・こもりを防止
         audio_filter = (
@@ -393,7 +417,8 @@ class FFmpegRecorder:
             os.makedirs(self.config.SAVE_DIR, exist_ok=True)
 
             is_lightweight = bool(getattr(self.config, 'LIGHTWEIGHT_MODE', False))
-            cmd_str = self._build_ffmpeg_command(force_sw_download=False)
+            force_sw = self.actual_encoder in self._sw_download_fallback_encoders
+            cmd_str = self._build_ffmpeg_command(force_sw_download=force_sw)
 
             gate_level = float(getattr(self.config, 'RECORD_AUDIO_MIC_NOISE_GATE', '0')) / 100.0
             denoise_str = str(getattr(self.config, 'RECORD_AUDIO_MIC_DENOISE', 'None')).lower()
@@ -472,9 +497,9 @@ class FFmpegRecorder:
                 time.sleep(0.4)
                 started_ok = self.native_lib.Recorder_IsRunning()
 
-            # Optimus環境やHDRデスクトップ等でD3D11直結が失敗した場合、互換性の高いhwdownloadパイプラインで自動再試行
-            if not started_ok and "nvenc" in self.actual_encoder.lower() and "hwdownload" not in cmd_str:
-                logging.warning("[FFmpegRecorder] Direct D3D11 NVENC capture failed. Retrying with hwdownload compatibility mode...")
+            # マルチGPU(Optimus/SmartAccess Graphics)やHDR環境等でD3D11直結・GPUスケールが失敗した場合、互換モードで自動再試行
+            if not started_ok and not force_sw and self.actual_encoder != "libx264":
+                logging.warning(f"[FFmpegRecorder] Direct D3D11 pipeline for {self.actual_encoder} failed. Retrying with hwdownload compatibility mode...")
                 try:
                     self.native_lib.Recorder_Stop()
                 except Exception:
@@ -482,6 +507,24 @@ class FFmpegRecorder:
                 cmd_str = self._build_ffmpeg_command(force_sw_download=True)
                 config_struct.ffmpeg_command = cmd_str.encode('utf-8')
                 logging.info(f"[FFmpegRecorder] Fallback Command: {cmd_str}")
+                started_ok = self.native_lib.Recorder_Start(ctypes.byref(config_struct))
+                if started_ok:
+                    time.sleep(0.4)
+                    started_ok = self.native_lib.Recorder_IsRunning()
+                if started_ok:
+                    self._sw_download_fallback_encoders.add(self.actual_encoder)
+
+            # ハードウェアエンコーダ自体が実録画解像度で初期化失敗した場合、ソフトウェアエンコーダ(libx264)で救済
+            if not started_ok and self.actual_encoder != "libx264":
+                logging.warning(f"[FFmpegRecorder] Hardware encoder {self.actual_encoder} failed. Falling back to libx264...")
+                try:
+                    self.native_lib.Recorder_Stop()
+                except Exception:
+                    pass
+                self.actual_encoder = "libx264"
+                cmd_str = self._build_ffmpeg_command(force_sw_download=True)
+                config_struct.ffmpeg_command = cmd_str.encode('utf-8')
+                logging.info(f"[FFmpegRecorder] Software Fallback Command: {cmd_str}")
                 started_ok = self.native_lib.Recorder_Start(ctypes.byref(config_struct))
                 if started_ok:
                     time.sleep(0.4)
