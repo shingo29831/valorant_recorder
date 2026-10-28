@@ -8,6 +8,100 @@ from ui.settings_utils import change_save_directory
 from core.autostart import set_autostart
 import logging
 
+"""Module: @role: 一般設定画面のUI構築および言語・保存先・自動起動・ログ・更新確認の操作ハンドリングを担当する。"""
+import os
+import shutil
+import sys
+from typing import Optional
+from PyQt6.QtCore import QTimer, QUrl
+from PyQt6.QtGui import QDesktopServices, QGuiApplication
+from PyQt6.QtWidgets import (
+    QCheckBox,
+    QComboBox,
+    QDialog,
+    QFileDialog,
+    QFormLayout,
+    QHBoxLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QSpinBox,
+    QVBoxLayout,
+    QWidget,
+)
+
+RUN_REGISTRY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
+APP_AUTORUN_NAME = "ValorantRecorder"
+
+
+def set_autostart(enabled: bool) -> None:
+    if sys.platform != "win32":
+        return
+    try:
+        import winreg
+        with winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            RUN_REGISTRY_PATH,
+            0,
+            winreg.KEY_SET_VALUE,
+        ) as key:
+            if enabled:
+                if getattr(sys, "frozen", False) or "__compiled__" in globals():
+                    cmd = f'"{sys.executable}" --tray'
+                else:
+                    script_path = os.path.abspath(sys.argv[0])
+                    cmd = f'"{sys.executable}" "{script_path}" --tray'
+                winreg.SetValueEx(key, APP_AUTORUN_NAME, 0, winreg.REG_SZ, cmd)
+            else:
+                try:
+                    winreg.DeleteValue(key, APP_AUTORUN_NAME)
+                except FileNotFoundError:
+                    pass
+    except OSError as e:
+        print(f"[SettingsGeneral] Failed to update autostart registry: {e}", file=sys.stderr)
+
+
+def change_save_directory(
+    parent: QWidget,
+    current_dir: str,
+    t: object,
+    suffix: str = "/valorant_records",
+) -> Optional[str]:
+    start_dir = current_dir if current_dir and os.path.exists(current_dir) else os.path.expanduser("~")
+    selected_dir = QFileDialog.getExistingDirectory(
+        parent,
+        getattr(t, "browse", "Select Directory"),
+        start_dir,
+    )
+    if not selected_dir:
+        return None
+
+    normalized = selected_dir.replace("\\", "/").rstrip("/")
+    clean_suffix = suffix.replace("\\", "/")
+    if clean_suffix and not normalized.lower().endswith(clean_suffix.lower()):
+        new_dir = f"{normalized}{clean_suffix}"
+    else:
+        new_dir = normalized
+
+    if current_dir and os.path.abspath(new_dir) == os.path.abspath(current_dir):
+        return None
+
+    try:
+        os.makedirs(new_dir, exist_ok=True)
+        if current_dir and os.path.isdir(current_dir):
+            for entry in os.listdir(current_dir):
+                src_path = os.path.join(current_dir, entry)
+                dst_path = os.path.join(new_dir, entry)
+                if not os.path.exists(dst_path):
+                    shutil.move(src_path, dst_path)
+    except OSError as e:
+        QMessageBox.warning(parent, "Error", f"Failed to prepare directory: {e}")
+        return None
+
+    return new_dir
+
+
 class GeneralSettingsWidget(QWidget):
     def __init__(self, config, t, parent=None):
         super().__init__(parent)
