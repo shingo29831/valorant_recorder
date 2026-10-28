@@ -254,7 +254,7 @@ class AudioSettingsWidget(QWidget):
     def _save_settings(self):
         self.config.RECORD_AUDIO_SYSTEM_GAIN = str(self.system_gain_slider.value() / 100.0)
         mic_val = self.mic_input.currentText()
-        self.config.RECORD_AUDIO_MIC = "" if mic_val == "None" else mic_val
+        self.config.RECORD_AUDIO_MIC = "None" if mic_val == "None" else mic_val
         self.config.RECORD_AUDIO_MIC_GAIN = str(self.mic_gain_slider.value() / 100.0)
         self.config.RECORD_AUDIO_MIC_NOISE_GATE = str(self.mic_gate_slider.value())
         self.config.RECORD_AUDIO_MIC_DENOISE = self.mic_denoise_combo.currentText()

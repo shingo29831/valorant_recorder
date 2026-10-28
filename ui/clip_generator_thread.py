@@ -19,14 +19,14 @@ class ClipGeneratorThread(QThread):
         
     def _build_encoder_args(self, encoder: str) -> list[str]:
         enc_lower = (encoder or "").lower()
+        tag_opts = ["-tag:v", "hvc1"] if "hevc" in enc_lower else []
         if "nvenc" in enc_lower:
-            return ["-c:v", encoder, "-preset", "p4", "-rc", "vbr", "-cq", "20", "-b:v", "10M", "-maxrate", "15M", "-bufsize", "30M"]
+            return ["-pix_fmt", "nv12", "-c:v", encoder, "-preset", "p4", "-rc", "vbr", "-cq", "20", "-b:v", "10M", "-maxrate", "15M", "-bufsize", "30M", *tag_opts]
         if "amf" in enc_lower:
-            # AMFは-presetオプションを持たないため専用パラメータを指定
-            return ["-c:v", encoder, "-usage", "transcoding", "-quality", "balanced", "-rc", "vbr_peak", "-b:v", "10M", "-maxrate", "15M", "-bufsize", "30M"]
+            return ["-pix_fmt", "nv12", "-c:v", encoder, "-usage", "transcoding", "-quality", "balanced", "-rc", "vbr_peak", "-b:v", "10M", "-maxrate", "15M", "-bufsize", "30M", *tag_opts]
         if "qsv" in enc_lower:
-            return ["-c:v", encoder, "-preset", "veryfast", "-b:v", "10M", "-maxrate", "15M", "-bufsize", "30M"]
-        return ["-c:v", encoder or "libx264", "-preset", "veryfast", "-crf", "22", "-maxrate", "12M", "-bufsize", "24M"]
+            return ["-pix_fmt", "nv12", "-c:v", encoder, "-preset", "veryfast", "-b:v", "10M", "-maxrate", "15M", "-bufsize", "30M", *tag_opts]
+        return ["-pix_fmt", "yuv420p", "-c:v", encoder or "libx264", "-preset", "veryfast", "-crf", "22", "-maxrate", "12M", "-bufsize", "24M"]
 
     def _build_command(self, encoder: str, start_sec: float, duration: float) -> list[str]:
         cmd = [
@@ -38,11 +38,11 @@ class ClipGeneratorThread(QThread):
             "-map", "0:v:0",
         ]
         cmd.extend(self._build_encoder_args(encoder))
-        cmd.extend(["-c:a", "aac", "-b:a", "192k"])
+        cmd.extend(["-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"])
 
-        # 2トラック構成: Track 0(システム音) と Track 1(マイク音) を指定比率で合成
+        # amixのデフォルト正規化(音量半減)をnormalize=0で防ぎユーザー設定音量を維持
         if self.audio_track_count >= 2:
-            filter_complex = f"[0:a:0]volume={self.sys_volume}[a0];[0:a:1]volume={self.mic_volume}[a1];[a0][a1]amix=inputs=2:duration=longest[aout]"
+            filter_complex = f"[0:a:0]volume={self.sys_volume}[a0];[0:a:1]volume={self.mic_volume}[a1];[a0][a1]amix=inputs=2:duration=longest:normalize=0[aout]"
             cmd.extend(["-filter_complex", filter_complex, "-map", "[aout]"])
         else:
             filter_complex = f"[0:a:0]volume={self.sys_volume}[aout]"

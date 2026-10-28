@@ -242,18 +242,36 @@ class FFmpegRecorder:
             return f"arnndn=m='{short_p}',"
         return ""
 
-    def _build_ffmpeg_command(self, force_sw_download: bool = False) -> str:
+    def _build_ffmpeg_command(self, force_sw_download: bool = False, force_gdigrab: bool = False) -> str:
         is_lightweight = bool(getattr(self.config, 'LIGHTWEIGHT_MODE', False))
         enc_lower = self.actual_encoder.lower()
         is_nvenc = "nvenc" in enc_lower
         is_amf = "amf" in enc_lower
         is_qsv = "qsv" in enc_lower
 
-        fps = str(getattr(self.config, 'RECORD_FPS', '60'))
+        try:
+            fps_int = max(1, int(getattr(self.config, 'RECORD_FPS', '60')))
+        except (ValueError, TypeError):
+            fps_int = 60
+        fps = str(fps_int)
         gop_size = fps
         target_w, target_h = self._parse_target_resolution()
         screen_w, screen_h = self._get_desktop_resolution()
         needs_scale = (target_w != screen_w or target_h != screen_h)
+
+        # 高解像度(1440p以上)や高FPS(120以上)での画質破綻を防ぐためビットレート上限をスケーリング
+        is_high_bandwidth = (target_w * target_h > 1920 * 1080) or (fps_int >= 120)
+
+        video_fmt = str(getattr(self.config, 'RECORD_VIDEO_FORMAT', 'ddagrab')).strip().lower()
+        use_gdigrab = force_gdigrab or (video_fmt == "gdigrab")
+        input_source = str(getattr(self.config, 'RECORD_INPUT_SOURCE', 'desktop')).strip() or "desktop"
+        output_idx = "0"
+        if input_source.isdigit():
+            output_idx = input_source
+        elif input_source.startswith("output_idx="):
+            idx_cand = input_source.split("=", 1)[1].strip()
+            if idx_cand.isdigit():
+                output_idx = idx_cand
 
         # Windowsのコロンを含むパスでFFmpegがクラッシュする原因となるFFREPORT環境変数を排除
         os.environ.pop("FFREPORT", None)
@@ -267,36 +285,40 @@ class FFmpegRecorder:
             # フィルタグラフの過剰スレッド生成を抑止してゲームのCPU競合を防止
             cmd.extend(["-filter_threads", "1", "-filter_complex_threads", "1"])
 
+        out_pix_fmt = "nv12" if (is_nvenc or is_amf or is_qsv) else "yuv420p"
+        sw_flag = "neighbor" if is_lightweight else "fast_bilinear"
+
         # NVENCとAMD AMFはD3D11テクスチャの直接入力に対応しているためゼロコピーで処理する
-        use_d3d11_direct = (is_nvenc or is_amf) and not force_sw_download
-        # Intel QSVはGPU上のscale_d3d11で縮小後にネイティブのnv12へ変換してCPU負荷と転送量を最小化する
-        use_qsv_gpu_scale = is_qsv and not force_sw_download
-        if use_d3d11_direct:
+        use_d3d11_direct = (not use_gdigrab) and (is_nvenc or is_amf) and not force_sw_download
+        # Intel QSVはGPU上のscale_d3d11で縮小後にnv12へ変換する（マルチGPU競合回避のためグローバルd3d11vaは指定しない）
+        use_qsv_gpu_scale = (not use_gdigrab) and is_qsv and not force_sw_download
+
+        if use_gdigrab:
+            scale_part = f"scale={target_w}:{target_h}:flags={sw_flag}," if needs_scale else ""
+            video_filter = f"[1:v]{scale_part}format={out_pix_fmt}[v_out];"
+        elif use_d3d11_direct:
             cmd.extend(["-init_hw_device", "d3d11va"])
             d3d_scale = f",scale_d3d11=w={target_w}:h={target_h}" if needs_scale else ""
-            video_filter = f"ddagrab=output_idx=0:framerate={fps}:draw_mouse=1{d3d_scale}[v_out];"
+            video_filter = f"ddagrab=output_idx={output_idx}:framerate={fps}:draw_mouse=1{d3d_scale}[v_out];"
         elif use_qsv_gpu_scale:
-            cmd.extend(["-init_hw_device", "d3d11va"])
             d3d_scale = f",scale_d3d11=w={target_w}:h={target_h}" if needs_scale else ""
             video_filter = (
-                f"ddagrab=output_idx=0:framerate={fps}:draw_mouse=1{d3d_scale},"
+                f"ddagrab=output_idx={output_idx}:framerate={fps}:draw_mouse=1{d3d_scale},"
                 f"hwdownload,format=bgra,format=nv12[v_out];"
             )
         else:
-            out_pix_fmt = "nv12" if (is_nvenc or is_amf or is_qsv) else "yuv420p"
-            sw_flag = "neighbor" if is_lightweight else "fast_bilinear"
             scale_part = f",scale={target_w}:{target_h}:flags={sw_flag}" if needs_scale else ""
             video_filter = (
-                f"ddagrab=output_idx=0:framerate={fps}:draw_mouse=1,"
+                f"ddagrab=output_idx={output_idx}:framerate={fps}:draw_mouse=1,"
                 f"hwdownload,format=bgra{scale_part},format={out_pix_fmt}[v_out];"
             )
 
         if is_nvenc:
-            nv_preset = "p1" if is_lightweight else "p2"
+            nv_preset = "p1" if is_lightweight else "p3"
             nv_tune = "ull" if is_lightweight else "ll"
             nv_cq = "26" if is_lightweight else "20"
-            nv_maxrate = "8M" if is_lightweight else "20M"
-            nv_bufsize = "16M" if is_lightweight else "40M"
+            nv_maxrate = "8M" if is_lightweight else ("30M" if is_high_bandwidth else "20M")
+            nv_bufsize = "16M" if is_lightweight else ("60M" if is_high_bandwidth else "40M")
             encoder_opts = [
                 "-c:v", self.actual_encoder,
                 "-preset", nv_preset,
@@ -306,6 +328,7 @@ class FFmpegRecorder:
                 "-b:v", "0",
                 "-maxrate", nv_maxrate,
                 "-bufsize", nv_bufsize,
+                "-bf", "0",
                 "-delay", "0",
                 "-zerolatency", "1",
                 "-g", gop_size,
@@ -316,41 +339,48 @@ class FFmpegRecorder:
                 encoder_opts.extend(["-spatial-aq", "0", "-temporal-aq", "0", "-rc-lookahead", "0", "-no-scenecut", "1"])
         elif is_amf:
             amf_usage = "ultralowlatency" if is_lightweight else "lowlatency"
+            amf_quality = "speed" if is_lightweight else "balanced"
             amf_rc = "vbr_latency" if is_lightweight else "vbr_peak"
-            amf_br = "6M" if is_lightweight else "14M"
-            amf_max = "8M" if is_lightweight else "20M"
-            amf_buf = "16M" if is_lightweight else "40M"
+            amf_br = "6M" if is_lightweight else ("20M" if is_high_bandwidth else "14M")
+            amf_max = "8M" if is_lightweight else ("30M" if is_high_bandwidth else "20M")
+            amf_buf = "16M" if is_lightweight else ("60M" if is_high_bandwidth else "40M")
             encoder_opts = [
                 "-c:v", self.actual_encoder,
                 "-usage", amf_usage,
-                "-quality", "speed",
+                "-quality", amf_quality,
                 "-rc", amf_rc,
                 "-b:v", amf_br,
                 "-maxrate", amf_max,
                 "-bufsize", amf_buf,
                 "-g", gop_size,
             ]
+            if enc_lower == "h264_amf":
+                encoder_opts.extend(["-bf", "0"])
         elif is_qsv:
-            qsv_br = "6M" if is_lightweight else "14M"
-            qsv_max = "8M" if is_lightweight else "20M"
-            qsv_buf = "16M" if is_lightweight else "40M"
+            qsv_preset = "veryfast" if is_lightweight else "fast"
+            qsv_br = "6M" if is_lightweight else ("20M" if is_high_bandwidth else "14M")
+            qsv_max = "8M" if is_lightweight else ("30M" if is_high_bandwidth else "20M")
+            qsv_buf = "16M" if is_lightweight else ("60M" if is_high_bandwidth else "40M")
             encoder_opts = [
                 "-c:v", self.actual_encoder,
-                "-preset", "veryfast",
+                "-preset", qsv_preset,
                 "-async_depth", "1" if is_lightweight else "4",
                 "-b:v", qsv_br,
                 "-maxrate", qsv_max,
                 "-bufsize", qsv_buf,
+                "-bf", "0",
                 "-g", gop_size,
             ]
         else:
+            sw_max = "6M" if is_lightweight else ("22M" if is_high_bandwidth else "15M")
+            sw_buf = "12M" if is_lightweight else ("44M" if is_high_bandwidth else "30M")
             encoder_opts = [
                 "-c:v", self.actual_encoder,
                 "-preset", "ultrafast",
                 "-tune", "zerolatency",
                 "-crf", "28" if is_lightweight else "23",
-                "-maxrate", "6M" if is_lightweight else "15M",
-                "-bufsize", "12M" if is_lightweight else "30M",
+                "-maxrate", sw_max,
+                "-bufsize", sw_buf,
                 "-g", gop_size,
                 "-keyint_min", gop_size,
             ]
@@ -378,6 +408,17 @@ class FFmpegRecorder:
             "-ar", "48000",
             "-ac", "4",
             "-i", "pipe:0",
+        ])
+        if use_gdigrab:
+            gdi_src = input_source if not input_source.isdigit() and not input_source.startswith("output_idx=") else "desktop"
+            cmd.extend([
+                "-thread_queue_size", "512" if is_lightweight else "1024",
+                "-f", "gdigrab",
+                "-framerate", fps,
+                "-draw_mouse", "1",
+                "-i", gdi_src,
+            ])
+        cmd.extend([
             "-filter_complex", filter_complex,
             "-map", "[v_out]",
             "-map", "[a_sys]",
@@ -404,10 +445,9 @@ class FFmpegRecorder:
             return self.current_filepath
 
         try:
-            # 設定画面でエンコーダが変更された場合にリアルタイムで反映
-            if self.config.RECORD_ENCODER != self._last_configured_encoder:
-                self._last_configured_encoder = self.config.RECORD_ENCODER
-                self.actual_encoder = self._determine_encoder()
+            # ユーザーの設定変更や前回の一時フォールバックから復帰できるよう毎回エンコーダを確定
+            self._last_configured_encoder = self.config.RECORD_ENCODER
+            self.actual_encoder = self._determine_encoder()
 
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"match_record_{timestamp}.mp4"
@@ -436,6 +476,9 @@ class FFmpegRecorder:
             mic_gain = raw_mic_gain / 100.0 if raw_mic_gain > 10.0 else raw_mic_gain
             raw_sys_gain = float(getattr(self.config, 'RECORD_AUDIO_SYSTEM_GAIN', getattr(self.config, 'RECORD_AUDIO_SYS_GAIN', 1.0)))
             sys_gain = raw_sys_gain / 100.0 if raw_sys_gain > 10.0 else raw_sys_gain
+            sys_device = str(getattr(self.config, 'RECORD_AUDIO_SYSTEM', 'default')).strip()
+            if sys_device.lower() == 'none':
+                sys_gain = 0.0
 
             config_struct = RecorderConfig()
             config_struct.mic_gain = mic_gain
@@ -492,10 +535,16 @@ class FFmpegRecorder:
             logging.info(f"[FFmpegRecorder] Starting NativeRecorder. Encoder: {self.actual_encoder}, Lightweight: {is_lightweight}")
             logging.info(f"[FFmpegRecorder] Command: {cmd_str}")
 
-            started_ok = self.native_lib.Recorder_Start(ctypes.byref(config_struct))
-            if started_ok:
-                time.sleep(0.4)
-                started_ok = self.native_lib.Recorder_IsRunning()
+            def _try_start_and_verify() -> bool:
+                if not self.native_lib.Recorder_Start(ctypes.byref(config_struct)):
+                    return False
+                for _ in range(7):
+                    time.sleep(0.1)
+                    if not self.native_lib.Recorder_IsRunning():
+                        return False
+                return self.native_lib.Recorder_IsRunning()
+
+            started_ok = _try_start_and_verify()
 
             # マルチGPU(Optimus/SmartAccess Graphics)やHDR環境等でD3D11直結・GPUスケールが失敗した場合、互換モードで自動再試行
             if not started_ok and not force_sw and self.actual_encoder != "libx264":
@@ -507,12 +556,22 @@ class FFmpegRecorder:
                 cmd_str = self._build_ffmpeg_command(force_sw_download=True)
                 config_struct.ffmpeg_command = cmd_str.encode('utf-8')
                 logging.info(f"[FFmpegRecorder] Fallback Command: {cmd_str}")
-                started_ok = self.native_lib.Recorder_Start(ctypes.byref(config_struct))
-                if started_ok:
-                    time.sleep(0.4)
-                    started_ok = self.native_lib.Recorder_IsRunning()
+                started_ok = _try_start_and_verify()
                 if started_ok:
                     self._sw_download_fallback_encoders.add(self.actual_encoder)
+
+            # ハイブリッドGPU環境等でddagrab自体がDXGI複製非対応の場合、gdigrab互換モードで再試行
+            video_fmt = str(getattr(self.config, 'RECORD_VIDEO_FORMAT', 'ddagrab')).strip().lower()
+            if not started_ok and video_fmt != "gdigrab":
+                logging.warning(f"[FFmpegRecorder] ddagrab failed with {self.actual_encoder}. Retrying with gdigrab compatibility mode...")
+                try:
+                    self.native_lib.Recorder_Stop()
+                except Exception:
+                    pass
+                cmd_str = self._build_ffmpeg_command(force_sw_download=True, force_gdigrab=True)
+                config_struct.ffmpeg_command = cmd_str.encode('utf-8')
+                logging.info(f"[FFmpegRecorder] GDI Fallback Command: {cmd_str}")
+                started_ok = _try_start_and_verify()
 
             # ハードウェアエンコーダ自体が実録画解像度で初期化失敗した場合、ソフトウェアエンコーダ(libx264)で救済
             if not started_ok and self.actual_encoder != "libx264":
@@ -525,10 +584,7 @@ class FFmpegRecorder:
                 cmd_str = self._build_ffmpeg_command(force_sw_download=True)
                 config_struct.ffmpeg_command = cmd_str.encode('utf-8')
                 logging.info(f"[FFmpegRecorder] Software Fallback Command: {cmd_str}")
-                started_ok = self.native_lib.Recorder_Start(ctypes.byref(config_struct))
-                if started_ok:
-                    time.sleep(0.4)
-                    started_ok = self.native_lib.Recorder_IsRunning()
+                started_ok = _try_start_and_verify()
 
             if not started_ok:
                 err = self.native_lib.Recorder_GetLastError().decode('utf-8', errors='replace')
@@ -577,10 +633,14 @@ class FFmpegRecorder:
                     "-i", self.temp_filepath,
                     "-map", "0",
                     "-c", "copy",
+                ]
+                if "hevc" in self.actual_encoder.lower():
+                    remux_cmd.extend(["-tag:v", "hvc1"])
+                remux_cmd.extend([
                     "-movflags", "+faststart",
                     "-f", "mp4",
                     remux_temp_path
-                ]
+                ])
                 creationflags = 0
                 startupinfo = None
                 if os.name == 'nt':

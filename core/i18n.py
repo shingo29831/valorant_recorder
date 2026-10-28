@@ -160,6 +160,10 @@ class Translations:
     env_test_mixed_msg: str
     lightweight_mode: str
     auto_perf_control: str
+    video_format: str = "Capture Mode:"
+    system_audio_device: str = "System Audio:"
+    default_device: str = "Default"
+    mic_preprocess: str = "Pre-process (HPF):"
 
 EN = Translations(
     settings_title="APPLICATION SETTINGS",
@@ -319,7 +323,11 @@ EN = Translations(
     env_test_success_msg="All environment tests passed successfully:\n\n{successes}",
     env_test_mixed_msg="Test completed with some errors.\n\n[Passed]\n{successes}\n\n[Failed]\n{errors}",
     lightweight_mode="Enable Lightweight Mode (Low CPU/GPU & RAM usage)",
-    auto_perf_control="Enable Auto Performance Control (Prevent game FPS drops)"
+    auto_perf_control="Enable Auto Performance Control (Prevent game FPS drops)",
+    video_format="Capture Mode:",
+    system_audio_device="System Audio:",
+    default_device="Default",
+    mic_preprocess="Pre-process (HPF):"
 )
 
 JA = Translations(
@@ -480,7 +488,11 @@ JA = Translations(
     env_test_success_msg="すべての環境テストに成功しました:\n\n{successes}",
     env_test_mixed_msg="一部のテストに失敗しました。\n\n[成功]\n{successes}\n\n[失敗]\n{errors}",
     lightweight_mode="軽量モードを有効にする (低負荷録画・省メモリ動作)",
-    auto_perf_control="自動負荷コントロールを有効にする (ゲームのFPS低下を防ぐ)"
+    auto_perf_control="自動負荷コントロールを有効にする (ゲームのFPS低下を防ぐ)",
+    video_format="キャプチャ方式:",
+    system_audio_device="システム音声:",
+    default_device="既定のデバイス",
+    mic_preprocess="前処理 (HPF):"
 )
 
 def get_trans(lang_code: str) -> Translations:

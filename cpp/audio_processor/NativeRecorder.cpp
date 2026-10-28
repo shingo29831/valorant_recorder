@@ -443,7 +443,8 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
 
     NativeLog("Executing FFmpeg command: " + ffmpegCmd);
 
-    DWORD priorityClass = (configCopy.low_priority != 0) ? BELOW_NORMAL_PRIORITY_CLASS : ABOVE_NORMAL_PRIORITY_CLASS;
+    // ゲームプロセスの描画スレッドを阻害しないよう通常時はNORMAL_PRIORITY_CLASSで起動
+    DWORD priorityClass = (configCopy.low_priority != 0) ? BELOW_NORMAL_PRIORITY_CLASS : NORMAL_PRIORITY_CLASS;
     if (!CreateProcessA(NULL, cmdBuf.data(), NULL, NULL, TRUE, CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | priorityClass, NULL, NULL, &si, &pi)) {
         DWORD err = GetLastError();
         SetLastErrorMsg("Failed to start FFmpeg process (CreateProcessA error: " + std::to_string(err) + ")");
@@ -558,6 +559,13 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
     const size_t initialCushionSamples = framesPerChunk * 5 * 2;
     auto syncWaitStart = std::chrono::steady_clock::now();
     while (g_isRunning) {
+        if (WaitForSingleObject(pi.hProcess, 0) == WAIT_OBJECT_0) {
+            DWORD exitCode = 0;
+            GetExitCodeProcess(pi.hProcess, &exitCode);
+            SetLastErrorMsg("FFmpeg process exited during initialization with code " + std::to_string(exitCode));
+            g_isRunning = false;
+            break;
+        }
         auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - syncWaitStart
         ).count();
@@ -623,6 +631,14 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
     NativeLog("Entering main recording loop (A/V Aligned 48kHz Pipeline)...");
 
     while (g_isRunning) {
+        if (WaitForSingleObject(pi.hProcess, 0) == WAIT_OBJECT_0) {
+            DWORD exitCode = 0;
+            GetExitCodeProcess(pi.hProcess, &exitCode);
+            SetLastErrorMsg("FFmpeg process terminated unexpectedly with code " + std::to_string(exitCode));
+            g_isRunning = false;
+            break;
+        }
+
         auto now = std::chrono::steady_clock::now();
         double elapsedSec = std::chrono::duration<double>(now - startTime).count();
         uint64_t targetFrames = static_cast<uint64_t>(elapsedSec * 48000.0);
@@ -632,13 +648,6 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
         }
 
         if (std::chrono::duration_cast<std::chrono::seconds>(now - lastLogTime).count() >= 5) {
-            if (WaitForSingleObject(pi.hProcess, 0) == WAIT_OBJECT_0) {
-                DWORD exitCode = 0;
-                GetExitCodeProcess(pi.hProcess, &exitCode);
-                SetLastErrorMsg("FFmpeg process terminated unexpectedly with code " + std::to_string(exitCode));
-                g_isRunning = false;
-                break;
-            }
             NativeLog("Status: Running. Total frames written: " + std::to_string(totalWrittenFrames) + 
                       ", Target: " + std::to_string(targetFrames));
             lastLogTime = now;

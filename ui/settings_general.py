@@ -27,6 +27,27 @@ class GeneralSettingsWidget(QWidget):
             self.language_input.setCurrentIndex(index)
             
         self.language_input.currentIndexChanged.connect(self._on_language_changed)
+
+        self.riot_id_input = QLineEdit(self.config.RIOT_ID)
+        self.riot_id_input.editingFinished.connect(self._save_settings)
+
+        self.tag_line_input = QLineEdit(self.config.TAG_LINE)
+        self.tag_line_input.editingFinished.connect(self._save_settings)
+
+        self.fetch_riot_btn = QPushButton(self.t.fetch_from_valorant)
+        self.fetch_riot_btn.clicked.connect(self._fetch_from_valorant)
+
+        riot_layout = QHBoxLayout()
+        riot_layout.addWidget(self.riot_id_input, stretch=2)
+        riot_layout.addWidget(QLabel("#"))
+        riot_layout.addWidget(self.tag_line_input, stretch=1)
+        riot_layout.addWidget(self.fetch_riot_btn)
+
+        self.region_input = QComboBox()
+        self.region_input.addItems(["ap", "na", "eu", "kr", "latam", "br"])
+        if self.config.REGION in ["ap", "na", "eu", "kr", "latam", "br"]:
+            self.region_input.setCurrentText(self.config.REGION)
+        self.region_input.currentTextChanged.connect(self._save_settings)
         
         self.save_dir_input = QLineEdit(self.config.SAVE_DIR)
         self.save_dir_input.setReadOnly(True)
@@ -79,6 +100,8 @@ class GeneralSettingsWidget(QWidget):
         log_layout.addWidget(self.copy_log_btn)
         
         layout.addRow(self.t.language, self.language_input)
+        layout.addRow(self.t.riot_id, riot_layout)
+        layout.addRow(self.t.region, self.region_input)
         layout.addRow(self.t.save_directory, save_dir_layout)
         layout.addRow(self.t.clip_save_directory, clip_dir_layout)
         layout.addRow(self.t.auto_delete_after_days, auto_delete_layout)
@@ -101,6 +124,8 @@ class GeneralSettingsWidget(QWidget):
     def _on_env_test_finished(self, successes, errors):
         self.run_test_btn.setEnabled(True)
         self.run_test_btn.setText(getattr(self.t, 'run_env_test', "Run Environment Test"))
+        if self.parent_tab and hasattr(self.parent_tab, 'record_widget') and hasattr(self.parent_tab.record_widget, 'refresh_from_config'):
+            self.parent_tab.record_widget.refresh_from_config()
         
         if not errors:
             title = getattr(self.t, 'env_test_success_title', "Test Passed")
@@ -270,9 +295,56 @@ class GeneralSettingsWidget(QWidget):
         else:
             self.auto_delete_spin.setValue(self.config.AUTO_DELETE_DAYS)
 
+    def _fetch_from_valorant(self):
+        try:
+            from scripts.get_local_api_info import get_current_player, get_client_region
+            name, tag = get_current_player()
+            region = get_client_region()
+            if name and tag:
+                self.riot_id_input.setText(name)
+                self.tag_line_input.setText(tag)
+                if region and region in ["ap", "na", "eu", "kr", "latam", "br"]:
+                    self.region_input.blockSignals(True)
+                    self.region_input.setCurrentText(region)
+                    self.region_input.blockSignals(False)
+                self._save_settings()
+                QMessageBox.information(self, "Success", self.t.fetch_success)
+            else:
+                QMessageBox.warning(self, "Failed", self.t.fetch_failed)
+        except Exception:
+            QMessageBox.warning(self, "Failed", self.t.fetch_failed)
+
+    def refresh_from_config(self):
+        self.riot_id_input.blockSignals(True)
+        self.riot_id_input.setText(self.config.RIOT_ID)
+        self.riot_id_input.blockSignals(False)
+
+        self.tag_line_input.blockSignals(True)
+        self.tag_line_input.setText(self.config.TAG_LINE)
+        self.tag_line_input.blockSignals(False)
+
+        if self.config.REGION in ["ap", "na", "eu", "kr", "latam", "br"]:
+            self.region_input.blockSignals(True)
+            self.region_input.setCurrentText(self.config.REGION)
+            self.region_input.blockSignals(False)
+
+        self.save_dir_input.setText(self.config.SAVE_DIR)
+        self.clip_dir_input.setText(self.config.CLIP_SAVE_DIR)
+
+        self.auto_delete_spin.blockSignals(True)
+        self.auto_delete_spin.setValue(self.config.AUTO_DELETE_DAYS)
+        self.auto_delete_spin.blockSignals(False)
+
+        self.auto_start_checkbox.blockSignals(True)
+        self.auto_start_checkbox.setChecked(self.config.AUTO_START)
+        self.auto_start_checkbox.blockSignals(False)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.refresh_from_config()
+
     def _save_settings(self):
+        self.config.RIOT_ID = self.riot_id_input.text().strip()
+        self.config.TAG_LINE = self.tag_line_input.text().strip()
         self.config.REGION = self.region_input.currentText()
-        self.config.RECORD_FPS = self.fps_input.currentText()
-        self.config.RECORD_ENCODER = self.encoder_input.currentText()
-        self.config.RECORD_RESOLUTION = self.res_input.currentText()
         self.config.save()

@@ -4,9 +4,10 @@ import numpy as np
 class SystemAudioMonitorThread(QThread):
     level_ready = pyqtSignal(float)
 
-    def __init__(self, gain):
+    def __init__(self, gain, device_name="default"):
         super().__init__()
         self.gain = gain
+        self.device_name = device_name
         self.running = True
         self.current_limiter_gain = 1.0
 
@@ -56,7 +57,14 @@ class SystemAudioMonitorThread(QThread):
             sc_lock = getattr(sc, '_lock', threading.RLock())
 
             with sc_lock:
-                speaker = sc.default_speaker()
+                speaker = None
+                if self.device_name and self.device_name not in ("default", "Default", "None"):
+                    for s in sc.all_speakers():
+                        if s.name == self.device_name or self.device_name in s.name:
+                            speaker = s
+                            break
+                if speaker is None:
+                    speaker = sc.default_speaker()
                 spk_mic = sc.get_microphone(speaker.id, include_loopback=True)
                 recorder = spk_mic.recorder(samplerate=48000, channels=2)
 
@@ -204,18 +212,19 @@ class MicMonitorThread(QThread):
             mic_device = None
             if self.mic_name and self.mic_name != "None":
                 with sc_lock:
-                    mics = sc.all_microphones(include_loopback=False)
-                # 完全一致を優先
-                for m in mics:
-                    if self.mic_name == m.name:
-                        mic_device = m
-                        break
-                # 見つからなければ部分一致
-                if mic_device is None:
-                    for m in mics:
-                        if self.mic_name in m.name:
-                            mic_device = m
-                            break
+                    if self.mic_name.lower() == "default":
+                        mic_device = sc.default_microphone()
+                    else:
+                        mics = sc.all_microphones(include_loopback=False)
+                        for m in mics:
+                            if self.mic_name == m.name:
+                                mic_device = m
+                                break
+                        if mic_device is None:
+                            for m in mics:
+                                if self.mic_name in m.name:
+                                    mic_device = m
+                                    break
 
             if mic_device is not None:
                 recorder = None

@@ -365,8 +365,12 @@ class PlayerVideoPage(QWidget):
         ffmpeg_path = ensure_ffmpeg_downloaded(app_data_dir)
         
         available, _ = get_available_encoders(ffmpeg_path)
-        h264_encoders = [enc for enc in available if "h264" in enc]
-        encoder = h264_encoders[0] if h264_encoders else "libx264"
+        configured_enc = getattr(self.config, 'RECORD_ENCODER', '')
+        if configured_enc and configured_enc in available:
+            encoder = configured_enc
+        else:
+            h264_encoders = [enc for enc in available if "h264" in enc]
+            encoder = h264_encoders[0] if h264_encoders else (available[0] if available else "libx264")
         
         self.edit_panel.set_generate_enabled(False, self.t.generating_clip)
         

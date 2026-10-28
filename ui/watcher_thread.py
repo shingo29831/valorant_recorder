@@ -37,8 +37,8 @@ class WatcherThread(QThread):
         self.recording_start_time = 0
         self.real_start_time = 0
         self._is_running = True
-        self.current_riot_id = None
-        self.current_tag_line = None
+        self.current_riot_id = self.config.RIOT_ID if self.config.RIOT_ID else None
+        self.current_tag_line = self.config.TAG_LINE if self.config.TAG_LINE else None
         self.current_region = self.config.REGION
         self._stop_timer = None
         self._is_manual_action = False
@@ -63,6 +63,10 @@ class WatcherThread(QThread):
                 
             self.log_signal.emit(self.t.log_player_detected.format(name=name, tag=tag, region=self.current_region))
         else:
+            if self.config.RIOT_ID and self.config.TAG_LINE:
+                self.current_riot_id = self.config.RIOT_ID
+                self.current_tag_line = self.config.TAG_LINE
+                self.current_region = self.config.REGION
             self.log_signal.emit(self.t.log_player_detect_failed)
 
     def start_manual_recording(self):
@@ -619,6 +623,10 @@ class WatcherThread(QThread):
                                 self.config.save()
                                 
                             self.log_signal.emit(self.t.log_bg_player_detected.format(name=name, tag=tag, region=self.current_region))
+                        elif self.config.RIOT_ID and self.config.TAG_LINE:
+                            self.current_riot_id = self.config.RIOT_ID
+                            self.current_tag_line = self.config.TAG_LINE
+                            self.current_region = self.config.REGION
                         else:
                             continue
                             

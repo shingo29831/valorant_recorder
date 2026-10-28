@@ -18,21 +18,38 @@ def test_encoder(ffmpeg_path: str, encoder: str) -> tuple[bool, str]:
     # QSV等のハードウェアエンコーダはyuv420p直接入力非対応の場合があるためネイティブのnv12を使用する
     pix_fmt = "nv12" if any(k in enc_lower for k in ("nvenc", "amf", "qsv")) else "yuv420p"
 
+    extra_opts = []
+    if "nvenc" in enc_lower or "qsv" in enc_lower or enc_lower == "h264_amf":
+        extra_opts = ["-bf", "0"]
+
     cmd = [
         ffmpeg_path,
         "-v", "error",
-        # NVENC等の最小解像度制限(144x144等)を回避するため、256x256でテストする
-        "-f", "lavfi", "-i", "color=black:s=256x256:r=1",
+        # NVENC/AMF/QSVの最小解像度・フレームレート制限を回避するため256x256@30fpsでテストする
+        "-f", "lavfi", "-i", "color=black:s=256x256:r=30",
         "-pix_fmt", pix_fmt,
         "-c:v", encoder,
+        *extra_opts,
         "-frames:v", "1",
         "-f", "null", "-"
     ]
     try:
         creationflags = subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
-        # text=Trueによるエンコーディングエラー(UnicodeDecodeError等)を防ぐためバイナリで取得
-        # FFmpegがハングアップして初期化がブロックするのを防ぐためタイムアウトを設定
         res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, creationflags=creationflags, timeout=5.0)
+        if res.returncode != 0 and "qsv" in enc_lower:
+            # マルチGPU環境でプライマリGPUが他社製の場合にQSVデバイスを明示初期化して再試行
+            qsv_cmd = [
+                ffmpeg_path,
+                "-v", "error",
+                "-init_hw_device", "qsv=hw",
+                "-f", "lavfi", "-i", "color=black:s=256x256:r=30",
+                "-pix_fmt", pix_fmt,
+                "-c:v", encoder,
+                *extra_opts,
+                "-frames:v", "1",
+                "-f", "null", "-"
+            ]
+            res = subprocess.run(qsv_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, creationflags=creationflags, timeout=5.0)
         if res.returncode != 0:
             err_msg = res.stderr.decode('utf-8', errors='replace') if res.stderr else ""
             result = (False, err_msg.strip())
