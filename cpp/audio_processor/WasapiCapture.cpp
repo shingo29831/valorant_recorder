@@ -48,15 +48,13 @@ bool WasapiCapture::Initialize() {
         return false;
     }
 
-    if (m_type == CaptureType::SystemLoopback) {
-        hr = pEnumerator->GetDefaultAudioEndpoint(eRender, eConsole, &m_device);
+    EDataFlow dataFlow = (m_type == CaptureType::SystemLoopback) ? eRender : eCapture;
+    if (m_deviceName.empty() || m_deviceName == "Default" || m_deviceName == "default") {
+        hr = pEnumerator->GetDefaultAudioEndpoint(dataFlow, eConsole, &m_device);
     } else {
-        if (m_deviceName.empty() || m_deviceName == "Default") {
-            hr = pEnumerator->GetDefaultAudioEndpoint(eCapture, eConsole, &m_device);
-        } else {
-            // デバイス名（UTF-8）による検索
-            IMMDeviceCollection* pCollection = nullptr;
-            hr = pEnumerator->EnumAudioEndpoints(eCapture, DEVICE_STATE_ACTIVE, &pCollection);
+        // デバイス名（UTF-8）による検索
+        IMMDeviceCollection* pCollection = nullptr;
+        hr = pEnumerator->EnumAudioEndpoints(dataFlow, DEVICE_STATE_ACTIVE, &pCollection);
             if (SUCCEEDED(hr)) {
                 UINT count = 0;
                 pCollection->GetCount(&count);
@@ -101,16 +99,15 @@ bool WasapiCapture::Initialize() {
                 }
                 SAFE_RELEASE(pCollection);
             }
-            if (!m_device) {
-                if (m_logger) {
-                    m_logger("Warning: Specified mic '" + m_deviceName + "' not found. Falling back to default capture device.");
-                }
-                hr = pEnumerator->GetDefaultAudioEndpoint(eCapture, eConsole, &m_device);
-                if (FAILED(hr) || !m_device) {
-                    SetError("Microphone device not found: " + m_deviceName + " and default fallback failed.");
-                    SAFE_RELEASE(pEnumerator);
-                    return false;
-                }
+        if (!m_device) {
+            if (m_logger) {
+                m_logger("Warning: Specified audio device '" + m_deviceName + "' not found. Falling back to default endpoint.");
+            }
+            hr = pEnumerator->GetDefaultAudioEndpoint(dataFlow, eConsole, &m_device);
+            if (FAILED(hr) || !m_device) {
+                SetError("Audio device not found: " + m_deviceName + " and default fallback failed.");
+                SAFE_RELEASE(pEnumerator);
+                return false;
             }
         }
     }

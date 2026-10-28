@@ -478,7 +478,12 @@ class FFmpegRecorder:
             sys_gain = raw_sys_gain / 100.0 if raw_sys_gain > 10.0 else raw_sys_gain
             sys_device = str(getattr(self.config, 'RECORD_AUDIO_SYSTEM', 'default')).strip()
             if sys_device.lower() == 'none':
+                os.environ["VALORECO_SYS_AUDIO_DEVICE"] = "__NONE__"
                 sys_gain = 0.0
+            elif not sys_device or sys_device.lower() == 'default':
+                os.environ["VALORECO_SYS_AUDIO_DEVICE"] = ""
+            else:
+                os.environ["VALORECO_SYS_AUDIO_DEVICE"] = sys_device
 
             config_struct = RecorderConfig()
             config_struct.mic_gain = mic_gain
