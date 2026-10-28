@@ -569,7 +569,7 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
         auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - syncWaitStart
         ).count();
-        bool hasCushion = (sysQueue.AvailableSamples() >= initialCushionSamples) &&
+        bool hasCushion = (!g_sysCapture || !g_sysCapture->IsInitialized() || sysQueue.AvailableSamples() >= initialCushionSamples) &&
                           (!g_micCapture || !g_micCapture->IsInitialized() || micQueue.AvailableSamples() >= initialCushionSamples);
         if ((ffmpegCaptureStarted && hasCushion) || elapsedMs >= 500) {
             break;
