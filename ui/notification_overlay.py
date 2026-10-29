@@ -61,7 +61,9 @@ class NotificationOverlay(QWidget):
 
         self.opacity_anim = QPropertyAnimation(self, b"windowOpacity")
         self.opacity_anim.setDuration(ANIMATION_DURATION_MS)
-        self._fade_out_connected = False
+        # Nuitka環境でのdisconnect例外を防ぐため常時接続しフラグで制御する
+        self._is_fading_out = False
+        self.opacity_anim.finished.connect(self._on_fade_out_finished)
 
         # show/hide切り替えによるアクティブ化を防ぐため常時表示状態で画面外に待機させる
         self.setWindowOpacity(0.0)
@@ -235,11 +237,9 @@ class NotificationOverlay(QWidget):
         )
 
     def show_message(self, message: str, duration: int = 3000) -> None:
+        self._is_fading_out = False
         if self.opacity_anim.state() == QPropertyAnimation.State.Running:
             self.opacity_anim.stop()
-        if self._fade_out_connected:
-            self.opacity_anim.finished.disconnect(self._on_fade_out_finished)
-            self._fade_out_connected = False
 
         x, y, target_screen = self._resolve_target_position()
         if target_screen is not None and self.windowHandle() is not None:
@@ -265,16 +265,16 @@ class NotificationOverlay(QWidget):
         self.timer.start(duration)
 
     def fade_out(self) -> None:
-        if not self._fade_out_connected:
-            self.opacity_anim.finished.connect(self._on_fade_out_finished)
-            self._fade_out_connected = True
+        if self.opacity_anim.state() == QPropertyAnimation.State.Running:
+            self.opacity_anim.stop()
+        self._is_fading_out = True
         self.opacity_anim.setStartValue(self.windowOpacity())
         self.opacity_anim.setEndValue(0.0)
         self.opacity_anim.setEasingCurve(QEasingCurve.Type.InQuad)
         self.opacity_anim.start()
 
     def _on_fade_out_finished(self) -> None:
-        if self._fade_out_connected:
-            self.opacity_anim.finished.disconnect(self._on_fade_out_finished)
-            self._fade_out_connected = False
+        if not self._is_fading_out:
+            return
+        self._is_fading_out = False
         self.move(OFFSCREEN_POS, OFFSCREEN_POS)
