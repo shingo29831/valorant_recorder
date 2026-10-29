@@ -69,10 +69,19 @@ class WatcherThread(QThread):
                 self.current_region = self.config.REGION
             self.log_signal.emit(self.t.log_player_detect_failed)
 
+    def _cancel_stop_timer(self):
+        if self._stop_timer is not None:
+            try:
+                self._stop_timer.cancel()
+            except Exception:
+                pass
+            self._stop_timer = None
+
     def start_manual_recording(self):
         if self.current_video_path is not None:
             self.log_signal.emit(self.t.log_manual_already_recording)
             return
+        self._cancel_stop_timer()
         self.recording_start_time = time.time()
         self.local_recording_start_time_ms = int(self.recording_start_time * 1000)
         self.real_match_end_time_ms = None
@@ -80,15 +89,16 @@ class WatcherThread(QThread):
         self.local_ability_events = []
         self._update_current_player()
         self.log_signal.emit(self.t.log_manual_starting)
+        self._is_manual_recording = True
         try:
             self.current_video_path = self.recorder.start_recording()
-            self._is_manual_recording = True
             self.log_signal.emit(self.t.log_manual_recording_to.format(path=self.current_video_path))
             self._is_manual_action = True
             self.recording_state_changed.emit(True)
             self._is_manual_action = False
         except Exception as e:
             self._is_manual_recording = False
+            self.current_video_path = None
             err_str = str(e)
             try:
                 msg = self.t.log_manual_start_failed.format(error=err_str)
@@ -101,12 +111,15 @@ class WatcherThread(QThread):
     def stop_manual_recording(self):
         if self.current_video_path is None:
             return
+        self._cancel_stop_timer()
         self.log_signal.emit(self.t.log_manual_stopping)
         self._is_manual_action = True
         self._stop_and_process_recording()
         self._is_manual_action = False
 
     def handle_real_match_end(self):
+        if self._is_manual_recording:
+            return
         self.log_signal.emit(self.t.log_real_match_end)
         if self.current_video_path is not None:
             self.log_signal.emit(self.t.log_stopping_real_match_end)
@@ -127,10 +140,14 @@ class WatcherThread(QThread):
             
         self.real_match_end_time_ms = None
 
+        if self._is_manual_recording and self.current_video_path is not None:
+            self._cancel_stop_timer()
+            self.log_signal.emit(self.t.log_already_recording_cont)
+            return
+
         # 遅延停止タイマーが動いている間に次の試合が始まった場合、タイマーをキャンセルして即座に前の録画を終了する
         if self._stop_timer is not None:
-            self._stop_timer.cancel()
-            self._stop_timer = None
+            self._cancel_stop_timer()
             if self.current_video_path is not None:
                 self.log_signal.emit(self.t.log_new_match_during_delay)
                 self._stop_and_process_recording()
@@ -193,6 +210,9 @@ class WatcherThread(QThread):
             self.recorder.set_low_priority()
 
     def handle_match_end(self, is_range: bool):
+        if self._is_manual_recording:
+            return
+
         if self._is_range_match(is_range):
             return
 
@@ -203,11 +223,11 @@ class WatcherThread(QThread):
         self.real_match_end_time_ms = int(time.time() * 1000)
         self.log_signal.emit(self.t.log_match_ended_wait)
         
-        if self._stop_timer is not None:
-            self._stop_timer.cancel()
+        self._cancel_stop_timer()
             
         def delayed_stop(video_path_to_stop):
-            if self.current_video_path == video_path_to_stop:
+            self._stop_timer = None
+            if not self._is_manual_recording and self.current_video_path == video_path_to_stop:
                 self.log_signal.emit(self.t.log_stopping_after_delay)
                 self._stop_and_process_recording()
 
@@ -215,6 +235,7 @@ class WatcherThread(QThread):
         self._stop_timer.start()
 
     def _stop_and_process_recording(self):
+        self._cancel_stop_timer()
         self.recording_end_time = time.time()
         
         video_path = self.current_video_path

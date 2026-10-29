@@ -2,6 +2,7 @@ import subprocess
 import os
 import ctypes
 import logging
+import threading
 import time
 from datetime import datetime
 from core.config import Config
@@ -78,6 +79,7 @@ class FFmpegRecorder:
         self.config = config
         self.current_filepath = None
         self.temp_filepath = None
+        self._lock = threading.Lock()
         
         self.app_data_dir = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'ValoReco')
         os.makedirs(self.app_data_dir, exist_ok=True)
@@ -293,24 +295,25 @@ class FFmpegRecorder:
         # Intel QSVはGPU上のscale_d3d11で縮小後にnv12へ変換する（マルチGPU競合回避のためグローバルd3d11vaは指定しない）
         use_qsv_gpu_scale = (not use_gdigrab) and is_qsv and not force_sw_download
 
+        # ddagrab(QPC時刻)とpipe:0(0起点)のPTS乖離による多重化キュー溢れを防ぐためPTSを0起点へ正規化
         if use_gdigrab:
             scale_part = f"scale={target_w}:{target_h}:flags={sw_flag}," if needs_scale else ""
-            video_filter = f"[1:v]{scale_part}format={out_pix_fmt}[v_out];"
+            video_filter = f"[1:v]setpts=PTS-STARTPTS,{scale_part}format={out_pix_fmt}[v_out];"
         elif use_d3d11_direct:
             cmd.extend(["-init_hw_device", "d3d11va"])
             d3d_scale = f",scale_d3d11=w={target_w}:h={target_h}" if needs_scale else ""
-            video_filter = f"ddagrab=output_idx={output_idx}:framerate={fps}:draw_mouse=1{d3d_scale}[v_out];"
+            video_filter = f"ddagrab=output_idx={output_idx}:framerate={fps}:draw_mouse=1{d3d_scale},setpts=PTS-STARTPTS[v_out];"
         elif use_qsv_gpu_scale:
             d3d_scale = f",scale_d3d11=w={target_w}:h={target_h}" if needs_scale else ""
             video_filter = (
                 f"ddagrab=output_idx={output_idx}:framerate={fps}:draw_mouse=1{d3d_scale},"
-                f"hwdownload,format=bgra,format=nv12[v_out];"
+                f"hwdownload,format=bgra,format=nv12,setpts=PTS-STARTPTS[v_out];"
             )
         else:
             scale_part = f",scale={target_w}:{target_h}:flags={sw_flag}" if needs_scale else ""
             video_filter = (
                 f"ddagrab=output_idx={output_idx}:framerate={fps}:draw_mouse=1,"
-                f"hwdownload,format=bgra{scale_part},format={out_pix_fmt}[v_out];"
+                f"hwdownload,format=bgra{scale_part},format={out_pix_fmt},setpts=PTS-STARTPTS[v_out];"
             )
 
         if is_nvenc:
@@ -394,14 +397,14 @@ class FFmpegRecorder:
 
         # C++側AudioProcessorでノイズ抑制とクランプが完結しているため、FFmpeg側での重複フィルタによる音質劣化・こもりを防止
         audio_filter = (
-            "[0:a]asplit=2[sys_in][mic_in];"
+            "[0:a]asetpts=PTS-STARTPTS,asplit=2[sys_in][mic_in];"
             "[sys_in]pan=stereo|FL=c0|FR=c1[a_sys];"
             "[mic_in]pan=stereo|FL=c2|FR=c3[a_mic]"
         )
         filter_complex = video_filter + audio_filter
 
         cmd.extend([
-            "-thread_queue_size", "1024" if is_lightweight else "4096",
+            "-thread_queue_size", "4096" if is_lightweight else "8192",
             "-probesize", "32",
             "-analyzeduration", "0",
             "-f", "f32le",
@@ -412,7 +415,7 @@ class FFmpegRecorder:
         if use_gdigrab:
             gdi_src = input_source if not input_source.isdigit() and not input_source.startswith("output_idx=") else "desktop"
             cmd.extend([
-                "-thread_queue_size", "512" if is_lightweight else "1024",
+                "-thread_queue_size", "1024" if is_lightweight else "4096",
                 "-f", "gdigrab",
                 "-framerate", fps,
                 "-draw_mouse", "1",
@@ -430,8 +433,7 @@ class FFmpegRecorder:
         cmd.extend([
             "-r", fps,
             "-fps_mode", "cfr",
-            "-shortest",
-            "-max_muxing_queue_size", "4096" if is_lightweight else "8192",
+            "-max_muxing_queue_size", "32768" if is_lightweight else "65536",
             "-c:a", "aac",
             "-b:a", "96k" if is_lightweight else "192k",
             "-ar", "48000",
@@ -440,6 +442,10 @@ class FFmpegRecorder:
         return subprocess.list2cmdline(cmd)
 
     def start_recording(self) -> str:
+        with self._lock:
+            return self._start_recording_locked()
+
+    def _start_recording_locked(self) -> str:
         if self.native_lib.Recorder_IsRunning():
             logging.info("[FFmpegRecorder] Already recording.")
             return self.current_filepath
@@ -619,16 +625,17 @@ class FFmpegRecorder:
     def cancel_recording(self):
         """Remuxを行わずに録画プロセスを即座に停止し、一時ファイルと出力ファイルを破棄する"""
         logging.info("[FFmpegRecorder] Cancelling NativeRecorder...")
-        try:
-            self.native_lib.Recorder_Stop()
-        except Exception as e:
-            logging.warning(f"[FFmpegRecorder] Exception while stopping native recorder on cancel: {e}")
+        with self._lock:
+            try:
+                self.native_lib.Recorder_Stop()
+            except Exception as e:
+                logging.warning(f"[FFmpegRecorder] Exception while stopping native recorder on cancel: {e}")
 
-        paths_to_clean = [
-            self.temp_filepath,
-            self.current_filepath,
-            (self.current_filepath + ".tmp") if self.current_filepath else None,
-        ]
+            paths_to_clean = [
+                self.temp_filepath,
+                self.current_filepath,
+                (self.current_filepath + ".tmp") if self.current_filepath else None,
+            ]
         for p in paths_to_clean:
             if not p:
                 continue
@@ -642,28 +649,32 @@ class FFmpegRecorder:
 
     def stop_recording(self):
         logging.info("[FFmpegRecorder] Stopping NativeRecorder...")
-        self.native_lib.Recorder_Stop()
+        with self._lock:
+            self.native_lib.Recorder_Stop()
+            temp_filepath = self.temp_filepath
+            current_filepath = self.current_filepath
+            actual_encoder = self.actual_encoder
         
         # MKVからMP4への再多重化 (Remux)
-        if self.temp_filepath and os.path.exists(self.temp_filepath):
+        if temp_filepath and current_filepath and os.path.exists(temp_filepath):
             for attempt in range(6):
                 try:
-                    with open(self.temp_filepath, "r+b"):
+                    with open(temp_filepath, "r+b"):
                         break
                 except IOError:
                     time.sleep(0.5)
 
-            remux_temp_path = self.current_filepath + ".tmp"
+            remux_temp_path = current_filepath + ".tmp"
             try:
-                logging.info(f"[FFmpegRecorder] Remuxing MKV to MP4: {self.temp_filepath} -> {self.current_filepath}")
+                logging.info(f"[FFmpegRecorder] Remuxing MKV to MP4: {temp_filepath} -> {current_filepath}")
                 remux_cmd = [
                     self.ffmpeg_path,
                     "-y",
-                    "-i", self.temp_filepath,
+                    "-i", temp_filepath,
                     "-map", "0",
                     "-c", "copy",
                 ]
-                if "hevc" in self.actual_encoder.lower():
+                if "hevc" in actual_encoder.lower():
                     remux_cmd.extend(["-tag:v", "hvc1"])
                 remux_cmd.extend([
                     "-movflags", "+faststart",
@@ -687,9 +698,9 @@ class FFmpegRecorder:
                     startupinfo=startupinfo
                 )
                 if remux_process.returncode == 0 and os.path.exists(remux_temp_path):
-                    os.replace(remux_temp_path, self.current_filepath)
+                    os.replace(remux_temp_path, current_filepath)
                     try:
-                        os.remove(self.temp_filepath)
+                        os.remove(temp_filepath)
                     except Exception as rm_err:
                         logging.warning(f"[FFmpegRecorder] Could not remove temp MKV: {rm_err}")
                     logging.info("[FFmpegRecorder] Remux completed successfully.")

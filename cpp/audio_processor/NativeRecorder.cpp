@@ -699,7 +699,18 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
     }
 
     CloseHandle(hWritePipe);
-    
+
+    // -shortest廃止に伴い、パイプ閉鎖後にCTRL_BREAK_EVENTを送出してFFmpegにフッタ書き出しと正常終了を促す
+    if (WaitForSingleObject(pi.hProcess, 0) == WAIT_TIMEOUT) {
+        if (!GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, pi.dwProcessId)) {
+            if (GetConsoleWindow() == NULL && AttachConsole(pi.dwProcessId)) {
+                SetConsoleCtrlHandler(NULL, TRUE);
+                GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, pi.dwProcessId);
+                FreeConsole();
+            }
+        }
+    }
+
     DWORD waitProc = WaitForSingleObject(pi.hProcess, 10000);
     if (waitProc == WAIT_TIMEOUT) {
         NativeLog("Warning: FFmpeg process did not exit in time. Terminating...");

@@ -30,6 +30,15 @@ class LogWatcher:
             re.IGNORECASE
         )
         self.state_transition_pattern = re.compile(r"(?:State:|Match State Changed from)\s*(\w+)\s*(?:->|to)\s*(\w+)")
+        self.ignored_module_pattern = re.compile(
+            r"\b(?:LogPlatformVoice|LogVoice|LogOnlineVoice|VoiceChat|Vivox|PartyVoice|TeamVoice|LogParty|LogChat|LogRMS|LogWebSocket|LogPresence|LogRichPresence|LogOnline|LogNet|LogHttp|LogAnalytics|LogTelemetry|Xmpp)\b",
+            re.IGNORECASE
+        )
+        self.valid_game_states = {
+            "WaitingToStart", "PreRound", "InProgress", "PostRound",
+            "WaitingPostMatch", "LeavingMap", "PostGame",
+            "Menus", "MainMenu", "Pregame", "InGame", "TransitionToMainMenu"
+        }
         self.time_pattern = re.compile(r"^\[(\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2}:\d{3})\]")
 
     def stop(self):
@@ -100,7 +109,6 @@ class LogWatcher:
                     "Broadcasting state changed to MainMenu" in line or
                     "Broadcasting state changed to TransitionToMainMenu" in line or
                     "Transitioning to State: Menus" in line or
-                    "Leaving session" in line or
                     "Loopstate changed from INGAME to MENUS" in line or
                     "Loopstate changed from PREGAME to MENUS" in line
                 ):
@@ -200,18 +208,25 @@ class LogWatcher:
                         self._flush_pending_match_start()
 
                     # 無関係なログ行での正規表現・時刻パース処理をスキップしてCPU負荷を削減
-                    if not any(k in line for k in ("State:", "Match State", "Broadcasting state", "Loopstate", "LogAbilitySystem:", "LogShooterGame: Match ended", "[Map Complete:", "Leaving session", "Warning:")):
+                    if not any(k in line for k in ("State:", "Match State", "Broadcasting state", "Loopstate", "LogAbilitySystem:", "LogShooterGame: Match ended", "[Map Complete:", "Warning:")):
+                        continue
+
+                    # ボイスや通信・パーティー等別モジュールの状態遷移ログによる誤検知を排除
+                    if self.ignored_module_pattern.search(line):
                         continue
 
                     log_time = self._parse_log_time(line)
 
-                    # 状態遷移パターンの検索
+                    # 状態遷移パターンの検索（ボイス等のConnected/Disconnected遷移を除外しゲーム状態のみ抽出）
                     transition_match = self.state_transition_pattern.search(line)
                     to_state = None
                     from_state = None
                     if transition_match:
-                        from_state = transition_match.group(1)
-                        to_state = transition_match.group(2)
+                        cand_from = transition_match.group(1)
+                        cand_to = transition_match.group(2)
+                        if cand_to in self.valid_game_states or cand_from in self.valid_game_states:
+                            from_state = cand_from
+                            to_state = cand_to
 
                     # メニューに戻った検知（試合終了フェーズのリセット用）
                     is_menu = (
@@ -219,7 +234,6 @@ class LogWatcher:
                         "Broadcasting state changed to MainMenu" in line or
                         "Broadcasting state changed to TransitionToMainMenu" in line or
                         "Transitioning to State: Menus" in line or
-                        "Leaving session" in line or
                         "Loopstate changed from INGAME to MENUS" in line or
                         "Loopstate changed from PREGAME to MENUS" in line or
                         (to_state == "Menus")
@@ -269,7 +283,7 @@ class LogWatcher:
                         "Transitioning to State: PostGame" in line or
                         "Transitioning from InGame to TransitionToMainMenu" in line or
                         "[Map Complete: TRUE | Changed: TRUE]" in line or
-                        (to_state in ["WaitingPostMatch", "LeavingMap", "Disconnected", "PostGame"])
+                        (to_state in ["WaitingPostMatch", "LeavingMap", "PostGame"])
                     )
                     
                     is_end = False
