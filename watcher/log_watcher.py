@@ -208,7 +208,7 @@ class LogWatcher:
                         self._flush_pending_match_start()
 
                     # 無関係なログ行での正規表現・時刻パース処理をスキップしてCPU負荷を削減
-                    if not any(k in line for k in ("State:", "Match State", "Broadcasting state", "Loopstate", "LogAbilitySystem:", "LogShooterGame: Match ended", "[Map Complete:", "Warning:")):
+                    if not any(k in line for k in ("State:", "Match State", "Broadcasting state", "Loopstate", "LogAbilitySystem:", "LogShooterGame: Match ended", "Warning:")):
                         continue
 
                     # ボイスや通信・パーティー等別モジュールの状態遷移ログによる誤検知を排除
@@ -249,14 +249,14 @@ class LogWatcher:
                     if to_state in ["PreRound", "InProgress", "PostRound"]:
                         is_progress = True
                         round_phase = to_state
-                        if to_state == "InProgress":
+                        if to_state in ["InProgress", "PostRound"]:
                             self.has_entered_in_progress = True
                     elif is_ability:
                         is_progress = True
                         self.has_entered_in_progress = True
                     elif "Broadcasting state changed to InGame" in line or "Loopstate changed from PREGAME to INGAME" in line:
+                        # キャラ選択から実マップへのロード遷移ではまだラウンド進行済みフラグを立てずロード直後の誤終了を防ぐ
                         is_progress = True
-                        self.has_entered_in_progress = True
 
                     if is_menu:
                         self.is_match_ending = False
@@ -276,14 +276,13 @@ class LogWatcher:
                         (to_state in ["PreRound", "InProgress"] and from_state == "WaitingToStart")
                     )
                     
-                    # 試合終了の検知
+                    # 試合終了の検知（[Map Complete: TRUE]やLeavingMapはマップロード/キャラ選択終了時にも出るため除外）
                     is_end_log = (
                         "Broadcasting state changed to PostGame" in line or
                         "LogShooterGame: Match ended" in line or
                         "Transitioning to State: PostGame" in line or
                         "Transitioning from InGame to TransitionToMainMenu" in line or
-                        "[Map Complete: TRUE | Changed: TRUE]" in line or
-                        (to_state in ["WaitingPostMatch", "LeavingMap", "PostGame"])
+                        (to_state in ["WaitingPostMatch", "PostGame"])
                     )
                     
                     is_end = False

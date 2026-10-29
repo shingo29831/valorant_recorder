@@ -643,8 +643,11 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
         double elapsedSec = std::chrono::duration<double>(now - startTime).count();
         uint64_t targetFrames = static_cast<uint64_t>(elapsedSec * 48000.0);
 
-        while (g_isRunning && (totalWrittenFrames + framesPerChunk) <= targetFrames) {
+        // OSスケジューラ遅延後の過剰バースト送出を防ぎ、1ループ最大4チャンク(40ms)までに制限してパイプ詰まりを防止
+        int chunksThisTick = 0;
+        while (g_isRunning && (totalWrittenFrames + framesPerChunk) <= targetFrames && chunksThisTick < 4) {
             processAndPushChunk(false);
+            ++chunksThisTick;
         }
 
         if (std::chrono::duration_cast<std::chrono::seconds>(now - lastLogTime).count() >= 5) {

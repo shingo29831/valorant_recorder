@@ -416,6 +416,7 @@ class FFmpegRecorder:
             gdi_src = input_source if not input_source.isdigit() and not input_source.startswith("output_idx=") else "desktop"
             cmd.extend([
                 "-thread_queue_size", "1024" if is_lightweight else "4096",
+                "-use_wallclock_as_timestamps", "1",
                 "-f", "gdigrab",
                 "-framerate", fps,
                 "-draw_mouse", "1",
@@ -433,6 +434,7 @@ class FFmpegRecorder:
         cmd.extend([
             "-r", fps,
             "-fps_mode", "cfr",
+            "-max_interleave_delta", "0",
             "-max_muxing_queue_size", "32768" if is_lightweight else "65536",
             "-c:a", "aac",
             "-b:a", "96k" if is_lightweight else "192k",
