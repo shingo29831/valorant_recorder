@@ -164,7 +164,7 @@ class AudioSettingsWidget(QWidget):
     def _on_monitor_changed(self, state):
         if self.monitor_thread:
             is_listening = self.mic_monitor_cb.isChecked()
-            self.monitor_thread.set_denoise(self.mic_denoise_combo.currentText() if is_listening else "None")
+            self.monitor_thread.set_denoise(self.mic_denoise_combo.currentText())
             self.monitor_thread.set_monitor_audio(is_listening)
 
     def _on_preprocess_changed(self, index):
@@ -198,7 +198,7 @@ class AudioSettingsWidget(QWidget):
                 mode = "AI (RNNoise)"
         
         if self.monitor_thread:
-            self.monitor_thread.set_denoise(mode if self.mic_monitor_cb.isChecked() else "None")
+            self.monitor_thread.set_denoise(mode)
         self._save_settings()
 
     def _on_mic_changed(self):
@@ -212,7 +212,7 @@ class AudioSettingsWidget(QWidget):
         if self.monitor_thread is None and mic_name and mic_name != "None":
             gain = self.mic_gain_slider.value() / 100.0
             is_listening = self.mic_monitor_cb.isChecked()
-            denoise_mode = self.mic_denoise_combo.currentText() if is_listening else "None"
+            denoise_mode = self.mic_denoise_combo.currentText()
             gate = self.mic_gate_slider.value() / 100.0
             pre_mode = self.mic_preprocess_combo.currentText()
             self.monitor_thread = MicMonitorThread(mic_name, gain, denoise_mode, gate, pre_mode)

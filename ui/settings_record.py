@@ -328,7 +328,7 @@ class RecordSettingsWidget(QWidget):
                     self.mic_denoise_combo.blockSignals(True)
                     self.mic_denoise_combo.setCurrentIndex(rn_idx)
                     self.mic_denoise_combo.blockSignals(False)
-                    if self.monitor_thread and self.mic_monitor_cb.isChecked():
+                    if self.monitor_thread:
                         self.monitor_thread.set_denoise("AI (RNNoise)")
             if self.mic_monitor_cb.isChecked():
                 self.mic_monitor_cb.setChecked(False)
@@ -360,7 +360,7 @@ class RecordSettingsWidget(QWidget):
         if is_listening and (self.monitor_thread is None or not self.monitor_thread.isRunning()) and self.isVisible():
             self.start_monitors()
         if self.monitor_thread:
-            self.monitor_thread.set_denoise(self.mic_denoise_combo.currentData() if is_listening else "None")
+            self.monitor_thread.set_denoise(self.mic_denoise_combo.currentData())
             self.monitor_thread.set_monitor_audio(is_listening)
 
     def _on_preprocess_changed(self, index):
@@ -391,7 +391,7 @@ class RecordSettingsWidget(QWidget):
                 mode = "AI (RNNoise)"
         
         if self.monitor_thread:
-            self.monitor_thread.set_denoise(mode if self.mic_monitor_cb.isChecked() else "None")
+            self.monitor_thread.set_denoise(mode)
         self._save_settings()
 
     def _on_sys_audio_changed(self):
@@ -415,7 +415,7 @@ class RecordSettingsWidget(QWidget):
         if self.monitor_thread is None and mic_name and mic_name != "None":
             gain = self.mic_gain_slider.value() / 100.0
             is_listening = self.mic_monitor_cb.isChecked()
-            denoise_mode = self.mic_denoise_combo.currentData() if is_listening else "None"
+            denoise_mode = self.mic_denoise_combo.currentData()
             gate = self.mic_gate_slider.value() / 100.0
             pre_mode = self.mic_preprocess_combo.currentData()
             self.monitor_thread = MicMonitorThread(mic_name, gain, denoise_mode, gate, pre_mode)
@@ -570,6 +570,14 @@ class RecordSettingsWidget(QWidget):
             self.mic_preprocess_combo.setCurrentIndex(pre_idx)
         self.mic_preprocess_combo.blockSignals(False)
         self.preprocess_warning_label.setVisible(pre_val == "None")
+
+        if self.sys_monitor_thread:
+            self.sys_monitor_thread.set_gain(self.system_gain_slider.value() / 100.0)
+        if self.monitor_thread:
+            self.monitor_thread.set_gain(self.mic_gain_slider.value() / 100.0)
+            self.monitor_thread.set_gate_threshold(self.mic_gate_slider.value() / 100.0)
+            self.monitor_thread.set_denoise(self.mic_denoise_combo.currentData())
+            self.monitor_thread.set_preprocess(self.mic_preprocess_combo.currentData())
 
     def showEvent(self, event):
         super().showEvent(event)

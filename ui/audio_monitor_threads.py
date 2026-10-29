@@ -270,7 +270,16 @@ class MicMonitorThread(QThread):
 
                 def apply_native_dsp(raw_data):
                     nonlocal processor, processor_init_failed, last_denoise, last_preprocess
-                    needs_dsp = (self.preprocess_mode != "None") or (self.denoise_mode in ("AI (DeepFilterNet)", "AI (RNNoise)"))
+                    denoise_target = (
+                        "DeepFilterNet" if self.denoise_mode in ("AI (DeepFilterNet)", "DeepFilterNet")
+                        else "RNNoise" if self.denoise_mode in ("AI (RNNoise)", "RNNoise")
+                        else "None"
+                    )
+                    preprocess_target = (
+                        "SpeexDSP" if self.preprocess_mode and self.preprocess_mode != "None"
+                        else "None"
+                    )
+                    needs_dsp = (preprocess_target != "None") or (denoise_target != "None")
                     if not needs_dsp or processor_init_failed:
                         return raw_data
                     if processor is None:
@@ -280,17 +289,12 @@ class MicMonitorThread(QThread):
                             print(f"Failed to initialize AudioProcessorWrapper: {e}")
                             processor_init_failed = True
                             return raw_data
-                    if last_preprocess != self.preprocess_mode:
-                        processor.set_preprocess_type(self.preprocess_mode)
-                        last_preprocess = self.preprocess_mode
-                    if last_denoise != self.denoise_mode:
-                        if self.denoise_mode == "AI (DeepFilterNet)":
-                            processor.set_denoise_type("DeepFilterNet")
-                        elif self.denoise_mode == "AI (RNNoise)":
-                            processor.set_denoise_type("RNNoise")
-                        else:
-                            processor.set_denoise_type("None")
-                        last_denoise = self.denoise_mode
+                    if last_preprocess != preprocess_target:
+                        processor.set_preprocess_type(preprocess_target)
+                        last_preprocess = preprocess_target
+                    if last_denoise != denoise_target:
+                        processor.set_denoise_type(denoise_target)
+                        last_denoise = denoise_target
                     return processor.process(raw_data)
 
                 if recorder is not None:
