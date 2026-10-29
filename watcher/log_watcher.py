@@ -21,12 +21,114 @@ class LogWatcher:
         self.is_range = False
         self.current_map_name = "Unknown"
         self._stop_requested = False
+        self._pending_match_start = None
+        self._range_skip_notified = False
         self.map_name_pattern = re.compile(r"(?:Map Name:\s*|\[Map:\s*)(.*?)(?:\s*\||\s*\])")
+        self.world_map_pattern = re.compile(r"/Game/Maps/([^/\s\.\'\"]+)(?:/([^/\s\.\'\"]+))?", re.IGNORECASE)
+        self.range_keyword_pattern = re.compile(
+            r"(?:\bthe\s+range\b|\brange(?:v\d+)?\b|poveglia|basictraining|shootingrange|shooting|tutorial)",
+            re.IGNORECASE
+        )
         self.state_transition_pattern = re.compile(r"(?:State:|Match State Changed from)\s*(\w+)\s*(?:->|to)\s*(\w+)")
         self.time_pattern = re.compile(r"^\[(\d{4}\.\d{2}\.\d{2}-\d{2}\.\d{2}\.\d{2}:\d{3})\]")
 
     def stop(self):
         self._stop_requested = True
+
+    def is_range_detected(self) -> bool:
+        return bool(self.is_range or self.range_keyword_pattern.search(self.current_map_name or ""))
+
+    def _update_map_state_from_line(self, line: str) -> bool:
+        """ログ行からマップ名および射撃訓練場フラグを更新し、実マップが更新された場合はTrueを返す"""
+        updated_real_map = False
+        if "LogMapLoadModel: Update:" in line:
+            map_match = self.map_name_pattern.search(line)
+            if map_match:
+                extracted_map_name = map_match.group(1).strip()
+                lower_map = extracted_map_name.lower()
+                if lower_map in ["mainmenuv2", "mainmenu", "transitiontomainmenu"]:
+                    self.current_map_name = "Unknown"
+                    self.is_range = False
+                    self._pending_match_start = None
+                    self._range_skip_notified = False
+                elif lower_map not in ["characterselect", "characterselectpersistentlevel"]:
+                    # キャラ選択画面のロードで直前のRange判定が消えるのを防ぐため実マップ時のみ更新
+                    self.current_map_name = extracted_map_name
+                    self.is_range = bool(self.range_keyword_pattern.search(extracted_map_name) or self.range_keyword_pattern.search(line))
+                    updated_real_map = True
+            elif self.range_keyword_pattern.search(line):
+                self.current_map_name = "Range"
+                self.is_range = True
+                updated_real_map = True
+
+        elif any(k in line for k in ("LoadMap:", "Bringing World", "ServerTravel", "/Game/Maps/")):
+            world_match = self.world_map_pattern.search(line)
+            if world_match:
+                folder_name = world_match.group(1) or ""
+                sub_name = world_match.group(2) or folder_name
+                lower_cand = f"{folder_name}/{sub_name}".lower()
+                if any(m in lower_cand for m in ("mainmenu", "transitiontomainmenu")):
+                    self.current_map_name = "Unknown"
+                    self.is_range = False
+                    self._pending_match_start = None
+                    self._range_skip_notified = False
+                elif "characterselect" not in lower_cand:
+                    if self.range_keyword_pattern.search(lower_cand):
+                        self.current_map_name = "Range"
+                        self.is_range = True
+                    else:
+                        self.current_map_name = sub_name
+                        self.is_range = False
+                    updated_real_map = True
+        return updated_real_map
+
+    def _scan_recent_log_state(self, f) -> None:
+        """監視開始時に既存ログの末尾を走査し、既に射撃場にいる場合の誤録画を防ぐ"""
+        try:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            read_size = min(size, 512 * 1024)
+            f.seek(max(0, size - read_size), os.SEEK_SET)
+            lines = f.read().splitlines()
+            for raw_line in lines:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                self._update_map_state_from_line(line)
+                if (
+                    "Broadcasting state changed to Menus" in line or
+                    "Broadcasting state changed to MainMenu" in line or
+                    "Broadcasting state changed to TransitionToMainMenu" in line or
+                    "Transitioning to State: Menus" in line or
+                    "Leaving session" in line or
+                    "Loopstate changed from INGAME to MENUS" in line or
+                    "Loopstate changed from PREGAME to MENUS" in line
+                ):
+                    self.current_map_name = "Unknown"
+                    self.is_range = False
+                    self._pending_match_start = None
+                    self._range_skip_notified = False
+        except Exception:
+            pass
+        finally:
+            try:
+                f.seek(0, os.SEEK_END)
+            except Exception:
+                pass
+
+    def _flush_pending_match_start(self, force: bool = False) -> None:
+        if self._pending_match_start is None:
+            return
+        log_time, is_recovery, queued_at = self._pending_match_start
+        if self.is_range_detected():
+            self._pending_match_start = None
+            if not self._range_skip_notified:
+                self._range_skip_notified = True
+                self.on_match_start(True, log_time, is_recovery)
+            return
+        if self.current_map_name != "Unknown" or force or (time.time() - queued_at >= 1.5):
+            self._pending_match_start = None
+            self.on_match_start(False, log_time, is_recovery)
 
     def _parse_log_time(self, line: str) -> float:
         match = self.time_pattern.search(line)
@@ -63,12 +165,13 @@ class LogWatcher:
 
         try:
             f = open(log_path, 'r', encoding='utf-8', errors='replace')
-            f.seek(0, os.SEEK_END)
+            self._scan_recent_log_state(f)
             
             try:
                 while not self._stop_requested:
                     line = f.readline()
                     if not line:
+                        self._flush_pending_match_start()
                         # EOF到達時のみファイルサイズ縮小(Valorant再起動)をチェックしI/Oコールを最小化
                         try:
                             current_size = os.path.getsize(log_path)
@@ -77,6 +180,12 @@ class LogWatcher:
                                 f.close()
                                 f = open(log_path, 'r', encoding='utf-8', errors='replace')
                                 f.seek(0, os.SEEK_END)
+                                self.is_in_match = False
+                                self.has_entered_in_progress = False
+                                self.current_map_name = "Unknown"
+                                self.is_range = False
+                                self._pending_match_start = None
+                                self._range_skip_notified = False
                                 continue
                         except OSError:
                             pass
@@ -87,18 +196,8 @@ class LogWatcher:
                     if not line:
                         continue
 
-                    if "LogMapLoadModel: Update:" in line:
-                        map_match = self.map_name_pattern.search(line)
-                        if map_match:
-                            extracted_map_name = map_match.group(1).strip()
-                            if extracted_map_name.lower() not in ["mainmenuv2", "mainmenu", "characterselect", "characterselectpersistentlevel"]:
-                                self.current_map_name = extracted_map_name
-                            
-                        line_lower = line.lower()
-                        if any(x in line_lower for x in ["range", "rangev2", "poveglia", "basictraining", "shooting", "tutorial"]):
-                            self.is_range = True
-                        else:
-                            self.is_range = False
+                    if self._update_map_state_from_line(line):
+                        self._flush_pending_match_start()
 
                     # 無関係なログ行での正規表現・時刻パース処理をスキップしてCPU負荷を削減
                     if not any(k in line for k in ("State:", "Match State", "Broadcasting state", "Loopstate", "LogAbilitySystem:", "LogShooterGame: Match ended", "[Map Complete:", "Leaving session", "Warning:")):
@@ -147,9 +246,12 @@ class LogWatcher:
 
                     if is_menu:
                         self.is_match_ending = False
-                        # メニューに戻った場合は確実に試合中フラグを初期化
-                        self.is_in_match = False
-                        self.has_entered_in_progress = False
+                        self._pending_match_start = None
+                        self._range_skip_notified = False
+                        # メニュー帰還時に前回マップ名が残って次回の射撃場で誤判定するのを防ぐ
+                        if not self.is_in_match:
+                            self.current_map_name = "Unknown"
+                            self.is_range = False
 
                     # 試合開始の検知 (ピック画面から完全録画するため Pregame を追加)
                     is_start = (
@@ -184,18 +286,46 @@ class LogWatcher:
                         if not self.is_in_match:
                             self.is_in_match = True
                             self.has_entered_in_progress = False
-                            self.on_match_start(self.is_range, log_time, False)
+                            if self.is_range_detected():
+                                self._pending_match_start = None
+                                if not self._range_skip_notified:
+                                    self._range_skip_notified = True
+                                    self.on_match_start(True, log_time, False)
+                            elif self.current_map_name == "Unknown":
+                                # マップ名ログが直後の行に出力されるケースに備えて開始判定を保留
+                                self._pending_match_start = (log_time, False, time.time())
+                            else:
+                                self._pending_match_start = None
+                                self.on_match_start(False, log_time, False)
                     elif is_progress and not self.is_in_match and not self.is_match_ending:
                         # 録画中断からの自動復帰 (試合終了直後ではない場合のみ)
                         self.is_in_match = True
                         self.has_entered_in_progress = True
-                        self.on_match_start(self.is_range, log_time, True)
+                        if self.is_range_detected():
+                            self._pending_match_start = None
+                            if not self._range_skip_notified:
+                                self._range_skip_notified = True
+                                self.on_match_start(True, log_time, True)
+                        elif self.current_map_name == "Unknown":
+                            self._pending_match_start = (log_time, True, time.time())
+                        else:
+                            self._pending_match_start = None
+                            self.on_match_start(False, log_time, True)
                     elif is_end and self.is_in_match:
+                        was_range = self.is_range_detected()
                         self.is_in_match = False
                         self.is_match_ending = True
                         self.has_entered_in_progress = False
-                        self.on_match_end(self.is_range)
+                        self._pending_match_start = None
+                        self._range_skip_notified = False
+                        self.on_match_end(was_range)
+                        if is_menu:
+                            self.current_map_name = "Unknown"
+                            self.is_range = False
                         
+                    if self._pending_match_start is not None:
+                        self._flush_pending_match_start()
+
                     # ラウンドフェーズの記録
                     if self.is_in_match and round_phase and self.on_round_phase_changed:
                         self.on_round_phase_changed(round_phase, log_time)

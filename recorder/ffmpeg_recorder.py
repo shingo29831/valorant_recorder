@@ -616,6 +616,30 @@ class FFmpegRecorder:
     def is_recording(self) -> bool:
         return self.native_lib.Recorder_IsRunning()
 
+    def cancel_recording(self):
+        """Remuxを行わずに録画プロセスを即座に停止し、一時ファイルと出力ファイルを破棄する"""
+        logging.info("[FFmpegRecorder] Cancelling NativeRecorder...")
+        try:
+            self.native_lib.Recorder_Stop()
+        except Exception as e:
+            logging.warning(f"[FFmpegRecorder] Exception while stopping native recorder on cancel: {e}")
+
+        paths_to_clean = [
+            self.temp_filepath,
+            self.current_filepath,
+            (self.current_filepath + ".tmp") if self.current_filepath else None,
+        ]
+        for p in paths_to_clean:
+            if not p:
+                continue
+            for _ in range(6):
+                try:
+                    if os.path.exists(p):
+                        os.remove(p)
+                    break
+                except OSError:
+                    time.sleep(0.3)
+
     def stop_recording(self):
         logging.info("[FFmpegRecorder] Stopping NativeRecorder...")
         self.native_lib.Recorder_Stop()

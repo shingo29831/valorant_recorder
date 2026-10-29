@@ -112,9 +112,16 @@ class WatcherThread(QThread):
             self.log_signal.emit(self.t.log_stopping_real_match_end)
             self._stop_and_process_recording()
 
-    def handle_match_start(self, is_range: bool, match_start_timestamp: float = None, is_recovery: bool = False):
+    def _is_range_match(self, is_range: bool = False) -> bool:
+        if is_range or getattr(self.watcher, 'is_range', False):
+            return True
+        if hasattr(self.watcher, 'is_range_detected') and self.watcher.is_range_detected():
+            return True
         map_name = getattr(self.watcher, 'current_map_name', '').lower()
-        if is_range or map_name in ['the range', 'range', 'rangev2', 'poveglia', 'basictraining', 'shooting', 'tutorial']:
+        return any(k in map_name for k in ['the range', 'range', 'rangev2', 'poveglia', 'basictraining', 'shooting', 'tutorial'])
+
+    def handle_match_start(self, is_range: bool, match_start_timestamp: float = None, is_recovery: bool = False):
+        if self._is_range_match(is_range):
             self.log_signal.emit(self.t.log_range_detected_skip)
             return
             
@@ -186,8 +193,7 @@ class WatcherThread(QThread):
             self.recorder.set_low_priority()
 
     def handle_match_end(self, is_range: bool):
-        map_name = getattr(self.watcher, 'current_map_name', '').lower()
-        if is_range or map_name in ['the range', 'range', 'poveglia']:
+        if self._is_range_match(is_range):
             return
 
         if self.current_video_path is None:
@@ -547,34 +553,25 @@ class WatcherThread(QThread):
             if self.current_video_path is not None:
                 if getattr(self.watcher, 'is_in_match', False) and not self._is_manual_recording:
                     # 自動録画開始後にマップ名が遅れて判明し、射撃場だった場合のキャンセル処理
-                    map_name = getattr(self.watcher, 'current_map_name', '').lower()
-                    is_range = getattr(self.watcher, 'is_range', False)
-                    if is_range or map_name in ['the range', 'range', 'rangev2', 'poveglia', 'basictraining', 'shooting', 'tutorial']:
+                    if self._is_range_match():
                         self.log_signal.emit(self.t.log_range_transition_cancel)
-                        video_to_delete = self.current_video_path
                         self.current_video_path = None
                         self.recording_state_changed.emit(False)
-                        self.watcher.is_in_match = False
-                        
-                        try:
-                            self.recorder.stop_recording()
-                        except Exception as e:
-                            self.log_signal.emit(self.t.log_cancel_stop_failed.format(error=e))
-                            
-                        # 少し待ってからファイルを削除
-                        def delete_cancelled_video(path):
-                            time.sleep(2)
+                        # is_in_matchをFalseにすると射撃場内のアビリティ使用等で再発火するためTrueを維持する
+                        if hasattr(self.recorder, 'cancel_recording'):
+                            self.recorder.cancel_recording()
+                        else:
                             try:
-                                if os.path.exists(path):
-                                    os.remove(path)
-                                    self.log_signal.emit(self.t.log_cancelled_video_deleted.format(path=path))
-                            except Exception as e:
-                                self.log_signal.emit(self.t.log_cancel_delete_failed.format(error=e))
-                                
-                        threading.Thread(target=delete_cancelled_video, args=(video_to_delete,), daemon=True).start()
+                                self.recorder.stop_recording()
+                            except Exception:
+                                pass
                         continue
 
                 if not self.recorder.is_recording():
+                    if not self._is_manual_recording and self._is_range_match():
+                        self.current_video_path = None
+                        self.recording_state_changed.emit(False)
+                        continue
                     was_manual = self._is_manual_recording
                     self.log_signal.emit(self.t.log_ffmpeg_crashed.format(code=-1))
                     # 現在の録画を保存処理に回す
@@ -583,7 +580,7 @@ class WatcherThread(QThread):
                     time.sleep(2)
                     if was_manual:
                         self.start_manual_recording()
-                    elif getattr(self.watcher, 'is_in_match', False):
+                    elif getattr(self.watcher, 'is_in_match', False) and not self._is_range_match():
                         self.handle_match_start(is_range=False, is_recovery=True)
                     continue
 
