@@ -56,6 +56,7 @@ class SettingsTab(QWidget):
     def _on_subtab_changed(self, index):
         # 録画設定タブ表示中かつ非録画時のみ音声モニターを稼働させリソース競合と負荷を防止
         if self.isVisible() and self.tab_widget.currentWidget() == self.record_widget:
+            self.record_widget.refresh_from_config()
             main_win = self.window()
             is_rec = getattr(main_win, 'rec_button', None) and main_win.rec_button.isChecked()
             if not is_rec:

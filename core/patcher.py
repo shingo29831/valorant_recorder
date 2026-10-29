@@ -42,41 +42,53 @@ def patch_soundcard_lib():
                 hr = self._ptr[0][0].lpVtbl.GetMixFormat(self._ptr[0], ppMixFormat)
                 mf._com.check_error(hr)
                 try:
-                    orig_tag = int(ppMixFormat[0][0].Format.wFormatTag)
+                    raw_mix = bytes(mf._ffi.buffer(ppMixFormat[0], 18))
+                    orig_tag, orig_channels, _, _, _, _, cb_size = struct.unpack('<HHIIHHH', raw_mix)
+                    if orig_tag == 0xFFFE and cb_size >= 22:
+                        raw_ext_mix = bytes(mf._ffi.buffer(ppMixFormat[0], 40))
+                        orig_mask = struct.unpack_from('<I', raw_ext_mix, 20)[0]
+                    else:
+                        orig_mask = 0
                 finally:
                     mf._ole32.CoTaskMemFree(ppMixFormat[0])
 
                 channels_count = len(set(self.channelmap))
                 if channels_count == 1:
-                    channelmask = 0x4
+                    default_mask = 0x4
                 elif channels_count == 2:
-                    channelmask = 0x3
+                    default_mask = 0x3
                 else:
-                    channelmask = (1 << channels_count) - 1
+                    default_mask = (1 << channels_count) - 1
 
                 sr = int(samplerate)
                 block_align = channels_count * 4
                 avg_bytes = sr * block_align
 
-                # 40バイト完全パック済みのWAVEFORMATEXTENSIBLE (KSDATAFORMAT_SUBTYPE_IEEE_FLOAT)
-                raw_ext = struct.pack(
-                    '<HHIIHHHHIIHH8B',
-                    0xFFFE,
-                    channels_count,
-                    sr,
-                    avg_bytes,
-                    block_align,
-                    32,
-                    22,
-                    32,
-                    channelmask,
-                    0x00000003,
-                    0x0000,
-                    0x0010,
-                    0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71,
-                )
-                ext_buf = mf._ffi.new('char[]', raw_ext)
-                ext_ptr = mf._ffi.cast('WAVEFORMATEXTENSIBLE*', ext_buf)
+                def make_ext_buf(mask_val):
+                    raw = struct.pack(
+                        '<HHIIHHHHIIHH8B',
+                        0xFFFE,
+                        channels_count,
+                        sr,
+                        avg_bytes,
+                        block_align,
+                        32,
+                        22,
+                        32,
+                        mask_val,
+                        0x00000003,
+                        0x0000,
+                        0x0010,
+                        0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71,
+                    )
+                    return mf._ffi.new('char[]', raw)
+
+                ext_bufs = []
+                if channels_count == orig_channels and orig_mask not in (0, default_mask):
+                    ext_bufs.append(make_ext_buf(orig_mask))
+                ext_bufs.append(make_ext_buf(default_mask))
+                if 0 not in (orig_mask, default_mask):
+                    ext_bufs.append(make_ext_buf(0))
 
                 raw_pcm = struct.pack(
                     '<HHIIHHH',
@@ -89,7 +101,6 @@ def patch_soundcard_lib():
                     0,
                 )
                 pcm_buf = mf._ffi.new('char[]', raw_pcm)
-                pcm_ptr = mf._ffi.cast('WAVEFORMATEXTENSIBLE*', pcm_buf)
 
                 if exclusive_mode:
                     sharemode = mf._ole32.AUDCLNT_SHAREMODE_EXCLUSIVE
@@ -100,15 +111,17 @@ def patch_soundcard_lib():
                 if isloopback:
                     streamflags |= 0x00020000
 
-                bufferduration = int(blocksize / samplerate * 10000000)
-                first_ptr, second_ptr = (ext_ptr, pcm_ptr) if orig_tag == 0xFFFE else (pcm_ptr, ext_ptr)
-                hr = self._ptr[0][0].lpVtbl.Initialize(
-                    self._ptr[0], sharemode, streamflags, bufferduration, 0, first_ptr, mf._ffi.NULL
-                )
-                if hr != 0:
+                # 10msバッファによる録音欠損とモニター再生アンダーランを防ぐため最低200ms確保する
+                bufferduration = max(int(blocksize / samplerate * 10000000), 2000000)
+                candidate_bufs = (ext_bufs + [pcm_buf]) if orig_tag == 0xFFFE else ([pcm_buf] + ext_bufs)
+                hr = -1
+                for c_buf in candidate_bufs:
+                    c_ptr = mf._ffi.cast('WAVEFORMATEXTENSIBLE*', c_buf)
                     hr = self._ptr[0][0].lpVtbl.Initialize(
-                        self._ptr[0], sharemode, streamflags, bufferduration, 0, second_ptr, mf._ffi.NULL
+                        self._ptr[0], sharemode, streamflags, bufferduration, 0, c_ptr, mf._ffi.NULL
                     )
+                    if hr == 0:
+                        break
                 mf._com.check_error(hr)
 
                 self.samplerate = samplerate

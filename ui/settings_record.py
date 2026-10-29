@@ -356,8 +356,10 @@ class RecordSettingsWidget(QWidget):
         self._save_settings()
 
     def _on_monitor_changed(self, state):
+        is_listening = self.mic_monitor_cb.isChecked()
+        if is_listening and (self.monitor_thread is None or not self.monitor_thread.isRunning()) and self.isVisible():
+            self.start_monitors()
         if self.monitor_thread:
-            is_listening = self.mic_monitor_cb.isChecked()
             self.monitor_thread.set_denoise(self.mic_denoise_combo.currentData() if is_listening else "None")
             self.monitor_thread.set_monitor_audio(is_listening)
 
@@ -405,6 +407,10 @@ class RecordSettingsWidget(QWidget):
         self._save_settings()
 
     def start_monitors(self):
+        if self.monitor_thread is not None and not self.monitor_thread.isRunning():
+            self._retire_thread(self.monitor_thread)
+            self.monitor_thread = None
+
         mic_name = self.mic_input.currentData()
         if self.monitor_thread is None and mic_name and mic_name != "None":
             gain = self.mic_gain_slider.value() / 100.0
@@ -416,7 +422,11 @@ class RecordSettingsWidget(QWidget):
             self.monitor_thread.set_monitor_audio(is_listening)
             self.monitor_thread.level_ready.connect(self.volume_meter.set_level)
             self.monitor_thread.start()
-            
+
+        if self.sys_monitor_thread is not None and not self.sys_monitor_thread.isRunning():
+            self._retire_thread(self.sys_monitor_thread)
+            self.sys_monitor_thread = None
+
         sys_dev = self.sys_audio_input.currentData()
         if self.sys_monitor_thread is None and sys_dev != "None":
             gain = self.system_gain_slider.value() / 100.0
@@ -537,9 +547,37 @@ class RecordSettingsWidget(QWidget):
         self.volume_meter.set_gate_threshold(gate_val / 100.0)
         self.mic_gate_slider.blockSignals(False)
 
+        denoise_val = getattr(self.config, 'RECORD_AUDIO_MIC_DENOISE', 'None')
+        if denoise_val in ('True', 'Standard (FFmpeg)', 'RNNoise', 'SpeexDSP'):
+            denoise_val = 'AI (RNNoise)'
+        elif denoise_val == 'DeepFilterNet':
+            denoise_val = 'AI (DeepFilterNet)'
+        elif denoise_val == 'False':
+            denoise_val = 'None'
+        self.mic_denoise_combo.blockSignals(True)
+        dn_idx = self.mic_denoise_combo.findData(denoise_val)
+        if dn_idx >= 0:
+            self.mic_denoise_combo.setCurrentIndex(dn_idx)
+        self.mic_denoise_combo.blockSignals(False)
+        self.monitor_warning_label.setVisible(denoise_val in ("AI (RNNoise)", "AI (DeepFilterNet)"))
+
+        pre_val = getattr(self.config, 'RECORD_AUDIO_MIC_PREPROCESS', 'SpeexDSP')
+        if pre_val == "WebRTC":
+            pre_val = "SpeexDSP"
+        self.mic_preprocess_combo.blockSignals(True)
+        pre_idx = self.mic_preprocess_combo.findData(pre_val)
+        if pre_idx >= 0:
+            self.mic_preprocess_combo.setCurrentIndex(pre_idx)
+        self.mic_preprocess_combo.blockSignals(False)
+        self.preprocess_warning_label.setVisible(pre_val == "None")
+
     def showEvent(self, event):
         super().showEvent(event)
         self.refresh_from_config()
+        main_win = self.window()
+        is_rec = getattr(main_win, 'rec_button', None) and main_win.rec_button.isChecked()
+        if not is_rec:
+            self.start_monitors()
 
     def _save_settings(self):
         self.config.RECORD_FPS = self.fps_input.currentText()

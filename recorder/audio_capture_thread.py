@@ -32,18 +32,22 @@ class AudioCaptureThread(threading.Thread):
             spk_mic = sc.get_microphone(speaker.id, include_loopback=True)
             
             mic_device = None
-            if self.config.RECORD_AUDIO_MIC and self.config.RECORD_AUDIO_MIC != "None":
-                # 完全一致を優先
-                for m in sc.all_microphones(include_loopback=False):
-                    if self.config.RECORD_AUDIO_MIC == m.name:
-                        mic_device = m
-                        break
-                # 見つからなければ部分一致
-                if mic_device is None:
+            mic_cfg = str(getattr(self.config, 'RECORD_AUDIO_MIC', 'default')).strip()
+            if mic_cfg and mic_cfg != "None":
+                if mic_cfg.lower() == "default":
+                    mic_device = sc.default_microphone()
+                else:
+                    # 完全一致を優先
                     for m in sc.all_microphones(include_loopback=False):
-                        if self.config.RECORD_AUDIO_MIC in m.name:
+                        if mic_cfg == m.name:
                             mic_device = m
                             break
+                    # 見つからなければ部分一致
+                    if mic_device is None:
+                        for m in sc.all_microphones(include_loopback=False):
+                            if mic_cfg in m.name:
+                                mic_device = m
+                                break
 
             with ExitStack() as stack:
                 spk_rec = stack.enter_context(spk_mic.recorder(samplerate=samplerate, channels=2))

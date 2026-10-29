@@ -66,19 +66,35 @@ class SystemAudioMonitorThread(QThread):
                 if speaker is None:
                     speaker = sc.default_speaker()
                 spk_mic = sc.get_microphone(speaker.id, include_loopback=True)
-                recorder = spk_mic.recorder(samplerate=48000, channels=2)
-
-            with recorder:
-                while self.running:
-                    data = recorder.record(numframes=1200)
-                    if not self.running:
+                recorder = None
+                for ch in (2, 1):
+                    try:
+                        cand = spk_mic.recorder(samplerate=48000, channels=ch)
+                        cand.__enter__()
+                        recorder = cand
                         break
-                    if data is None or len(data) == 0:
-                        self.level_ready.emit(0.0)
-                        continue
-                    # ステレオの場合は平均をとってモノラルにダウンミックスしてレベル計算
-                    data_mono = data.mean(axis=1, keepdims=True)
-                    self.process_audio(data_mono)
+                    except Exception:
+                        recorder = None
+
+            if recorder is not None:
+                try:
+                    while self.running:
+                        data = recorder.record(numframes=1200)
+                        if not self.running:
+                            break
+                        if data is None or len(data) == 0:
+                            self.level_ready.emit(0.0)
+                            continue
+                        if data.ndim == 2:
+                            data_mono = data.mean(axis=1, keepdims=True)
+                        else:
+                            data_mono = data.reshape(-1, 1)
+                        self.process_audio(data_mono)
+                finally:
+                    try:
+                        recorder.__exit__(None, None, None)
+                    except Exception:
+                        pass
         except Exception as e:
             import traceback
             import os
@@ -229,19 +245,23 @@ class MicMonitorThread(QThread):
             if mic_device is not None:
                 recorder = None
                 channels = 1
-                with sc_lock:
-                    try:
-                        recorder = mic_device.recorder(samplerate=48000, channels=2)
-                        channels = 2
-                    except Exception:
+                # soundcardは__enter__時にWASAPI初期化を行うため、ロック内で__enter__まで試行してチャンネルを決定する
+                for ch in (2, 1, None):
+                    with sc_lock:
                         try:
-                            recorder = mic_device.recorder(samplerate=48000, channels=1)
-                            channels = 1
+                            cand = (
+                                mic_device.recorder(samplerate=48000, channels=ch)
+                                if ch is not None
+                                else mic_device.recorder(samplerate=48000)
+                            )
+                            cand.__enter__()
+                            recorder = cand
+                            channels = ch if ch is not None else (getattr(mic_device, 'channels', 1) or 1)
+                            break
                         except Exception:
-                            import traceback
-                            print("Failed to initialize recorder:")
-                            traceback.print_exc()
                             recorder = None
+                if recorder is None:
+                    print(f"[MicMonitorThread] Failed to initialize recorder for device: {self.mic_name}")
 
                 processor = None
                 processor_init_failed = False
@@ -275,43 +295,72 @@ class MicMonitorThread(QThread):
 
                 if recorder is not None:
                     active_player = None
+                    player_channels = 2
                     try:
-                        with recorder:
-                            while self.running:
-                                data = recorder.record(numframes=2400)
-                                if not self.running:
-                                    break
-                                if data is None or len(data) == 0:
-                                    self.level_ready.emit(0.0)
-                                    continue
-                                if channels == 2:
+                        while self.running:
+                            data = recorder.record(numframes=2400)
+                            if not self.running:
+                                break
+                            if data is None or len(data) == 0:
+                                self.level_ready.emit(0.0)
+                                continue
+                            if data.ndim == 1:
+                                data = data.reshape(-1, 1)
+                            elif data.ndim == 2 and data.shape[1] == 2:
+                                # 片chのみ入力があるUSBマイク・オーディオIF等で音量が半減するのを防ぐ
+                                peak_l = float(np.max(np.abs(data[:, 0])))
+                                peak_r = float(np.max(np.abs(data[:, 1])))
+                                if peak_l > 1e-4 and peak_r < peak_l * 0.05:
+                                    data = data[:, 0:1]
+                                elif peak_r > 1e-4 and peak_l < peak_r * 0.05:
+                                    data = data[:, 1:2]
+                                else:
                                     data = data.mean(axis=1, keepdims=True)
-                                data = apply_native_dsp(data)
-                                processed = self.process_audio(data)
-                                if self.monitor_audio:
-                                    if active_player is None:
+                            elif data.ndim == 2 and data.shape[1] > 2:
+                                data = data.mean(axis=1, keepdims=True)
+                            data = apply_native_dsp(data)
+                            processed = self.process_audio(data)
+                            if self.monitor_audio:
+                                if active_player is None:
+                                    for out_ch in (2, 1):
                                         try:
                                             with sc_lock:
                                                 speaker = sc.default_speaker()
-                                                active_player = speaker.player(samplerate=48000, channels=2)
-                                                active_player.__enter__()
+                                                cand_player = speaker.player(samplerate=48000, channels=out_ch)
+                                                cand_player.__enter__()
+                                                active_player = cand_player
+                                                player_channels = out_ch
+                                                break
                                         except Exception:
                                             active_player = None
-                                    if active_player is not None:
-                                        stereo = np.repeat(processed, 2, axis=1)
-                                        active_player.play(stereo)
-                                elif active_player is not None:
+                                if active_player is not None:
                                     try:
-                                        active_player.__exit__(None, None, None)
+                                        if processed.ndim == 1:
+                                            processed = processed.reshape(-1, 1)
+                                        out_audio = np.repeat(processed, 2, axis=1) if player_channels == 2 else processed
+                                        active_player.play(np.ascontiguousarray(out_audio, dtype=np.float32))
                                     except Exception:
-                                        pass
-                                    active_player = None
+                                        try:
+                                            active_player.__exit__(None, None, None)
+                                        except Exception:
+                                            pass
+                                        active_player = None
+                            elif active_player is not None:
+                                try:
+                                    active_player.__exit__(None, None, None)
+                                except Exception:
+                                    pass
+                                active_player = None
                     finally:
                         if active_player is not None:
                             try:
                                 active_player.__exit__(None, None, None)
                             except Exception:
                                 pass
+                        try:
+                            recorder.__exit__(None, None, None)
+                        except Exception:
+                            pass
                 else:
                     while self.running:
                         self.level_ready.emit(0.0)
