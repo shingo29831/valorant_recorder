@@ -649,13 +649,22 @@ class FFmpegRecorder:
                 except OSError:
                     time.sleep(0.3)
 
-    def stop_recording(self):
+    def stop_recording(self, target_filepath: str = None):
         logging.info("[FFmpegRecorder] Stopping NativeRecorder...")
         with self._lock:
-            self.native_lib.Recorder_Stop()
-            temp_filepath = self.temp_filepath
-            current_filepath = self.current_filepath
-            actual_encoder = self.actual_encoder
+            # 既に次の録画セッションへ切り替わっている場合は新セッションを誤停止しない
+            if target_filepath and self.current_filepath and self.current_filepath != target_filepath:
+                logging.info(
+                    f"[FFmpegRecorder] Session already switched ({self.current_filepath}), skipping stop for {target_filepath}."
+                )
+                temp_filepath = os.path.splitext(target_filepath)[0] + ".mkv"
+                current_filepath = target_filepath
+                actual_encoder = self.actual_encoder
+            else:
+                self.native_lib.Recorder_Stop()
+                temp_filepath = self.temp_filepath
+                current_filepath = self.current_filepath
+                actual_encoder = self.actual_encoder
         
         # MKVからMP4への再多重化 (Remux)
         if temp_filepath and current_filepath and os.path.exists(temp_filepath):
