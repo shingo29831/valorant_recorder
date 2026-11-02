@@ -10,6 +10,7 @@ from ui.flow_layout import FlowLayout
 from ui.record_item_widget import RecordItemWidget
 from ui.record_data_loader import RecordDataLoader
 from ui.player_list_header import PlayerListHeader
+from ui.player_list_renderer import PlayerListRenderer
 from ui.player_list_actions import (
     delete_single_record_files,
     prompt_and_rename_record,
@@ -91,6 +92,16 @@ class PlayerListPage(QWidget):
         self.scroll_area.setWidget(self.scroll_content)
         
         layout.addWidget(self.scroll_area)
+
+        self.renderer = PlayerListRenderer(
+            config=self.config,
+            scroll_area=self.scroll_area,
+            scroll_layout=self.scroll_layout,
+            t=self.t,
+            on_record_selected=self.recordSelected.emit,
+            on_rename_requested=self.rename_record,
+            on_delete_requested=self.delete_record,
+        )
         
         # フィルターボタンをスクロールエリア上のオーバーレイとして配置
         self.filter_btn = QPushButton(self)
@@ -139,120 +150,24 @@ class PlayerListPage(QWidget):
         self._apply_filters_and_render()
 
     def _apply_filters_and_render(self):
-        self.clear_list()
-        self.filtered_records = []
-        
+        filtered_records = []
         if hasattr(self, 'all_loaded_records'):
             for rec in self.all_loaded_records:
                 mode = rec.get('mode', 'Unknown')
                 if self.current_mode != "All" and mode.lower() != self.current_mode.lower():
                     continue
-                self.filtered_records.append(rec)
+                filtered_records.append(rec)
                 
-        # ソート処理
         if self.current_sort == "date_desc":
-            self.filtered_records.sort(key=lambda x: x.get('timestamp', 0), reverse=True)
+            filtered_records.sort(key=lambda x: x.get('timestamp', 0), reverse=True)
         elif self.current_sort == "date_asc":
-            self.filtered_records.sort(key=lambda x: x.get('timestamp', 0), reverse=False)
+            filtered_records.sort(key=lambda x: x.get('timestamp', 0), reverse=False)
         elif self.current_sort == "mmr_desc":
-            self.filtered_records.sort(key=lambda x: x.get('mmr_change', 0), reverse=True)
+            filtered_records.sort(key=lambda x: x.get('mmr_change', 0), reverse=True)
         elif self.current_sort == "mmr_asc":
-            self.filtered_records.sort(key=lambda x: x.get('mmr_change', 0), reverse=False)
+            filtered_records.sort(key=lambda x: x.get('mmr_change', 0), reverse=False)
                 
-        self.displayed_count = 0
-        self.current_group_key = None
-        self.current_flow_layout = None
-        
-        try:
-            self.scroll_area.verticalScrollBar().valueChanged.disconnect(self._on_scroll)
-        except TypeError:
-            pass
-        self.scroll_area.verticalScrollBar().valueChanged.connect(self._on_scroll)
-        
-        self._load_more_items()
-
-    def _on_scroll(self, value):
-        scrollbar = self.scroll_area.verticalScrollBar()
-        # 下から300px以内に近づいたら次のバッチを読み込む
-        if scrollbar.maximum() - value < 300:
-            self._load_more_items()
-
-    def _load_more_items(self):
-        if not hasattr(self, 'filtered_records'):
-            return
-            
-        batch_size = 12 if getattr(self.config, 'LIGHTWEIGHT_MODE', False) else 20
-        start = self.displayed_count
-        end = min(start + batch_size, len(self.filtered_records))
-        
-        if start >= end:
-            return
-            
-        for i in range(start, end):
-            rec = self.filtered_records[i]
-            
-            # ソート条件が日付以外の場合は、グループ化キーを固定してヘッダーを1つだけにする
-            if self.current_sort.startswith("date"):
-                group_key = rec['date_key']
-            else:
-                group_key = getattr(self.t, 'all_records', "All Records")
-            
-            if self.current_group_key != group_key:
-                self.current_group_key = group_key
-                
-                date_header_widget = QWidget()
-                date_header_widget.setProperty("is_date_header", True)
-                date_header_layout = QHBoxLayout(date_header_widget)
-                date_header_layout.setContentsMargins(0, 15, 0, 5)
-                
-                date_checkbox = QPushButton()
-                date_checkbox.setCheckable(True)
-                date_checkbox.setFixedSize(20, 20)
-                date_checkbox.setStyleSheet("""
-                    QPushButton {
-                        background-color: rgba(0, 0, 0, 0.6);
-                        border: 2px solid #FFFFFF;
-                        border-radius: 4px;
-                    }
-                """)
-                date_checkbox.setText("")
-                date_checkbox.setVisible(self.delete_mode or self.favorite_mode)
-                
-                date_label = QLabel(group_key)
-                date_label.setStyleSheet("font-size: 16px; font-weight: bold; color: #FF4655;")
-                
-                date_header_layout.addWidget(date_checkbox)
-                date_header_layout.addWidget(date_label)
-                date_header_layout.addStretch()
-                
-                self.scroll_layout.addWidget(date_header_widget)
-                
-                flow_widget = QWidget()
-                self.current_flow_layout = FlowLayout(flow_widget)
-                
-                date_checkbox.toggled.connect(lambda checked, fw=flow_widget, cb=date_checkbox: self._on_date_checkbox_toggled(checked, fw, cb))
-                
-                self.scroll_layout.addWidget(flow_widget)
-                
-            item_widget = RecordItemWidget(
-                rec['filename'], 
-                rec['display_name'], 
-                rec['thumb_path'], 
-                rec['result'], 
-                rec['is_favorite'], 
-                rec.get('mmr_change', 0), 
-                rec.get('party_members', []),
-                rec.get('is_fetching_api', False)
-            )
-            item_widget.game_mode = rec.get('mode', 'Unknown')
-            item_widget.doubleClicked.connect(self.recordSelected.emit)
-            item_widget.renameRequested.connect(self.rename_record)
-            item_widget.deleteRequested.connect(self.delete_record)
-            item_widget.set_selection_mode(self.delete_mode or self.favorite_mode, "delete" if self.delete_mode else "favorite")
-            
-            self.current_flow_layout.addWidget(item_widget)
-            
-        self.displayed_count = end
+        self.renderer.set_records(filtered_records, self.current_sort, self.delete_mode, self.favorite_mode)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -271,122 +186,47 @@ class PlayerListPage(QWidget):
         if getattr(self, '_needs_refresh', False):
             self.refresh_list()
 
-    def _get_selected_files(self):
-        selected_files = []
-        for i in range(self.scroll_layout.count()):
-            item = self.scroll_layout.itemAt(i)
-            widget = item.widget()
-            if widget and isinstance(widget, QWidget):
-                layout = widget.layout()
-                if isinstance(layout, FlowLayout):
-                    for j in range(layout.count()):
-                        flow_item = layout.itemAt(j)
-                        if flow_item and flow_item.widget() and isinstance(flow_item.widget(), RecordItemWidget):
-                            record_widget = flow_item.widget()
-                            if record_widget.is_checked():
-                                selected_files.append(record_widget.json_filename)
-        return selected_files
-
-    def _update_items_selection_mode(self):
-        mode = "delete" if self.delete_mode else "favorite"
-        enabled = self.delete_mode or self.favorite_mode
-        for i in range(self.scroll_layout.count()):
-            item = self.scroll_layout.itemAt(i)
-            widget = item.widget()
-            if widget and isinstance(widget, QWidget):
-                if widget.property("is_date_header"):
-                    layout = widget.layout()
-                    cb_item = layout.itemAt(0)
-                    if cb_item and cb_item.widget() and isinstance(cb_item.widget(), QPushButton):
-                        cb = cb_item.widget()
-                        cb.setVisible(enabled)
-                        if not enabled:
-                            cb.blockSignals(True)
-                            cb.setChecked(False)
-                            self._update_date_checkbox_style(cb, False, mode)
-                            cb.blockSignals(False)
-                        else:
-                            self._update_date_checkbox_style(cb, cb.isChecked(), mode)
-                else:
-                    layout = widget.layout()
-                    if isinstance(layout, FlowLayout):
-                        for j in range(layout.count()):
-                            flow_item = layout.itemAt(j)
-                            if flow_item and flow_item.widget() and isinstance(flow_item.widget(), RecordItemWidget):
-                                flow_item.widget().set_selection_mode(enabled, mode)
-
-    def _update_date_checkbox_style(self, checkbox, checked, mode="delete"):
-        if checked:
-            checkbox.setText("✓")
-            color = "#FF4655" if mode == "delete" else "#FFD700"
-            text_color = "white" if mode == "delete" else "black"
-            checkbox.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {color};
-                    color: {text_color};
-                    font-weight: bold;
-                    border: 2px solid #FFFFFF;
-                    border-radius: 4px;
-                }}
-            """)
-        else:
-            checkbox.setText("")
-            checkbox.setStyleSheet("""
-                QPushButton {
-                    background-color: rgba(0, 0, 0, 0.6);
-                    border: 2px solid #FFFFFF;
-                    border-radius: 4px;
-                }
-            """)
-
-    def _on_date_checkbox_toggled(self, checked, flow_widget, checkbox):
-        mode = "delete" if self.delete_mode else "favorite"
-        self._update_date_checkbox_style(checkbox, checked, mode)
-        layout = flow_widget.layout()
-        if isinstance(layout, FlowLayout):
-            for j in range(layout.count()):
-                flow_item = layout.itemAt(j)
-                if flow_item and flow_item.widget() and isinstance(flow_item.widget(), RecordItemWidget):
-                    flow_item.widget().set_checked(checked)
-
     def toggle_delete_mode(self, checked):
         if checked:
             self.delete_mode = True
             self.favorite_mode = False
             self.header.set_favorite_mode(False)
-            self._update_items_selection_mode()
+            self.renderer.update_selection_mode(self.delete_mode, self.favorite_mode)
         else:
-            selected_files = self._get_selected_files()
+            selected_files = self.renderer.get_selected_files()
             if selected_files:
-                reply = QMessageBox.question(self, 'Delete Records', 
-                                             f'Are you sure you want to delete {len(selected_files)} selected record(s)?',
-                                             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                                             QMessageBox.StandardButton.No)
+                reply = QMessageBox.question(
+                    self,
+                    "Delete Records",
+                    f"Are you sure you want to delete {len(selected_files)} selected record(s)?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No,
+                )
                 if reply == QMessageBox.StandardButton.Yes:
                     for json_filename in selected_files:
                         self._delete_single_record_files(json_filename)
                     self.delete_mode = False
-                    self._update_items_selection_mode()
+                    self.renderer.update_selection_mode(self.delete_mode, self.favorite_mode)
                     self.refresh_list()
                 else:
                     self.header.set_delete_mode(True)
             else:
                 self.delete_mode = False
-                self._update_items_selection_mode()
+                self.renderer.update_selection_mode(self.delete_mode, self.favorite_mode)
 
     def toggle_favorite_mode(self, checked):
         if checked:
             self.favorite_mode = True
             self.delete_mode = False
             self.header.set_delete_mode(False)
-            self._update_items_selection_mode()
+            self.renderer.update_selection_mode(self.delete_mode, self.favorite_mode)
         else:
-            selected_files = self._get_selected_files()
+            selected_files = self.renderer.get_selected_files()
             if selected_files:
                 for json_filename in selected_files:
                     self._toggle_favorite_status(json_filename)
             self.favorite_mode = False
-            self._update_items_selection_mode()
+            self.renderer.update_selection_mode(self.delete_mode, self.favorite_mode)
             self.refresh_list()
 
     def _toggle_favorite_status(self, json_filename):
@@ -420,29 +260,12 @@ class PlayerListPage(QWidget):
             self._delete_single_record_files(json_filename)
             self.refresh_list()
 
-    def _clear_layout(self, layout):
-        if layout is not None:
-            while layout.count():
-                item = layout.takeAt(0)
-                widget = item.widget()
-                if widget:
-                    widget.deleteLater()
-                elif item.layout():
-                    self._clear_layout(item.layout())
-            layout.deleteLater()
-
     def rename_record(self, json_filename, current_name):
         if prompt_and_rename_record(self, self.config.SAVE_DIR, json_filename, current_name):
             self.refresh_list()
 
     def clear_list(self):
-        while self.scroll_layout.count():
-            item = self.scroll_layout.takeAt(0)
-            widget = item.widget()
-            if widget:
-                widget.deleteLater()
-            elif item.layout():
-                self._clear_layout(item.layout())
+        self.renderer.clear()
 
     def refresh_list(self):
         # ウィンドウが非表示(ゲーム中など)の時にUIを再構築すると、

@@ -24,6 +24,7 @@ from ui.video_playback_controls import PlaybackControlsWidget
 from ui.clip_edit_panel import ClipEditPanel
 from ui.in_app_notification import InAppNotification
 from ui.player_clip_controller import PlayerClipController
+from ui.player_navigation_controller import PlayerNavigationController
 
 BACK_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white">
   <path d="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z" />
@@ -171,18 +172,25 @@ class PlayerVideoPage(QWidget):
         page_layout.addWidget(controls_widget)
         
         self.playback_controls = PlaybackControlsWidget()
-        self.playback_controls.prevRoundRequested.connect(self.skip_to_prev_round)
-        self.playback_controls.skipBackRequested.connect(self.skip_backward)
         self.playback_controls.togglePlayRequested.connect(self.toggle_play)
-        self.playback_controls.skipForwardRequested.connect(self.skip_forward)
-        self.playback_controls.nextRoundRequested.connect(self.skip_to_next_round)
-        self.playback_controls.speedDecreaseRequested.connect(self.decrease_speed)
-        self.playback_controls.speedIncreaseRequested.connect(self.increase_speed)
-        self.playback_controls.speedToggleRequested.connect(self.toggle_speed)
         
         page_layout.addWidget(self.playback_controls)
         page_layout.addWidget(self.edit_panel)
         
+        self.speed_osd_label = QLabel("1.0x", self.video_widget)
+        self.speed_osd_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.speed_osd_label.setStyleSheet("background-color: rgba(0, 0, 0, 150); color: white; font-size: 24px; font-weight: bold; border-radius: 10px; padding: 10px;")
+        self.speed_osd_label.hide()
+
+        self.nav_controller = PlayerNavigationController(
+            player_core=self.player_core,
+            playback_controls=self.playback_controls,
+            video_widget=self.video_widget,
+            volume_widget=self.volume_widget,
+            speed_osd_label=self.speed_osd_label,
+            parent=self,
+        )
+
         # 別ウィンドウのNotificationOverlayを廃止し、アプリ内描画のInAppNotificationに変更
         self.notification = InAppNotification(self)
         self.clip_controller = PlayerClipController(
@@ -198,19 +206,7 @@ class PlayerVideoPage(QWidget):
             format_time_fn=self.format_time,
             parent=self,
         )
-        
-        self.target_playback_rate = 1.0
-        self.is_speed_bypassed = False
         self.video_widget.installEventFilter(self)
-        
-        self.speed_osd_label = QLabel("1.0x", self.video_widget)
-        self.speed_osd_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.speed_osd_label.setStyleSheet("background-color: rgba(0, 0, 0, 150); color: white; font-size: 24px; font-weight: bold; border-radius: 10px; padding: 10px;")
-        self.speed_osd_label.hide()
-        
-        self.speed_osd_timer = QTimer(self)
-        self.speed_osd_timer.setSingleShot(True)
-        self.speed_osd_timer.timeout.connect(self.speed_osd_label.hide)
 
     def _create_icon(self, svg_bytes, size=24):
         pixmap = QPixmap(size, size)
@@ -222,66 +218,9 @@ class PlayerVideoPage(QWidget):
         return QIcon(pixmap)
 
     def eventFilter(self, obj, event):
-        if obj == self.video_widget:
-            if event.type() == QEvent.Type.Wheel:
-                delta = event.angleDelta().y()
-                modifiers = event.modifiers()
-                # Ctrl+ホイールで速度変更、通常ホイールは音量調整（誤操作による低音化を防止）
-                if modifiers & Qt.KeyboardModifier.ControlModifier:
-                    if delta > 0:
-                        self.increase_speed()
-                    elif delta < 0:
-                        self.decrease_speed()
-                else:
-                    step = 5 if delta > 0 else -5
-                    new_vol = max(0, min(200, int(round(self.player_core.current_sys_volume * 100)) + step))
-                    self.player_core.set_sys_volume(new_vol)
-                    self.volume_widget.set_volume(new_vol)
-                    self.show_osd(f"Vol: {new_vol}%")
-                return True
-            elif event.type() == QEvent.Type.Resize:
-                if self.speed_osd_label.isVisible():
-                    vw_rect = self.video_widget.rect()
-                    lbl_rect = self.speed_osd_label.rect()
-                    x = (vw_rect.width() - lbl_rect.width()) // 2
-                    y = vw_rect.height() - lbl_rect.height() - 30
-                    self.speed_osd_label.move(x, y)
+        if self.nav_controller.handle_event_filter(obj, event):
+            return True
         return super().eventFilter(obj, event)
-
-    def increase_speed(self):
-        self.set_target_playback_rate(self.target_playback_rate + 0.1)
-
-    def decrease_speed(self):
-        self.set_target_playback_rate(self.target_playback_rate - 0.1)
-
-    def set_target_playback_rate(self, rate):
-        rate = max(0.1, min(5.0, round(rate, 1)))
-        self.target_playback_rate = rate
-        self.is_speed_bypassed = False
-        self._apply_playback_rate()
-
-    def toggle_speed(self):
-        if self.target_playback_rate == 1.0:
-            return
-        self.is_speed_bypassed = not self.is_speed_bypassed
-        self._apply_playback_rate()
-
-    def show_osd(self, text: str):
-        self.speed_osd_label.setText(text)
-        self.speed_osd_label.adjustSize()
-        vw_rect = self.video_widget.rect()
-        lbl_rect = self.speed_osd_label.rect()
-        x = (vw_rect.width() - lbl_rect.width()) // 2
-        y = vw_rect.height() - lbl_rect.height() - 30
-        self.speed_osd_label.move(x, y)
-        self.speed_osd_label.show()
-        self.speed_osd_timer.start(2000)
-
-    def _apply_playback_rate(self):
-        actual_rate = 1.0 if self.is_speed_bypassed else self.target_playback_rate
-        self.player_core.set_playback_rate(actual_rate)
-        self.playback_controls.set_speed_label(self.target_playback_rate, self.is_speed_bypassed)
-        self.show_osd(f"{actual_rate:.1f}x")
 
     def zoom_in_timeline(self):
         current_zoom = self.timeline_overlay.zoom_factor
@@ -305,11 +244,7 @@ class PlayerVideoPage(QWidget):
         self.player_core.load_source(None)
         self.current_json_filename = json_filename
         json_path = os.path.join(self.config.SAVE_DIR, json_filename)
-        
-        self.target_playback_rate = 1.0
-        self.is_speed_bypassed = False
-        self.playback_controls.set_speed_label(1.0, False)
-        self.player_core.set_playback_rate(1.0)
+        self.nav_controller.reset_playback_rate()
         
         try:
             with open(json_path, 'r', encoding='utf-8') as f:
@@ -338,6 +273,7 @@ class PlayerVideoPage(QWidget):
         rounds, events = build_timeline_data(match_info, duration_ms, riot_id, tag_line)
         
         self.current_rounds = rounds
+        self.nav_controller.set_current_rounds(rounds)
         self.timeline_overlay.set_data(rounds, events)
 
     def handle_media_error(self, error, error_string):
@@ -352,50 +288,6 @@ class PlayerVideoPage(QWidget):
 
     def _on_playback_state_changed(self, state):
         self.playback_controls.set_playback_state(state == QMediaPlayer.PlaybackState.PlayingState.value)
-
-    def _get_effective_position(self):
-        import time
-        now = time.time()
-        # 直近0.5秒以内にシーク要求があった場合は、その目標位置を基準とする（連打対策）
-        if hasattr(self, '_last_seek_time') and now - self._last_seek_time < 0.5:
-            return getattr(self, '_target_position', self.player_core.position())
-        return self.player_core.position()
-
-    def _set_effective_position(self, pos):
-        import time
-        self._target_position = pos
-        self._last_seek_time = time.time()
-        self.player_core.set_position_direct(pos)
-
-    def skip_backward(self):
-        pos = max(0, self._get_effective_position() - 5000)
-        self._set_effective_position(pos)
-
-    def skip_forward(self):
-        pos = min(self.player_core.duration(), self._get_effective_position() + 5000)
-        self._set_effective_position(pos)
-
-    def skip_to_prev_round(self):
-        if not hasattr(self, 'current_rounds') or not self.current_rounds:
-            return
-        current_pos = self._get_effective_position()
-        target_pos = 0
-        for r in reversed(self.current_rounds):
-            if r["start"] < current_pos - 2000:
-                target_pos = r["start"]
-                break
-        self._set_effective_position(target_pos)
-
-    def skip_to_next_round(self):
-        if not hasattr(self, 'current_rounds') or not self.current_rounds:
-            return
-        current_pos = self._get_effective_position()
-        target_pos = self.player_core.duration()
-        for r in self.current_rounds:
-            if r["start"] > current_pos + 2000:
-                target_pos = r["start"]
-                break
-        self._set_effective_position(target_pos)
 
     def format_time(self, ms):
         s = ms // 1000
@@ -428,4 +320,4 @@ class PlayerVideoPage(QWidget):
             self.player_core.set_mic_volume(mic_vol * 100)
             self.mic_volume_widget.set_volume(int(mic_vol * 100))
             
-        self.player_core.set_playback_rate(self.target_playback_rate if not self.is_speed_bypassed else 1.0)
+        self.nav_controller.apply_playback_rate()
