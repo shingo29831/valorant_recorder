@@ -8,9 +8,15 @@ from core.config import Config
 from core.i18n import get_trans
 from ui.flow_layout import FlowLayout
 from ui.record_item_widget import RecordItemWidget
-from ui.player_utils import find_video_for_json
 from ui.record_data_loader import RecordDataLoader
 from ui.player_list_header import PlayerListHeader
+from ui.player_list_actions import (
+    delete_single_record_files,
+    prompt_and_rename_record,
+    show_record_filter_menu,
+    show_record_sort_menu,
+    toggle_favorite_status,
+)
 
 FILTER_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white">
   <path d="M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z"/>
@@ -384,86 +390,26 @@ class PlayerListPage(QWidget):
             self.refresh_list()
 
     def _toggle_favorite_status(self, json_filename):
-        json_path = os.path.join(self.config.SAVE_DIR, json_filename)
-        try:
-            with open(json_path, 'r', encoding='utf-8') as f:
-                data = json.load(f)
-            data["is_favorite"] = not data.get("is_favorite", False)
-            with open(json_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=4)
-        except Exception as e:
-            print(f"[PlayerListPage] Error updating favorite status: {e}")
+        toggle_favorite_status(self.config.SAVE_DIR, json_filename)
 
     def show_filter_menu(self):
-        menu = QMenu(self)
-        
-        action_clear = menu.addAction(self.t.filter_clear)
-        action_clear.triggered.connect(lambda checked=False: self.apply_filter(None))
-        menu.addSeparator()
-        
-        action_fav = menu.addAction(self.t.filter_favorite)
-        action_fav.triggered.connect(lambda checked=False: self.apply_filter(("favorite", True)))
-        
-        menu_agent = menu.addMenu(self.t.filter_agent)
-        for agent in sorted(self.available_agents):
-            action = menu_agent.addAction(agent)
-            action.triggered.connect(lambda checked, a=agent: self.apply_filter(("agent", a)))
-            
-        menu_result = menu.addMenu(self.t.filter_result)
-        for res, label in [("win", self.t.result_win), ("loss", self.t.result_loss), ("draw", self.t.result_draw)]:
-            action = menu_result.addAction(label)
-            action.triggered.connect(lambda checked, r=res: self.apply_filter(("result", r)))
-            
-        menu_map = menu.addMenu(self.t.filter_map)
-        for m in sorted(self.available_maps):
-            action = menu_map.addAction(m)
-            action.triggered.connect(lambda checked, m_name=m: self.apply_filter(("map", m_name)))
-            
-        menu.exec(self.filter_btn.mapToGlobal(QPoint(0, self.filter_btn.height())))
+        show_record_filter_menu(
+            self, self.filter_btn, self.t, self.available_agents, self.available_maps, self.apply_filter
+        )
 
     def apply_filter(self, filter_tuple):
         self.current_filter = filter_tuple
         self.refresh_list()
 
     def show_sort_menu(self):
-        menu = QMenu(self)
-        
-        sort_options = [
-            ("date_desc", getattr(self.t, 'sort_date_desc', "日付 (新しい順)")),
-            ("date_asc", getattr(self.t, 'sort_date_asc', "日付 (古い順)")),
-            ("mmr_desc", getattr(self.t, 'sort_mmr_desc', "MMR変動 (高い順)")),
-            ("mmr_asc", getattr(self.t, 'sort_mmr_asc', "MMR変動 (低い順)"))
-        ]
-        
-        for sort_key, label in sort_options:
-            action = menu.addAction(label)
-            action.setCheckable(True)
-            if self.current_sort == sort_key:
-                action.setChecked(True)
-            action.triggered.connect(lambda checked, s=sort_key: self.apply_sort(s))
-            
-        menu.exec(self.sort_btn.mapToGlobal(QPoint(0, self.sort_btn.height())))
+        show_record_sort_menu(self, self.sort_btn, self.t, self.current_sort, self.apply_sort)
 
     def apply_sort(self, sort_key):
         self.current_sort = sort_key
         self._apply_filters_and_render()
 
     def _delete_single_record_files(self, json_filename):
-        json_path = os.path.join(self.config.SAVE_DIR, json_filename)
-        try:
-            if os.path.exists(json_path):
-                with open(json_path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                video_path = find_video_for_json(self.config.SAVE_DIR, json_filename, data)
-                thumb_path = json_path.replace('.json', '.jpg')
-                
-                os.remove(json_path)
-                if video_path and os.path.exists(video_path):
-                    os.remove(video_path)
-                if os.path.exists(thumb_path):
-                    os.remove(thumb_path)
-        except Exception as e:
-            print(f"[PlayerListPage] Error deleting record {json_filename}: {e}")
+        delete_single_record_files(self.config.SAVE_DIR, json_filename)
 
     def delete_record(self, json_filename):
         reply = QMessageBox.question(self, 'Delete Record', 
@@ -486,18 +432,8 @@ class PlayerListPage(QWidget):
             layout.deleteLater()
 
     def rename_record(self, json_filename, current_name):
-        new_name, ok = QInputDialog.getText(self, "Rename", "Enter new name:", text=current_name)
-        if ok and new_name and new_name != current_name:
-            json_path = os.path.join(self.config.SAVE_DIR, json_filename)
-            try:
-                with open(json_path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                data["custom_name"] = new_name
-                with open(json_path, 'w', encoding='utf-8') as f:
-                    json.dump(data, f, ensure_ascii=False, indent=4)
-                self.refresh_list()
-            except Exception as e:
-                print(f"[PlayerListPage] Error saving custom name: {e}")
+        if prompt_and_rename_record(self, self.config.SAVE_DIR, json_filename, current_name):
+            self.refresh_list()
 
     def clear_list(self):
         while self.scroll_layout.count():
