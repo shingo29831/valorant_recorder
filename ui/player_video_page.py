@@ -23,6 +23,7 @@ from ui.timeline_builder import build_timeline_data
 from ui.video_playback_controls import PlaybackControlsWidget
 from ui.clip_edit_panel import ClipEditPanel
 from ui.in_app_notification import InAppNotification
+from ui.player_clip_controller import PlayerClipController
 
 BACK_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white">
   <path d="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z" />
@@ -95,7 +96,6 @@ class PlayerVideoPage(QWidget):
         self.timeline_overlay.seekStarted.connect(self.player_core.on_seek_started)
         self.timeline_overlay.seekRequested.connect(self.player_core.on_seek_requested)
         self.timeline_overlay.seekFinished.connect(self.player_core.on_seek_finished)
-        self.timeline_overlay.clipRangeChanged.connect(self._on_clip_range_changed)
         
         controls_widget = QWidget()
         controls_layout = QHBoxLayout(controls_widget)
@@ -140,36 +140,21 @@ class PlayerVideoPage(QWidget):
         
         # クリップ編集パネル
         self.edit_panel = ClipEditPanel(self.t)
-        self.edit_panel.setStartRequested.connect(self._set_clip_start)
-        self.edit_panel.setEndRequested.connect(self._set_clip_end)
-        self.edit_panel.generateRequested.connect(self._generate_clip)
-        self.edit_panel.cancelRequested.connect(self._toggle_edit_mode)
         self.edit_panel.setVisible(False)
-        self.clip_start_ms = 0
-        self.clip_end_ms = 0
-        
+
         right_container = QWidget()
         right_container.setFixedWidth(50)
         right_layout = QVBoxLayout(right_container)
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(10)
-        
+
         self.edit_mode_btn = QPushButton()
         self.edit_mode_btn.setFixedSize(40, 40)
         self.edit_mode_btn.setStyleSheet("border-radius: 20px; background-color: #333333;")
         self.edit_mode_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        
-        pixmap_edit = QPixmap(24, 24)
-        pixmap_edit.fill(Qt.GlobalColor.transparent)
-        painter_edit = QPainter(pixmap_edit)
-        renderer_edit = QSvgRenderer(QByteArray(SCISSORS_SVG))
-        renderer_edit.render(painter_edit)
-        painter_edit.end()
-        
-        self.edit_mode_btn.setIcon(QIcon(pixmap_edit))
+        self.edit_mode_btn.setIcon(self._create_icon(SCISSORS_SVG, 24))
         self.edit_mode_btn.setIconSize(QSize(24, 24))
         self.edit_mode_btn.setToolTip(self.t.create_clip)
-        self.edit_mode_btn.clicked.connect(self._toggle_edit_mode)
         
         self.event_toggle_widget = EventToggleWidget()
         self.event_toggle_widget.filterChanged.connect(self.timeline_overlay.set_filters)
@@ -200,6 +185,19 @@ class PlayerVideoPage(QWidget):
         
         # 別ウィンドウのNotificationOverlayを廃止し、アプリ内描画のInAppNotificationに変更
         self.notification = InAppNotification(self)
+        self.clip_controller = PlayerClipController(
+            config=self.config,
+            t=self.t,
+            player_core=self.player_core,
+            timeline_overlay=self.timeline_overlay,
+            edit_panel=self.edit_panel,
+            edit_mode_btn=self.edit_mode_btn,
+            zoom_in_btn=self.zoom_in_btn,
+            zoom_out_btn=self.zoom_out_btn,
+            notification=self.notification,
+            format_time_fn=self.format_time,
+            parent=self,
+        )
         
         self.target_playback_rate = 1.0
         self.is_speed_bypassed = False
@@ -293,112 +291,6 @@ class PlayerVideoPage(QWidget):
         current_zoom = self.timeline_overlay.zoom_factor
         self.timeline_overlay.set_zoom(current_zoom / 1.5, center_ms=self.player_core.position())
 
-    def _toggle_edit_mode(self):
-        is_visible = self.edit_panel.isVisible()
-        self.edit_panel.setVisible(not is_visible)
-        
-        self.zoom_out_btn.setVisible(not is_visible)
-        self.zoom_in_btn.setVisible(not is_visible)
-        
-        if not is_visible:
-            self.clip_start_ms = self.player_core.position()
-            self.clip_end_ms = min(self.player_core.duration(), self.clip_start_ms + 30000)
-            self._update_clip_labels()
-            self.timeline_overlay.set_edit_mode(True, self.clip_start_ms, self.clip_end_ms)
-            self.edit_mode_btn.setStyleSheet("border-radius: 20px; background-color: #FF4655;")
-            
-            target_view_duration = 60000
-            duration = self.player_core.duration()
-            if duration > target_view_duration:
-                zoom = duration / target_view_duration
-                self.timeline_overlay.set_zoom(zoom, center_ms=self.player_core.position())
-        else:
-            self.timeline_overlay.set_edit_mode(False)
-            self.edit_mode_btn.setStyleSheet("border-radius: 20px; background-color: #333333;")
-            self.timeline_overlay.set_zoom(1.0)
-
-    def _set_clip_start(self):
-        self.clip_start_ms = self.player_core.position()
-        if self.clip_start_ms > self.clip_end_ms:
-            self.clip_end_ms = self.player_core.duration()
-        self._update_clip_labels()
-        self.timeline_overlay.set_clip_range(self.clip_start_ms, self.clip_end_ms)
-
-    def _set_clip_end(self):
-        self.clip_end_ms = self.player_core.position()
-        if self.clip_end_ms < self.clip_start_ms:
-            self.clip_start_ms = 0
-        self._update_clip_labels()
-        self.timeline_overlay.set_clip_range(self.clip_start_ms, self.clip_end_ms)
-
-    def _update_clip_labels(self):
-        self.edit_panel.update_labels(self.format_time(self.clip_start_ms), self.format_time(self.clip_end_ms))
-
-    def _on_clip_range_changed(self, start_ms, end_ms):
-        self.clip_start_ms = start_ms
-        self.clip_end_ms = end_ms
-        self._update_clip_labels()
-
-    def _generate_clip(self):
-        if not self.current_match_data:
-            return
-            
-        video_path = find_video_for_json(self.config.SAVE_DIR, self.current_json_filename, self.current_match_data)
-        if not video_path or not os.path.exists(video_path):
-            return
-            
-        if self.clip_start_ms >= self.clip_end_ms:
-            self.notification.show_message("Start time must be before end time.")
-            return
-            
-        clip_dir = getattr(self.config, 'CLIP_SAVE_DIR', os.path.join(self.config.SAVE_DIR, "clips"))
-        os.makedirs(clip_dir, exist_ok=True)
-        
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        output_filename = f"clip_{timestamp}.mp4"
-        output_path = os.path.join(clip_dir, output_filename)
-        
-        from recorder.ffmpeg_recorder import get_available_encoders
-        from recorder.ffmpeg_downloader import ensure_ffmpeg_downloaded
-        app_data_dir = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'ValoReco')
-        os.makedirs(app_data_dir, exist_ok=True)
-        ffmpeg_path = ensure_ffmpeg_downloaded(app_data_dir)
-        
-        available, _ = get_available_encoders(ffmpeg_path)
-        configured_enc = getattr(self.config, 'RECORD_ENCODER', '')
-        if configured_enc and configured_enc in available:
-            encoder = configured_enc
-        else:
-            h264_encoders = [enc for enc in available if "h264" in enc]
-            encoder = h264_encoders[0] if h264_encoders else (available[0] if available else "libx264")
-        
-        self.edit_panel.set_generate_enabled(False, self.t.generating_clip)
-        
-        audio_track_count = self.player_core.audio_track_count()
-        
-        self.clip_thread = ClipGeneratorThread(
-            ffmpeg_path=ffmpeg_path,
-            input_path=video_path,
-            output_path=output_path,
-            start_ms=self.clip_start_ms,
-            end_ms=self.clip_end_ms,
-            encoder=encoder,
-            sys_volume=self.player_core.current_sys_volume,
-            mic_volume=self.player_core.current_mic_volume,
-            audio_track_count=audio_track_count
-        )
-        self.clip_thread.finished.connect(self._on_clip_finished)
-        self.clip_thread.start()
-
-    def _on_clip_finished(self, success, result):
-        self.edit_panel.set_generate_enabled(True, self.t.generate)
-        
-        if success:
-            self.notification.show_message(self.t.clip_success.format(path=result))
-            self.edit_panel.setVisible(False)
-        else:
-            self.notification.show_message(self.t.clip_failed.format(error=result))
-
     def request_back(self):
         self.player_core.load_source(None)
         self.backRequested.emit()
@@ -422,7 +314,7 @@ class PlayerVideoPage(QWidget):
         try:
             with open(json_path, 'r', encoding='utf-8') as f:
                 self.current_match_data = json.load(f)
-                
+            self.clip_controller.set_current_recording(json_filename, self.current_match_data)
             video_path = find_video_for_json(self.config.SAVE_DIR, json_filename, self.current_match_data)
             
             if video_path and os.path.exists(video_path):
