@@ -1,5 +1,5 @@
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QPushButton, QLabel
-from PyQt6.QtCore import Qt, QSize, pyqtSignal, QByteArray, QEvent
+from PyQt6.QtCore import Qt, QSize, pyqtSignal, QByteArray, QEvent, QTimer
 from PyQt6.QtGui import QIcon, QPixmap, QPainter
 from PyQt6.QtSvg import QSvgRenderer
 
@@ -19,12 +19,17 @@ class PlaybackControlsWidget(QWidget):
     skipForwardRequested = pyqtSignal()
     nextRoundRequested = pyqtSignal()
     
-    speedDecreaseRequested = pyqtSignal()
-    speedIncreaseRequested = pyqtSignal()
+    speedDecreaseRequested = pyqtSignal(float)
+    speedIncreaseRequested = pyqtSignal(float)
     speedToggleRequested = pyqtSignal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._repeat_timer = QTimer(self)
+        self._repeat_timer.timeout.connect(self._on_repeat_step)
+        self._repeat_direction = 0
+        self._repeat_count = 0
+
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         
@@ -89,7 +94,8 @@ class PlaybackControlsWidget(QWidget):
         self.speed_minus_btn.setStyleSheet(speed_btn_style)
         self.speed_minus_btn.setIcon(self._create_icon(MINUS_SVG))
         self.speed_minus_btn.setIconSize(QSize(16, 16))
-        self.speed_minus_btn.clicked.connect(self.speedDecreaseRequested)
+        self.speed_minus_btn.pressed.connect(self._on_minus_pressed)
+        self.speed_minus_btn.released.connect(self._stop_speed_repeat)
         
         self.speed_label_ui = QLabel("1.0x")
         self.speed_label_ui.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -103,7 +109,8 @@ class PlaybackControlsWidget(QWidget):
         self.speed_plus_btn.setStyleSheet(speed_btn_style)
         self.speed_plus_btn.setIcon(self._create_icon(PLUS_SVG))
         self.speed_plus_btn.setIconSize(QSize(16, 16))
-        self.speed_plus_btn.clicked.connect(self.speedIncreaseRequested)
+        self.speed_plus_btn.pressed.connect(self._on_plus_pressed)
+        self.speed_plus_btn.released.connect(self._stop_speed_repeat)
         
         speed_layout.addWidget(self.speed_minus_btn)
         speed_layout.addWidget(self.speed_label_ui)
@@ -139,3 +146,47 @@ class PlaybackControlsWidget(QWidget):
             self.speed_label_ui.setStyleSheet("QLabel { border-radius: 15px; background-color: rgba(255, 70, 85, 0.5); font-size: 16px; font-weight: bold; color: white; margin: 0px; padding: 0px; } QLabel:hover { background-color: rgba(255, 70, 85, 0.7); }")
         else:
             self.speed_label_ui.setStyleSheet("QLabel { border-radius: 15px; background-color: transparent; font-size: 16px; font-weight: bold; color: white; margin: 0px; padding: 0px; } QLabel:hover { background-color: rgba(255, 255, 255, 0.1); }")
+
+    def hideEvent(self, event):
+        # 非表示時の長押しタイマー暴走・リーク防止
+        self._stop_speed_repeat()
+        super().hideEvent(event)
+
+    def _on_minus_pressed(self) -> None:
+        self._start_speed_repeat(-1)
+
+    def _on_plus_pressed(self) -> None:
+        self._start_speed_repeat(1)
+
+    def _start_speed_repeat(self, direction: int) -> None:
+        self._repeat_direction = direction
+        self._repeat_count = 0
+        if direction > 0:
+            self.speedIncreaseRequested.emit(0.1)
+        else:
+            self.speedDecreaseRequested.emit(0.1)
+        self._repeat_timer.start(350)
+
+    def _stop_speed_repeat(self) -> None:
+        self._repeat_timer.stop()
+        self._repeat_direction = 0
+        self._repeat_count = 0
+
+    def _on_repeat_step(self) -> None:
+        if self._repeat_timer.interval() != 70:
+            self._repeat_timer.setInterval(70)
+
+        self._repeat_count += 1
+        if self._repeat_count < 5:
+            step = 0.1
+        elif self._repeat_count < 11:
+            step = 0.2
+        elif self._repeat_count < 19:
+            step = 0.5
+        else:
+            step = 1.0
+
+        if self._repeat_direction > 0:
+            self.speedIncreaseRequested.emit(step)
+        elif self._repeat_direction < 0:
+            self.speedDecreaseRequested.emit(step)

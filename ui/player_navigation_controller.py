@@ -53,11 +53,11 @@ class PlayerNavigationController(QObject):
         self.playback_controls.set_speed_label(1.0, False)
         self.player_core.set_playback_rate(1.0)
 
-    def increase_speed(self) -> None:
-        self.set_target_playback_rate(self.target_playback_rate + 0.1)
+    def increase_speed(self, step: float = 0.1) -> None:
+        self.set_target_playback_rate(self.target_playback_rate + step)
 
-    def decrease_speed(self) -> None:
-        self.set_target_playback_rate(self.target_playback_rate - 0.1)
+    def decrease_speed(self, step: float = 0.1) -> None:
+        self.set_target_playback_rate(self.target_playback_rate - step)
 
     def set_target_playback_rate(self, rate: float) -> None:
         rate = max(0.1, min(5.0, round(rate, 1)))
