@@ -214,7 +214,7 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
     // FFmpegのpipe:0プローブ完了を促すため最小限(10ms)の無音フレームのみ先行投入
     outQueue.Push(std::vector<float>(framesPerChunk * 4, 0.0f));
 
-    const size_t initialCushionSamples = framesPerChunk * 5 * 2;
+    const size_t cushionSamples = framesPerChunk * 2;
     auto syncWaitStart = std::chrono::steady_clock::now();
     while (g_isRunning) {
         if (ffmpeg.IsExited(0)) {
@@ -226,17 +226,18 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
         auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - syncWaitStart
         ).count();
-        bool hasCushion = (!g_sysCapture || !g_sysCapture->IsInitialized() || sysQueue.AvailableSamples() >= initialCushionSamples) &&
-                          (!g_micCapture || !g_micCapture->IsInitialized() || micQueue.AvailableSamples() >= initialCushionSamples);
-        // D3D11/ハードウェアエンコーダの初期化完了まで最大3秒待機しA/V開始時刻のズレを防止
-        if ((ffmpeg.HasCaptureStarted() && hasCushion) || elapsedMs >= 3000) {
+        bool hasSysAudio = (!g_sysCapture || !g_sysCapture->IsInitialized() || sysQueue.AvailableSamples() >= cushionSamples);
+        bool hasMicAudio = (!g_micCapture || !g_micCapture->IsInitialized() || micQueue.AvailableSamples() >= cushionSamples);
+        // D3D11/ハードウェアエンコーダの初期化完了とキャプチャ開始を検知して同期
+        if ((ffmpeg.HasCaptureStarted() && hasSysAudio && hasMicAudio) || elapsedMs >= 3000) {
             break;
         }
         Sleep(5);
     }
 
-    sysQueue.DrainKeepLatest(initialCushionSamples);
-    micQueue.DrainKeepLatest(initialCushionSamples);
+    // 映像キャプチャ開始と同時にキューを直近20msにアラインし、A/Vの初期ズレを根絶
+    sysQueue.DrainKeepLatest(cushionSamples);
+    micQueue.DrainKeepLatest(cushionSamples);
 
     auto startTime = std::chrono::steady_clock::now();
     uint64_t totalWrittenFrames = 0;
@@ -299,10 +300,9 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
         double elapsedSec = std::chrono::duration<double>(now - startTime).count();
         uint64_t targetFrames = static_cast<uint64_t>(elapsedSec * 48000.0);
 
-        int chunksThisTick = 0;
-        while (g_isRunning && (totalWrittenFrames + framesPerChunk) <= targetFrames && chunksThisTick < 4) {
+        // 一時的負荷による遅延を蓄積させず、目標フレーム数まで即座に追従
+        while (g_isRunning && (totalWrittenFrames + framesPerChunk) <= targetFrames) {
             processAndPushChunk(false);
-            ++chunksThisTick;
         }
 
         if (std::chrono::duration_cast<std::chrono::seconds>(now - lastLogTime).count() >= 5) {

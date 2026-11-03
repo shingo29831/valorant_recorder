@@ -68,14 +68,11 @@ class AudioSyncQueue {
     std::condition_variable m_cv;
     size_t m_channels;
     size_t m_maxBufferSamples;
-    size_t m_minStartSamples;
-    bool m_isBuffering = true;
 
 public:
     AudioSyncQueue(size_t channels = 2, size_t maxDelayMs = 2000)
         : m_channels(channels),
-          m_maxBufferSamples((48000 * channels * maxDelayMs) / 1000),
-          m_minStartSamples(480 * 3 * channels) {}
+          m_maxBufferSamples((48000 * channels * maxDelayMs) / 1000) {}
 
     size_t AvailableSamples() {
         std::lock_guard<std::mutex> lock(m_mtx);
@@ -102,15 +99,14 @@ public:
             drop = (drop / m_channels) * m_channels;
             m_buffer.erase(m_buffer.begin(), m_buffer.begin() + drop);
         }
-        m_isBuffering = (m_buffer.size() < m_minStartSamples);
     }
 
     bool PopChunk(size_t samples, std::vector<float>& out, size_t maxAllowedBuffer) {
         std::lock_guard<std::mutex> lock(m_mtx);
 
-        // クロックドリフト蓄積時は中間クッション量(50ms)まで戻し頻繁な破棄を防止
+        // クロックドリフト蓄積時は適正クッション量(50ms)まで戻し遅延肥大化を防止
         if (m_buffer.size() > maxAllowedBuffer) {
-            size_t targetKeep = (std::max)(samples * 5, m_minStartSamples);
+            size_t targetKeep = samples * 5;
             if (m_buffer.size() > targetKeep) {
                 size_t excess = m_buffer.size() - targetKeep;
                 excess = (excess / m_channels) * m_channels;
@@ -118,16 +114,7 @@ public:
             }
         }
 
-        // ヒステリシス付きプリバッファリングでパケット境界競合による周期的ゼロ埋め(低音化)を防止
-        if (m_isBuffering) {
-            if (m_buffer.size() < m_minStartSamples) {
-                return false;
-            }
-            m_isBuffering = false;
-        }
-
         if (m_buffer.size() < samples) {
-            m_isBuffering = true;
             return false;
         }
 

@@ -218,9 +218,9 @@ def build_ffmpeg_command(
         else:
             encoder_opts.extend(["-threads", "4"])
 
-    # C++側AudioProcessorでノイズ抑制とクランプが完結しているため、サンプル数基準の連続PTSを付与して2系統へ分離
+    # aresampleのasync同期でクロックドリフトを自動補正し、サンプル数基準の連続PTSを付与して2系統へ分離
     audio_filter = (
-        "[0:a]asetpts=N/SR/TB,asplit=2[sys_in][mic_in];"
+        "[0:a]aresample=async=1000:first_pts=0,asetpts=N/SR/TB,asplit=2[sys_in][mic_in];"
         "[sys_in]pan=stereo|FL=c0|FR=c1[a_sys];"
         "[mic_in]pan=stereo|FL=c2|FR=c3[a_mic]"
     )

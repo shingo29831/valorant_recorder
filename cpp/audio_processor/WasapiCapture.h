@@ -54,9 +54,18 @@ private:
     std::atomic<bool> m_isRunning{false};
     std::thread m_thread;
 
+    void SilenceThreadFunc();
+
     uint32_t m_sampleRate = 0;
     uint32_t m_channels = 0;
 
     DataCallback m_callback;
     LoggerCallback m_logger;
+
+    // 無音時もオーディオエンジンを稼働維持してLoopbackパケット停止・時間欠損を防止
+    IAudioClient* m_silenceAudioClient = nullptr;
+    IAudioRenderClient* m_silenceRenderClient = nullptr;
+    std::thread m_silenceThread;
+    std::atomic<bool> m_silenceRunning{false};
+    UINT32 m_silenceBufferFrames = 0;
 };

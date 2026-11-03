@@ -23,6 +23,8 @@ WasapiCapture::~WasapiCapture() {
     }
     SAFE_RELEASE(m_captureClient);
     SAFE_RELEASE(m_audioClient);
+    SAFE_RELEASE(m_silenceRenderClient);
+    SAFE_RELEASE(m_silenceAudioClient);
     SAFE_RELEASE(m_device);
 }
 
@@ -157,6 +159,23 @@ bool WasapiCapture::Initialize() {
                  ", Bits: " + std::to_string(m_pwfx->wBitsPerSample));
     }
 
+    // Loopbackキャプチャ時は無音時でもパケットが継続生成されるようサイレントレンダーを待機
+    if (m_type == CaptureType::SystemLoopback && m_device) {
+        hr = m_device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, NULL, (void**)&m_silenceAudioClient);
+        if (SUCCEEDED(hr)) {
+            WAVEFORMATEX* pRenderWfx = nullptr;
+            hr = m_silenceAudioClient->GetMixFormat(&pRenderWfx);
+            if (SUCCEEDED(hr) && pRenderWfx) {
+                hr = m_silenceAudioClient->Initialize(AUDCLNT_SHAREMODE_SHARED, 0, 200000, 0, pRenderWfx, NULL);
+                if (SUCCEEDED(hr)) {
+                    m_silenceAudioClient->GetBufferSize(&m_silenceBufferFrames);
+                    m_silenceAudioClient->GetService(__uuidof(IAudioRenderClient), (void**)&m_silenceRenderClient);
+                }
+                CoTaskMemFree(pRenderWfx);
+            }
+        }
+    }
+
     m_isInitialized = true;
     return true;
 }
@@ -168,6 +187,17 @@ bool WasapiCapture::Start() {
     if (FAILED(hr)) {
         SetError("Failed to start IAudioClient");
         return false;
+    }
+
+    if (m_silenceAudioClient && m_silenceRenderClient) {
+        BYTE* pData = nullptr;
+        if (SUCCEEDED(m_silenceRenderClient->GetBuffer(m_silenceBufferFrames, &pData))) {
+            memset(pData, 0, m_silenceBufferFrames * m_pwfx->nBlockAlign);
+            m_silenceRenderClient->ReleaseBuffer(m_silenceBufferFrames, AUDCLNT_BUFFERFLAGS_SILENT);
+        }
+        m_silenceAudioClient->Start();
+        m_silenceRunning = true;
+        m_silenceThread = std::thread(&WasapiCapture::SilenceThreadFunc, this);
     }
 
     m_isRunning = true;
@@ -185,6 +215,37 @@ void WasapiCapture::Stop() {
             m_audioClient->Stop();
         }
     }
+    if (m_silenceRunning) {
+        m_silenceRunning = false;
+        if (m_silenceThread.joinable()) {
+            m_silenceThread.join();
+        }
+        if (m_silenceAudioClient) {
+            m_silenceAudioClient->Stop();
+        }
+    }
+}
+
+void WasapiCapture::SilenceThreadFunc() {
+    CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    timeBeginPeriod(1);
+    while (m_silenceRunning) {
+        Sleep(5);
+        if (!m_silenceAudioClient || !m_silenceRenderClient) break;
+        UINT32 padding = 0;
+        if (SUCCEEDED(m_silenceAudioClient->GetCurrentPadding(&padding))) {
+            if (m_silenceBufferFrames > padding) {
+                UINT32 framesAvailable = m_silenceBufferFrames - padding;
+                BYTE* pData = nullptr;
+                if (SUCCEEDED(m_silenceRenderClient->GetBuffer(framesAvailable, &pData))) {
+                    memset(pData, 0, framesAvailable * m_pwfx->nBlockAlign);
+                    m_silenceRenderClient->ReleaseBuffer(framesAvailable, AUDCLNT_BUFFERFLAGS_SILENT);
+                }
+            }
+        }
+    }
+    timeEndPeriod(1);
+    CoUninitialize();
 }
 
 void WasapiCapture::CaptureThreadFunc() {
@@ -244,18 +305,17 @@ void WasapiCapture::CaptureThreadFunc() {
             packetLength = 0;
         }
 
-        // 通常パケット周期(10〜25ms)での誤発火による波形伸長・低音化を防ぐため、完全無音(60ms以上)時のみ10ms単位で補填
+        // Silence Keep-Aliveによる常時供給を基本とし、デバイス切替等での欠落時のみ正確なフレーム数で補填
         if (packetLength == 0 && m_type == CaptureType::SystemLoopback) {
             auto now = std::chrono::steady_clock::now();
             double idleSec = std::chrono::duration<double>(now - lastRealPacketTime).count();
-            double sinceLastEmitSec = std::chrono::duration<double>(now - lastSilenceEmitTime).count();
-            if (idleSec >= 0.060 && sinceLastEmitSec >= 0.010) {
-                uint32_t silentFrames = m_sampleRate / 100;
+            if (idleSec >= 0.020) {
+                uint32_t silentFrames = static_cast<uint32_t>(idleSec * m_sampleRate);
                 if (silentFrames > 0 && m_callback) {
                     floatBuffer.assign(silentFrames * m_channels, 0.0f);
                     m_callback(floatBuffer.data(), silentFrames, m_channels, m_sampleRate);
                 }
-                lastSilenceEmitTime = now;
+                lastRealPacketTime = now;
             }
         }
 
