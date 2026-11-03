@@ -18,16 +18,16 @@ def build_timeline_data(match_info: dict, duration_ms: int, riot_id: str, tag_li
     local_round_events = match_info.get("local_round_events", [])
     local_ability_events = match_info.get("local_ability_events", [])
     real_match_end_time_ms = match_info.get("local_real_match_end_time_ms")
-    
-    api_round_starts = []
-    for k in kills_data:
-        k_match = k.get("kill_time_in_match", 0)
-        k_round = k.get("kill_time_in_round", 0)
-        if k_match > 0 and k_round > 0:
-            r_start = k_match - k_round
-            if not api_round_starts or abs(api_round_starts[-1] - r_start) > 5000:
-                api_round_starts.append(r_start)
-                
+
+    mode = str(match_info.get("metadata", {}).get("mode", "")).lower()
+    queue = str(match_info.get("metadata", {}).get("queue", "")).lower()
+    is_deathmatch = "deathmatch" in mode or "deathmatch" in queue
+
+    game_length = match_info.get("metadata", {}).get("game_length", 0)
+    gl_ms = game_length if game_length > 300000 else game_length * 1000
+    max_kill_ms = max((k.get("kill_time_in_match", 0) for k in kills_data), default=0)
+    effective_match_duration_ms = max(max_kill_ms, gl_ms)
+
     local_round_starts = []
     for ev in local_round_events:
         if ev["phase"] == "InProgress":
@@ -35,29 +35,43 @@ def build_timeline_data(match_info: dict, duration_ms: int, riot_id: str, tag_li
             if t < 1000000000000:
                 t += recording_start_ms
             local_round_starts.append(t)
-            
+
     # オフセットの決定ロジック
-    # 優先度1: ローカルのラウンドイベントとAPIのラウンドイベントの突き合わせ
-    if api_round_starts and local_round_starts:
-        best_offset = api_to_local_offset
-        min_diff = float('inf')
-        
-        for l_start in local_round_starts:
-            for a_start in api_round_starts:
-                offset = l_start - a_start
-                diff = abs(offset - (game_start_sec * 1000))
-                if diff < 300000 and diff < min_diff:
-                    min_diff = diff
-                    best_offset = offset
-                    
-        if min_diff != float('inf'):
-            api_to_local_offset = best_offset
-    # 優先度2: 記録された実際の試合終了時間とAPIの試合時間から逆算
-    elif real_match_end_time_ms:
-        game_length = match_info.get("metadata", {}).get("game_length", 0)
-        # game_length が 300,000 未満なら秒単位とみなしてミリ秒に変換
-        gl_ms = game_length if game_length > 300000 else game_length * 1000
-        if gl_ms > 0:
+    if is_deathmatch:
+        # デスマッチ: 終了アンカーとAPI試合時間から動的逆算して開始遅延を吸収
+        if real_match_end_time_ms and effective_match_duration_ms > 0:
+            api_to_local_offset = real_match_end_time_ms - effective_match_duration_ms
+        elif local_round_starts and real_match_end_time_ms:
+            measured_delay = max(0, (real_match_end_time_ms - local_round_starts[0]) - effective_match_duration_ms)
+            api_to_local_offset = local_round_starts[0] + measured_delay
+        elif local_round_starts:
+            api_to_local_offset = local_round_starts[0]
+    else:
+        # 通常マッチ: 各ラウンド交戦開始時刻とAPIラウンド開始時刻を複数点突き合わせ
+        api_round_starts = []
+        for k in kills_data:
+            k_match = k.get("kill_time_in_match", 0)
+            k_round = k.get("kill_time_in_round", 0)
+            if k_match > 0 and k_round > 0:
+                r_start = k_match - k_round
+                if not api_round_starts or abs(api_round_starts[-1] - r_start) > 5000:
+                    api_round_starts.append(r_start)
+
+        if api_round_starts and local_round_starts:
+            best_offset = api_to_local_offset
+            min_diff = float('inf')
+
+            for l_start in local_round_starts:
+                for a_start in api_round_starts:
+                    offset = l_start - a_start
+                    diff = abs(offset - (game_start_sec * 1000))
+                    if diff < 300000 and diff < min_diff:
+                        min_diff = diff
+                        best_offset = offset
+
+            if min_diff != float('inf'):
+                api_to_local_offset = best_offset
+        elif real_match_end_time_ms and gl_ms > 0:
             api_to_local_offset = real_match_end_time_ms - gl_ms
 
     events = []
@@ -132,19 +146,25 @@ def build_timeline_data(match_info: dict, duration_ms: int, riot_id: str, tag_li
         if 0 <= time_in_video <= duration_ms + 10000:
             events.append({"time": time_in_video, "type": "ult"})
             
-    if local_round_events:
+    if is_deathmatch:
+        round_start = max(0, int(api_to_local_offset - recording_start_ms))
+        round_end = min(duration_ms, int(api_to_local_offset + effective_match_duration_ms - recording_start_ms))
+        if round_end <= round_start:
+            round_end = duration_ms
+        rounds.append({"start": round_start, "end": round_end, "phase": "Round"})
+    elif local_round_events:
         current_round_start = None
-        
+
         for i, ev in enumerate(local_round_events):
             phase = ev["phase"]
             t_local = ev["time_ms"]
             if t_local < 1000000000000:
                 t_local += recording_start_ms
             time_in_video = int(t_local - recording_start_ms)
-            
+
             if time_in_video < 0:
                 time_in_video = 0
-                
+
             if phase == "InProgress":
                 if current_round_start is not None:
                     end_time = min(time_in_video, duration_ms)
@@ -152,14 +172,14 @@ def build_timeline_data(match_info: dict, duration_ms: int, riot_id: str, tag_li
                         rounds.append({"start": current_round_start, "end": end_time, "phase": "Round"})
                 # バリアが降りる瞬間の2秒前をラウンド開始位置とする
                 current_round_start = max(0, time_in_video - 2000)
-                
+
             elif phase == "PostRound":
                 if current_round_start is not None:
                     end_time = min(time_in_video, duration_ms)
                     if current_round_start < end_time:
                         rounds.append({"start": current_round_start, "end": end_time, "phase": "Round"})
                     current_round_start = None
-                    
+
         if current_round_start is not None:
             end_time = duration_ms
             if current_round_start < end_time:
