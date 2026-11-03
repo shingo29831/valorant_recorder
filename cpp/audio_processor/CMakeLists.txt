@@ -18,6 +18,8 @@ add_library(audio_processor SHARED
 add_library(native_recorder SHARED
     NativeRecorder.cpp
     NativeRecorder.h
+    FFmpegProcess.cpp
+    FFmpegProcess.h
     WasapiCapture.cpp
     WasapiCapture.h
 )
