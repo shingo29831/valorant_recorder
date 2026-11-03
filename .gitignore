@@ -23,10 +23,13 @@ env/
 # Downloaded binaries
 ffmpeg.exe
 
-# Logs
+# Logs and extracted diagnostic data
 *.log
 ffmpeg_error.log
-filtered_match_logs.txt
+filtered_log*.txt
+filtered_match_logs*.txt
+potential_logs*.txt
+useless_logs*.txt
 
 # Match data and recordings
 records/*
@@ -62,10 +65,15 @@ cpp/audio_processor/CMakeFiles/
 cpp/audio_processor/Makefile
 cpp/audio_processor/cmake_install.cmake
 
-# Third-party binaries and huge AI models (NVIDIA Maxine)
+# Third-party binaries and huge AI models (NVIDIA Maxine, DeepFilterNet, RNNoise)
 # ※ヘッダや.libはGit管理しても良いですが、DLLやモデルは除外推奨
 cpp/third_party/nvidia_maxine/bin/*.dll
 cpp/third_party/nvidia_maxine/models/
+*.tar.gz
+*.rnnn
+bin/*.rnnn
+cpp/audio_processor/models/
+models/
 
 # C++ Build Artifacts & Dynamic Libraries
 *.dll

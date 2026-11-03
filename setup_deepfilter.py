@@ -1,6 +1,31 @@
 import os
 import shutil
+import urllib.request
 from pathlib import Path
+
+
+def download_deepfilter_model(dest_dir: Path) -> Path:
+    """DeepFilterNet3 ONNXモデルアーカイブを正規ディレクトリに配置・取得する"""
+    model_url = "https://github.com/Rikorose/DeepFilterNet/raw/main/models/DeepFilterNet3_onnx.tar.gz"
+    model_dir = dest_dir / "models" / "DeepFilterNet3"
+    model_dir.mkdir(parents=True, exist_ok=True)
+    model_tar_path = model_dir / "DeepFilterNet3_onnx.tar.gz"
+
+    redundant_path = dest_dir / "models" / "DeepFilterNet3_onnx.tar.gz"
+    if redundant_path.exists() and redundant_path != model_tar_path:
+        try:
+            redundant_path.unlink()
+        except OSError:
+            pass
+
+    if not model_tar_path.exists() or model_tar_path.stat().st_size < 1024:
+        print(f"モデルをダウンロードしています: {model_url}")
+        urllib.request.urlretrieve(model_url, model_tar_path)
+        print(f"✅ モデルのダウンロードが完了しました: {model_tar_path}")
+    else:
+        print(f"✅ モデルアーカイブは既に存在します: {model_tar_path}")
+    return model_tar_path
+
 
 def main():
     base_dir = Path(__file__).parent.absolute()
@@ -71,23 +96,10 @@ def main():
         print("❌ 警告: LIBが見つかりません。")
 
     print("\n=== 3. モデルのダウンロード ===")
-    import urllib.request
-    
-    # Rust (C API) は .tar.gz アーカイブファイルが含まれるディレクトリを読み込む
-    model_url = "https://github.com/Rikorose/DeepFilterNet/raw/main/models/DeepFilterNet3_onnx.tar.gz"
-    model_dir = dest_dir / "models" / "DeepFilterNet3"
-    model_dir.mkdir(parents=True, exist_ok=True)
-    model_tar_path = model_dir / "DeepFilterNet3_onnx.tar.gz"
-
-    if not model_tar_path.exists() or model_tar_path.stat().st_size < 1024:
-        print(f"モデルをダウンロードしています: {model_url}")
-        try:
-            urllib.request.urlretrieve(model_url, model_tar_path)
-            print(f"✅ モデルのダウンロードが完了しました: {model_tar_path}")
-        except Exception as e:
-            print(f"❌ ダウンロードに失敗しました: {e}")
-    else:
-        print(f"✅ モデルアーカイブは既に存在します: {model_tar_path}")
+    try:
+        download_deepfilter_model(dest_dir)
+    except Exception as e:
+        print(f"❌ ダウンロードに失敗しました: {e}")
 
     print("\n🎉 すべての処理が完了しました！")
 
