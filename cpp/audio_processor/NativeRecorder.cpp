@@ -211,6 +211,7 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
     timeBeginPeriod(1);
     SetThreadPriority(GetCurrentThread(), (configCopy.low_priority != 0) ? THREAD_PRIORITY_NORMAL : THREAD_PRIORITY_ABOVE_NORMAL);
 
+    // FFmpegのpipe:0プローブ完了を促すため最小限(10ms)の無音フレームのみ先行投入
     outQueue.Push(std::vector<float>(framesPerChunk * 4, 0.0f));
 
     const size_t initialCushionSamples = framesPerChunk * 5 * 2;
@@ -227,7 +228,8 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
         ).count();
         bool hasCushion = (!g_sysCapture || !g_sysCapture->IsInitialized() || sysQueue.AvailableSamples() >= initialCushionSamples) &&
                           (!g_micCapture || !g_micCapture->IsInitialized() || micQueue.AvailableSamples() >= initialCushionSamples);
-        if ((ffmpeg.HasCaptureStarted() && hasCushion) || elapsedMs >= 500) {
+        // D3D11/ハードウェアエンコーダの初期化完了まで最大3秒待機しA/V開始時刻のズレを防止
+        if ((ffmpeg.HasCaptureStarted() && hasCushion) || elapsedMs >= 3000) {
             break;
         }
         Sleep(5);
@@ -312,9 +314,10 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
         Sleep((configCopy.low_priority != 0) ? 4 : 2);
     }
 
-    if (!ffmpeg.IsExited(0)) {
+    // パイプエラー等で異常終了した場合は末尾ドレインを行わず即座にクリーンアップへ進む
+    if (g_isWriterRunning && !ffmpeg.IsExited(0)) {
         auto tailEnd = std::chrono::steady_clock::now() + std::chrono::milliseconds(250);
-        while (std::chrono::steady_clock::now() < tailEnd) {
+        while (g_isWriterRunning && !ffmpeg.IsExited(0) && std::chrono::steady_clock::now() < tailEnd) {
             auto now = std::chrono::steady_clock::now();
             double elapsedSec = std::chrono::duration<double>(now - startTime).count();
             uint64_t targetFrames = static_cast<uint64_t>(elapsedSec * 48000.0);
@@ -333,7 +336,7 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
         g_micCapture->Stop();
     }
 
-    if (!ffmpeg.IsExited(0)) {
+    if (g_isWriterRunning && !ffmpeg.IsExited(0)) {
         size_t remainingSamples = (std::max)(sysQueue.AvailableSamples(), micQueue.AvailableSamples());
         size_t drainChunks = (std::max)(remainingSamples / reqSysSamples + 1, static_cast<size_t>(10));
         for (size_t c = 0; c < drainChunks; ++c) {

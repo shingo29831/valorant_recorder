@@ -56,7 +56,14 @@ class WatcherSupervisor:
                         self.wt.recording_state_changed.emit(False)
                         continue
                     was_manual = self.wt._is_manual_recording
-                    self.wt.log_signal.emit(self.wt.t.log_ffmpeg_crashed.format(code=-1))
+                    err_detail = self.wt.recorder.get_last_error() if hasattr(self.wt.recorder, "get_last_error") else "-1"
+                    self.wt.log_signal.emit(self.wt.t.log_ffmpeg_crashed.format(code=err_detail or -1))
+                    # 異常終了したセッションを確実に停止・Remux完了させてから再開しプロセス競合を防止
+                    crashed_video = self.wt.current_video_path
+                    try:
+                        self.wt.recorder.stop_recording(target_filepath=crashed_video)
+                    except Exception:
+                        pass
                     self.wt._stop_and_process_recording()
                     time.sleep(2)
                     if was_manual:

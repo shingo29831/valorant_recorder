@@ -19,7 +19,7 @@ STATE_TO_PATTERN = re.compile(
 )
 
 IGNORED_MODULE_PATTERN = re.compile(
-    r"Log(?:ShooterVoice|RNetVoice|Party|TextChat|Social|Presence)",
+    r"Log(?:ShooterVoice|RNetVoice|Party|TextChat|Social|Presence|Vivox|EOS|Online|Http|WebSockets|RMS|Telemetry)",
     re.IGNORECASE,
 )
 
@@ -75,8 +75,7 @@ END_LOG_PATTERNS: tuple[str, ...] = (
     "State: PostRound -> WaitingPostMatch",
     "Transitioning to State: WaitingPostMatch",
     "Transitioning to State: PostGame",
-    "Match ended",
-    "Leaving session",
+    "LogGameFlowStateManager: Match ended",
 )
 
 MENU_LOG_PATTERNS: tuple[str, ...] = (

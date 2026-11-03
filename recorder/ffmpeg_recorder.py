@@ -214,6 +214,13 @@ class FFmpegRecorder:
     def is_recording(self) -> bool:
         return self.native_lib.Recorder_IsRunning()
 
+    def get_last_error(self) -> str:
+        try:
+            err = self.native_lib.Recorder_GetLastError()
+            return err.decode("utf-8", errors="replace") if err else ""
+        except Exception:
+            return ""
+
     def cancel_recording(self):
         """Remuxを行わずに録画プロセスを即座に停止し、一時ファイルと出力ファイルを破棄する"""
         logging.info("[FFmpegRecorder] Cancelling NativeRecorder...")

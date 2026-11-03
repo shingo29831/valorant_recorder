@@ -273,7 +273,7 @@ class WatcherThread(QThread):
     def _async_stop_and_process(self, video_path, start_time, end_time, events, ability_events, start_time_ms, real_match_end_time_ms=None):
         try:
             try:
-                self.recorder.stop_recording()
+                self.recorder.stop_recording(target_filepath=video_path)
             except Exception as e:
                 self.log_signal.emit(self.t.log_stop_failed.format(error=e))
 

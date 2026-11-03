@@ -99,8 +99,11 @@ def build_ffmpeg_command(
     cmd = [
         ffmpeg_path,
         "-y",
+        "-hide_banner",
         "-loglevel",
         "info",
+        "-fflags",
+        "+genpts",
     ]
     if is_lightweight:
         # フィルタグラフの過剰スレッド生成を抑止してゲームのCPU競合を防止
@@ -114,24 +117,25 @@ def build_ffmpeg_command(
     # Intel QSVはGPU上のscale_d3d11で縮小後にnv12へ変換する（マルチGPU競合回避のためグローバルd3d11vaは指定しない）
     use_qsv_gpu_scale = (not use_gdigrab) and is_qsv and not force_sw_download
 
-    # ddagrab(QPC時刻)とpipe:0(0起点)のPTS乖離による多重化キュー溢れを防ぐためPTSを0起点へ正規化
+    # 画面静止時のフレーム枯渇とPTS乖離による多重化キュー溢れを防ぐためdup_framesと0起点PTS正規化を適用
+    dda_base = f"ddagrab=output_idx={output_idx}:framerate={fps}:draw_mouse=1:dup_frames=1"
     if use_gdigrab:
         scale_part = f"scale={target_w}:{target_h}:flags={sw_flag}," if needs_scale else ""
         video_filter = f"[1:v]setpts=PTS-STARTPTS,{scale_part}format={out_pix_fmt}[v_out];"
     elif use_d3d11_direct:
         cmd.extend(["-init_hw_device", "d3d11va"])
         d3d_scale = f",scale_d3d11=w={target_w}:h={target_h}" if needs_scale else ""
-        video_filter = f"ddagrab=output_idx={output_idx}:framerate={fps}:draw_mouse=1{d3d_scale},setpts=PTS-STARTPTS[v_out];"
+        video_filter = f"{dda_base}{d3d_scale},setpts=PTS-STARTPTS[v_out];"
     elif use_qsv_gpu_scale:
         d3d_scale = f",scale_d3d11=w={target_w}:h={target_h}" if needs_scale else ""
         video_filter = (
-            f"ddagrab=output_idx={output_idx}:framerate={fps}:draw_mouse=1{d3d_scale},"
+            f"{dda_base}{d3d_scale},"
             f"hwdownload,format=bgra,format=nv12,setpts=PTS-STARTPTS[v_out];"
         )
     else:
         scale_part = f",scale={target_w}:{target_h}:flags={sw_flag}" if needs_scale else ""
         video_filter = (
-            f"ddagrab=output_idx={output_idx}:framerate={fps}:draw_mouse=1,"
+            f"{dda_base},"
             f"hwdownload,format=bgra{scale_part},format={out_pix_fmt},setpts=PTS-STARTPTS[v_out];"
         )
 
@@ -214,9 +218,9 @@ def build_ffmpeg_command(
         else:
             encoder_opts.extend(["-threads", "4"])
 
-    # C++側AudioProcessorでノイズ抑制とクランプが完結しているため、FFmpeg側での重複フィルタによる音質劣化・こもりを防止
+    # C++側AudioProcessorでノイズ抑制とクランプが完結しているため、サンプル数基準の連続PTSを付与して2系統へ分離
     audio_filter = (
-        "[0:a]asetpts=PTS-STARTPTS,asplit=2[sys_in][mic_in];"
+        "[0:a]asetpts=N/SR/TB,asplit=2[sys_in][mic_in];"
         "[sys_in]pan=stereo|FL=c0|FR=c1[a_sys];"
         "[mic_in]pan=stereo|FL=c2|FR=c3[a_mic]"
     )
@@ -253,7 +257,7 @@ def build_ffmpeg_command(
     cmd.extend([
         "-r", fps,
         "-fps_mode", "cfr",
-        "-max_interleave_delta", "0",
+        "-max_interleave_delta", "10000000",
         "-max_muxing_queue_size", "32768" if is_lightweight else "65536",
         "-c:a", "aac",
         "-b:a", "96k" if is_lightweight else "192k",
