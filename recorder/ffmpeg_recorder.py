@@ -189,6 +189,17 @@ class FFmpegRecorder:
                 logging.info(f"[FFmpegRecorder] Software Fallback Command: {cmd_str}")
                 started_ok = self._try_start_and_verify(config_struct)
 
+                if not started_ok and video_fmt != "gdigrab":
+                    logging.warning("[FFmpegRecorder] libx264 with ddagrab failed. Retrying with libx264 + gdigrab...")
+                    try:
+                        self.native_lib.Recorder_Stop()
+                    except Exception:
+                        pass
+                    cmd_str = self._build_ffmpeg_command(force_sw_download=True, force_gdigrab=True)
+                    config_struct.ffmpeg_command = cmd_str.encode('utf-8')
+                    logging.info(f"[FFmpegRecorder] Software GDI Fallback Command: {cmd_str}")
+                    started_ok = self._try_start_and_verify(config_struct)
+
             if not started_ok:
                 err = self.native_lib.Recorder_GetLastError().decode('utf-8', errors='replace')
                 if not err:
