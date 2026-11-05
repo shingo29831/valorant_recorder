@@ -166,4 +166,12 @@ JA_DICT: dict[str, str] = dict(
     quit_app="アプリを完全に終了 (バックグラウンド停止)",
     confirm_quit_title="終了の確認",
     confirm_quit_msg="バックグラウンドの監視および録画を停止し、アプリケーションを完全に終了しますか？",
+    tutorial_title="ValoReco の使い方",
+    tutorial_welcome="ValoReco へようこそ！",
+    tutorial_auto_title="1. 試合の自動録画",
+    tutorial_auto_desc="VALORANT を起動して試合を開始すると、自動的に録画が開始されます。\n試合が終了すると自動で録画が停止・保存され、録画一覧に追加されます。\n（※射撃訓練場は自動スキップされます）",
+    tutorial_manual_title="2. 手動での録画起動と停止",
+    tutorial_manual_desc="万が一、自動録画が正常に起動しなかった場合は、画面右下の「🔴 録画開始」ボタンを押すことで、いつでも手動で録画を開始できます。\n録画中は「⏹ 録画停止」に切り替わり、手動で安全に停止できます。",
+    tutorial_dont_show_again="次回からこのチュートリアルを表示しない",
+    tutorial_start_btn="使い方を理解して始める",
 )

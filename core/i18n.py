@@ -170,6 +170,14 @@ class Translations:
     quit_app: str = "Exit Application"
     confirm_quit_title: str = "Confirm Exit"
     confirm_quit_msg: str = "Are you sure you want to completely exit the application?"
+    tutorial_title: str = "How to Use ValoReco"
+    tutorial_welcome: str = "Welcome to ValoReco!"
+    tutorial_auto_title: str = "1. Automatic Match Recording"
+    tutorial_auto_desc: str = ""
+    tutorial_manual_title: str = "2. Manual Start & Stop"
+    tutorial_manual_desc: str = ""
+    tutorial_dont_show_again: str = "Do not show again"
+    tutorial_start_btn: str = "Get Started"
 
 EN = Translations(**EN_DICT)
 JA = Translations(**JA_DICT)

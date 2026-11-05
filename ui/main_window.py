@@ -39,6 +39,7 @@ class MainWindow(QMainWindow):
         
         self._titlebar_color_applied = False
         self._pending_update = None
+        self._tutorial_checked = False
         
         self.config = Config()
         self.t = get_trans(self.config.LANGUAGE)
@@ -308,10 +309,13 @@ class MainWindow(QMainWindow):
         tray_menu = QMenu()
         show_action = QAction("Show", self)
         show_action.triggered.connect(self.show_window)
+        tutorial_action = QAction(getattr(self.t, 'tutorial_title', "Tutorial"), self)
+        tutorial_action.triggered.connect(lambda: self.show_tutorial_dialog(force=True))
         quit_action = QAction("Quit", self)
         quit_action.triggered.connect(self.quit_app)
         
         tray_menu.addAction(show_action)
+        tray_menu.addAction(tutorial_action)
         tray_menu.addAction(quit_action)
         
         self.tray_icon.setContextMenu(tray_menu)
@@ -360,6 +364,12 @@ class MainWindow(QMainWindow):
         else:
             self.notification_overlay.show_message(getattr(self.t, 'recording_stopped', "⏹ Recording stopped"), 3000)
 
+    def show_tutorial_dialog(self, force: bool = False) -> None:
+        if force or not getattr(self.config, 'TUTORIAL_COMPLETED', False):
+            from ui.tutorial_dialog import TutorialDialog
+            dialog = TutorialDialog(self.config, self.t, self)
+            dialog.exec()
+
     def update_status(self, message: str):
         # バックグラウンドでの頻繁なUI更新はフルスクリーンゲームのフォーカスを奪う原因になるため、
         # ウィンドウが非表示または最小化されている場合はステータスバーの更新をスキップする。
@@ -388,6 +398,13 @@ class MainWindow(QMainWindow):
         if hasattr(self, 'player_tab'):
             self.player_tab.on_shown()
         self.update_storage_gauge()
+
+        # 初回起動時に未完了であればチュートリアルを表示
+        if not self._tutorial_checked:
+            self._tutorial_checked = True
+            if not getattr(self.config, 'TUTORIAL_COMPLETED', False):
+                from PyQt6.QtCore import QTimer
+                QTimer.singleShot(400, self.show_tutorial_dialog)
             
         # 保留されていたアップデートがあれば、UIの描画完了を待ってからダイアログを表示する
         if getattr(self, '_pending_update', None):

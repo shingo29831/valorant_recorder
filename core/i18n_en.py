@@ -166,4 +166,12 @@ EN_DICT: dict[str, str] = dict(
     quit_app="Exit Application (Stop Background)",
     confirm_quit_title="Confirm Exit",
     confirm_quit_msg="Are you sure you want to stop background monitoring and completely exit the application?",
+    tutorial_title="How to Use ValoReco",
+    tutorial_welcome="Welcome to ValoReco!",
+    tutorial_auto_title="1. Automatic Match Recording",
+    tutorial_auto_desc="When you play VALORANT, recording starts automatically upon match start.\nWhen the match finishes, recording stops and is saved to your match list automatically.\n(*The Practice Range is automatically skipped.)",
+    tutorial_manual_title="2. Manual Start & Stop",
+    tutorial_manual_desc="If automatic recording does not start properly for any reason, you can manually start recording at any time using the '🔴 Start Recording' button at the bottom right.\nDuring recording, it turns into '⏹ Stop Recording' so you can safely stop it manually.",
+    tutorial_dont_show_again="Do not show this tutorial again",
+    tutorial_start_btn="Got it! Get Started",
 )
