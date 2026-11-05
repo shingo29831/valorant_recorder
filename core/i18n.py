@@ -167,6 +167,9 @@ class Translations:
     system_audio_device: str = "System Audio:"
     default_device: str = "Default"
     mic_preprocess: str = "Pre-process (HPF):"
+    quit_app: str = "Exit Application"
+    confirm_quit_title: str = "Confirm Exit"
+    confirm_quit_msg: str = "Are you sure you want to completely exit the application?"
 
 EN = Translations(**EN_DICT)
 JA = Translations(**JA_DICT)

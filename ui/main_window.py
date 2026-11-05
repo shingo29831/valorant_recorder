@@ -397,7 +397,10 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(500, lambda: self.show_update_dialog(latest_version, download_url))
 
     def quit_app(self):
-        # トレイメニューからQuitが選択された時に完全に終了する
+        # トレイメニューや設定画面から完全に終了する
         self.watcher_thread.stop()
         self.watcher_thread.wait()
-        QCoreApplication.quit()
+        from PyQt6.QtWidgets import QApplication
+        app = QApplication.instance()
+        if app:
+            app.quit()

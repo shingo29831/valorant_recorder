@@ -163,4 +163,7 @@ EN_DICT: dict[str, str] = dict(
     system_audio_device="System Audio:",
     default_device="Default",
     mic_preprocess="Pre-process (HPF):",
+    quit_app="Exit Application (Stop Background)",
+    confirm_quit_title="Confirm Exit",
+    confirm_quit_msg="Are you sure you want to stop background monitoring and completely exit the application?",
 )

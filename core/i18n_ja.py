@@ -163,4 +163,7 @@ JA_DICT: dict[str, str] = dict(
     system_audio_device="システム音声:",
     default_device="既定のデバイス",
     mic_preprocess="前処理 (HPF):",
+    quit_app="アプリを完全に終了 (バックグラウンド停止)",
+    confirm_quit_title="終了の確認",
+    confirm_quit_msg="バックグラウンドの監視および録画を停止し、アプリケーションを完全に終了しますか？",
 )

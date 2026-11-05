@@ -97,6 +97,24 @@ class GeneralSettingsWidget(QWidget):
         
         self.check_update_btn = QPushButton(self.t.check_update)
         self.check_update_btn.clicked.connect(self._check_update)
+
+        self.quit_app_btn = QPushButton(getattr(self.t, 'quit_app', "Exit Application (Stop Background)"))
+        self.quit_app_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #8B1E1E;
+                color: #FFFFFF;
+                font-weight: bold;
+                border-radius: 4px;
+                padding: 6px;
+            }
+            QPushButton:hover {
+                background-color: #B22222;
+            }
+            QPushButton:pressed {
+                background-color: #5C0000;
+            }
+        """)
+        self.quit_app_btn.clicked.connect(self._quit_application)
         
         self.run_test_btn = QPushButton(getattr(self.t, 'run_env_test', "Run Environment Test"))
         self.run_test_btn.clicked.connect(self._run_env_test)
@@ -121,6 +139,7 @@ class GeneralSettingsWidget(QWidget):
         layout.addRow(getattr(self.t, 'app_logs', "App Logs"), log_layout)
         layout.addRow("", self.run_test_btn)
         layout.addRow("", self.check_update_btn)
+        layout.addRow("", self.quit_app_btn)
         
         self.setLayout(layout)
 
@@ -199,6 +218,26 @@ class GeneralSettingsWidget(QWidget):
     def _reset_copy_btn(self, original_text):
         self.copy_log_btn.setText(original_text)
         self.copy_log_btn.setEnabled(True)
+
+    def _quit_application(self):
+        title = getattr(self.t, 'confirm_quit_title', "Confirm Exit")
+        msg = getattr(self.t, 'confirm_quit_msg', "Are you sure you want to stop background monitoring and completely exit the application?")
+        reply = QMessageBox.question(
+            self,
+            title,
+            msg,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            main_window = self.window()
+            if hasattr(main_window, 'quit_app'):
+                main_window.quit_app()
+            else:
+                from PyQt6.QtWidgets import QApplication
+                app = QApplication.instance()
+                if app:
+                    app.quit()
 
     def _check_update(self):
         from core.updater import UpdateCheckerThread
