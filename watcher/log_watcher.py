@@ -234,7 +234,7 @@ class LogWatcher:
         while not os.path.exists(log_path):
             if self._stop_requested:
                 return
-            time.sleep(2.0)
+            time.sleep(0.2)
 
         logging.info(f"Started watching log file: {log_path}")
 
