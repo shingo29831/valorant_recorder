@@ -7,6 +7,7 @@ from ui.player_video_page import PlayerVideoPage
 class PlayerTab(QWidget):
     settingsRequested = pyqtSignal()
     videoPageVisible = pyqtSignal(bool)
+    listRefreshed = pyqtSignal()
 
     def __init__(self, config: Config):
         super().__init__()
@@ -25,6 +26,7 @@ class PlayerTab(QWidget):
         
         self.list_page.settingsRequested.connect(self.settingsRequested)
         self.list_page.recordSelected.connect(self.on_record_selected)
+        self.list_page.listRefreshed.connect(self.listRefreshed)
         self.video_page.backRequested.connect(self.on_back_requested)
         
         self.stacked_widget.currentChanged.connect(self._on_current_changed)

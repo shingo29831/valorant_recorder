@@ -1,7 +1,8 @@
 import os
 import sys
+import shutil
 import ctypes
-from PyQt6.QtWidgets import QMainWindow, QStackedWidget, QPushButton, QSystemTrayIcon, QMenu, QMessageBox, QProgressDialog, QApplication
+from PyQt6.QtWidgets import QMainWindow, QStackedWidget, QPushButton, QSystemTrayIcon, QMenu, QMessageBox, QProgressDialog, QApplication, QProgressBar
 from PyQt6.QtGui import QAction, QIcon
 from PyQt6.QtCore import QCoreApplication, Qt, pyqtSignal
 import traceback
@@ -55,9 +56,17 @@ class MainWindow(QMainWindow):
         self.settings_tab.backRequested.connect(lambda: self.stacked_widget.setCurrentWidget(self.player_tab))
         
         self.player_tab.videoPageVisible.connect(self._on_video_page_visible)
+        self.player_tab.listRefreshed.connect(self.update_storage_gauge)
         self.stacked_widget.currentChanged.connect(self._on_main_tab_changed)
         
         self.statusBar().showMessage(getattr(self.t, 'initializing', "Initializing..."))
+        
+        self.storage_gauge = QProgressBar()
+        self.storage_gauge.setRange(0, 100)
+        self.storage_gauge.setFixedSize(210, 20)
+        self.storage_gauge.setTextVisible(True)
+        self.statusBar().addPermanentWidget(self.storage_gauge)
+        self.update_storage_gauge()
         
         self.rec_button = QPushButton(getattr(self.t, 'start_recording', "🔴 Start Recording"))
         self.rec_button.setCheckable(True)
@@ -212,6 +221,62 @@ class MainWindow(QMainWindow):
         elif self.stacked_widget.currentWidget() == self.player_tab:
             is_video = self.player_tab.stacked_widget.currentWidget() == self.player_tab.video_page
             self.statusBar().setVisible(not is_video)
+        self.update_storage_gauge()
+
+    def _resolve_existing_path(self, path: str) -> str:
+        # 未作成の保存先パスでも親ディレクトリを辿ってディスク容量を取得可能にする
+        target = os.path.abspath(path or ".")
+        while not os.path.exists(target):
+            parent = os.path.dirname(target)
+            if parent == target:
+                break
+            target = parent
+        return target if os.path.exists(target) else "."
+
+    def update_storage_gauge(self) -> None:
+        if not hasattr(self, 'storage_gauge'):
+            return
+        is_ja = getattr(self.config, 'LANGUAGE', 'ja') == 'ja'
+        try:
+            target_path = self._resolve_existing_path(self.config.SAVE_DIR)
+            total, used, free = shutil.disk_usage(target_path)
+            free_gb = free / (1024 ** 3)
+            total_gb = total / (1024 ** 3)
+            used_pct = int(round((used / total) * 100)) if total > 0 else 0
+            used_pct = max(0, min(100, used_pct))
+
+            if used_pct >= 90 or free_gb < 10.0:
+                chunk_color = "#C62828"
+            elif used_pct >= 80 or free_gb < 25.0:
+                chunk_color = "#B45309"
+            else:
+                chunk_color = "#1565C0"
+
+            label = f"空き容量: {free_gb:.1f} GB / {total_gb:.1f} GB" if is_ja else f"Free: {free_gb:.1f} GB / {total_gb:.1f} GB"
+            self.storage_gauge.setValue(used_pct)
+            self.storage_gauge.setFormat(label)
+            self.storage_gauge.setToolTip(f"{os.path.abspath(self.config.SAVE_DIR)}\n{label} ({100 - used_pct}%)")
+        except Exception:
+            chunk_color = "#555555"
+            label = "空き容量: -- GB" if is_ja else "Free: -- GB"
+            self.storage_gauge.setValue(0)
+            self.storage_gauge.setFormat(label)
+
+        self.storage_gauge.setStyleSheet(f"""
+            QProgressBar {{
+                background-color: #1A242D;
+                border: 1px solid #3A4550;
+                border-radius: 4px;
+                color: #FFFFFF;
+                text-align: center;
+                font-size: 11px;
+                font-weight: bold;
+            }}
+            QProgressBar::chunk {{
+                background-color: {chunk_color};
+                border-radius: 3px;
+            }}
+        """)
 
     def _apply_custom_titlebar_color(self):
         """WindowsのDWM APIを使用してタイトルバーの色をアプリの背景色(#0F1923)に合わせる"""
@@ -286,6 +351,8 @@ class MainWindow(QMainWindow):
             self.rec_button.setText(getattr(self.t, 'start_recording', "🔴 Start Recording"))
             if hasattr(self, 'settings_tab') and self.settings_tab.isVisible():
                 self.settings_tab._on_subtab_changed(self.settings_tab.tab_widget.currentIndex())
+        if not self.isHidden() and not self.isMinimized():
+            self.update_storage_gauge()
 
     def show_recording_notification(self, is_recording: bool) -> None:
         if is_recording:
@@ -320,6 +387,7 @@ class MainWindow(QMainWindow):
             
         if hasattr(self, 'player_tab'):
             self.player_tab.on_shown()
+        self.update_storage_gauge()
             
         # 保留されていたアップデートがあれば、UIの描画完了を待ってからダイアログを表示する
         if getattr(self, '_pending_update', None):

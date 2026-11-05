@@ -30,6 +30,7 @@ SORT_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill=
 class PlayerListPage(QWidget):
     settingsRequested = pyqtSignal()
     recordSelected = pyqtSignal(str)
+    listRefreshed = pyqtSignal()
 
     def __init__(self, config: Config, parent=None):
         super().__init__(parent)
@@ -148,6 +149,7 @@ class PlayerListPage(QWidget):
     def _on_tab_clicked(self, mode):
         self.current_mode = mode
         self._apply_filters_and_render()
+        self.listRefreshed.emit()
 
     def _apply_filters_and_render(self):
         filtered_records = []
