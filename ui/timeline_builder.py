@@ -79,18 +79,27 @@ def build_timeline_data(match_info: dict, duration_ms: int, riot_id: str, tag_li
     
     target_puuid = None
     target_display_name = None
+    clean_riot_id = (riot_id or "").strip().lower()
+    clean_tag_line = (tag_line or "").strip().lower()
     
-    players = match_info.get("players", {}).get("all_players", [])
-    for p in players:
-        p_name = p.get("name", "").lower()
-        p_tag = p.get("tag", "").lower()
-        if p_name == riot_id and p_tag == tag_line:
-            target_puuid = p.get("puuid")
-            target_display_name = p.get("name")
-            break
+    players = match_info.get("players", {}).get("all_players") or []
+    # 未設定時("")に空文字の名前・タグを持つ要素と誤一致するのを防止
+    if clean_riot_id and clean_tag_line:
+        for p in players:
+            p_name = str(p.get("name") or "").strip().lower()
+            p_tag = str(p.get("tag") or "").strip().lower()
+            if p_name == clean_riot_id and p_tag == clean_tag_line:
+                target_puuid = p.get("puuid")
+                target_display_name = p.get("name")
+                break
     
     if not target_puuid and kills_data:
         target_display_name = guess_player_name(kills_data)
+        if target_display_name:
+            for p in players:
+                if p.get("name") == target_display_name:
+                    target_puuid = p.get("puuid")
+                    break
         
     for kill in kills_data:
         t_api = kill.get("kill_time_in_match", 0)
@@ -103,11 +112,11 @@ def build_timeline_data(match_info: dict, duration_ms: int, riot_id: str, tag_li
         if target_puuid:
             killer_puuid = kill.get("killer_puuid")
             victim_puuid = kill.get("victim_puuid")
-            assistants = kill.get("assistants", [])
+            assistants = kill.get("assistants") or []
             assistant_puuids = []
             for ast in assistants:
                 if isinstance(ast, dict):
-                    assistant_puuids.append(ast.get("assistant_puuid", ""))
+                    assistant_puuids.append(ast.get("assistant_puuid") or "")
                 elif isinstance(ast, str):
                     assistant_puuids.append(ast)
 
@@ -118,14 +127,14 @@ def build_timeline_data(match_info: dict, duration_ms: int, riot_id: str, tag_li
             elif target_puuid in assistant_puuids:
                 events.append({"time": time_in_video, "type": "assist"})
         else:
-            killer = kill.get("killer_display_name", "Unknown")
-            victim = kill.get("victim_display_name", "Unknown")
+            killer = kill.get("killer_display_name") or "Unknown"
+            victim = kill.get("victim_display_name") or "Unknown"
             
-            assistants = kill.get("assistants", [])
+            assistants = kill.get("assistants") or []
             assistant_names = []
             for ast in assistants:
                 if isinstance(ast, dict):
-                    assistant_names.append(ast.get("assistant_display_name", ""))
+                    assistant_names.append(ast.get("assistant_display_name") or "")
                 elif isinstance(ast, str):
                     assistant_names.append(ast)
                     

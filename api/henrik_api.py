@@ -19,12 +19,17 @@ class HenrikAPI:
             'br': 'br',
             'ap': 'ap'
         }
-        safe_region = str(region).lower()
+        safe_region = str(region or 'ap').strip().lower()
         self.region = region_map.get(safe_region, 'ap')
         
+        clean_name = str(name or '').strip()
+        clean_tag = str(tag or '').strip()
+        if not clean_name or not clean_tag:
+            raise ValueError("Riot ID and Tag Line must not be empty.")
+        
         # 前後の空白を除去してからURLエンコード
-        self.name = urllib.parse.quote(str(name).strip())
-        self.tag = urllib.parse.quote(str(tag).strip())
+        self.name = urllib.parse.quote(clean_name)
+        self.tag = urllib.parse.quote(clean_tag)
         self.base_headers = {
             'User-Agent': 'ValorantRecorder/1.0'
         }

@@ -5,12 +5,12 @@ class Config:
     def __init__(self):
         self.env_file = ".env"
         load_dotenv(self.env_file)
-        self.LANGUAGE = os.environ.get("LANGUAGE", "ja")
-        self.REGION = os.environ.get("VALORANT_REGION", "ap")
+        self.LANGUAGE = os.environ.get("LANGUAGE", "ja") or "ja"
+        self.REGION = os.environ.get("VALORANT_REGION", "ap") or "ap"
         self.LIGHTWEIGHT_MODE = os.environ.get("LIGHTWEIGHT_MODE", "False").lower() == "true"
         self.AUTO_PERFORMANCE_CONTROL = os.environ.get("AUTO_PERFORMANCE_CONTROL", "True").lower() == "true"
-        self.RIOT_ID = os.environ.get("RIOT_ID", "")
-        self.TAG_LINE = os.environ.get("TAG_LINE", "")
+        self.RIOT_ID = os.environ.get("RIOT_ID") or ""
+        self.TAG_LINE = os.environ.get("TAG_LINE") or ""
         self.SAVE_DIR = os.environ.get("RECORD_SAVE_DIR", "./records")
         
         self.RECORD_VIDEO_FORMAT = os.environ.get("RECORD_VIDEO_FORMAT", "ddagrab")
@@ -47,12 +47,12 @@ class Config:
         if not os.path.exists(self.env_file):
             open(self.env_file, 'w').close()
             
-        set_key(self.env_file, "LANGUAGE", self.LANGUAGE)
-        set_key(self.env_file, "VALORANT_REGION", self.REGION)
+        set_key(self.env_file, "LANGUAGE", str(self.LANGUAGE or "ja"))
+        set_key(self.env_file, "VALORANT_REGION", str(self.REGION or "ap"))
         set_key(self.env_file, "LIGHTWEIGHT_MODE", str(self.LIGHTWEIGHT_MODE))
         set_key(self.env_file, "AUTO_PERFORMANCE_CONTROL", str(self.AUTO_PERFORMANCE_CONTROL))
-        set_key(self.env_file, "RIOT_ID", self.RIOT_ID)
-        set_key(self.env_file, "TAG_LINE", self.TAG_LINE)
+        set_key(self.env_file, "RIOT_ID", str(self.RIOT_ID or ""))
+        set_key(self.env_file, "TAG_LINE", str(self.TAG_LINE or ""))
         set_key(self.env_file, "RECORD_SAVE_DIR", self.SAVE_DIR)
         set_key(self.env_file, "RECORD_VIDEO_FORMAT", self.RECORD_VIDEO_FORMAT)
         set_key(self.env_file, "RECORD_INPUT_SOURCE", self.RECORD_INPUT_SOURCE)

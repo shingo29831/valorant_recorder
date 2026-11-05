@@ -47,7 +47,7 @@ def get_riot_access_token():
     ctx.verify_mode = ssl.CERT_NONE
     
     try:
-        with urllib.request.urlopen(req, context=ctx) as response:
+        with urllib.request.urlopen(req, context=ctx, timeout=5) as response:
             data = json.loads(response.read().decode())
             return data.get('accessToken')
     except Exception:
@@ -71,11 +71,15 @@ def get_current_player():
     ctx.verify_mode = ssl.CERT_NONE
     
     try:
-        with urllib.request.urlopen(req, context=ctx) as response:
+        with urllib.request.urlopen(req, context=ctx, timeout=5) as response:
             data = json.loads(response.read().decode())
-            return data.get('game_name'), data.get('game_tag')
+            game_name = str(data.get('game_name') or '').strip()
+            game_tag = str(data.get('game_tag') or '').strip()
+            if game_name and game_tag:
+                return game_name, game_tag
     except Exception:
-        return None, None
+        pass
+    return None, None
 
 def get_client_region():
     info = get_lockfile_info()
@@ -95,11 +99,11 @@ def get_client_region():
     ctx.verify_mode = ssl.CERT_NONE
     
     try:
-        with urllib.request.urlopen(req, context=ctx) as response:
+        with urllib.request.urlopen(req, context=ctx, timeout=5) as response:
             data = json.loads(response.read().decode())
-            region = data.get('region')
+            region = str(data.get('region') or '').strip().lower()
             if region:
-                return region.lower()
+                return region
     except Exception:
         pass
     return None

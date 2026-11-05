@@ -80,56 +80,58 @@ def guess_player_name(kills: list) -> str:
     return ""
 
 def get_agent_name(riot_id: str, tag_line: str, match_info: dict, kills_data: list) -> str:
-    riot_id = riot_id.lower()
-    tag_line = tag_line.lower()
+    clean_riot_id = (riot_id or "").strip().lower()
+    clean_tag_line = (tag_line or "").strip().lower()
     
-    players = match_info.get("players", {}).get("all_players", [])
+    players = match_info.get("players", {}).get("all_players") or []
     
-    for p in players:
-        p_name = p.get("name", "").lower()
-        p_tag = p.get("tag", "").lower()
-        if p_name == riot_id and p_tag == tag_line:
-            return p.get("character", "Unknown Agent")
+    if clean_riot_id and clean_tag_line:
+        for p in players:
+            p_name = str(p.get("name") or "").strip().lower()
+            p_tag = str(p.get("tag") or "").strip().lower()
+            if p_name == clean_riot_id and p_tag == clean_tag_line:
+                return p.get("character") or "Unknown Agent"
             
     target_display_name = guess_player_name(kills_data)
     if target_display_name:
         for p in players:
             if p.get("name") == target_display_name:
-                return p.get("character", "Unknown Agent")
+                return p.get("character") or "Unknown Agent"
                 
     return "Unknown Agent"
 
 def get_match_result(riot_id: str, tag_line: str, match_info: dict, kills_data: list) -> str:
-    mode = match_info.get("metadata", {}).get("mode", "").lower()
+    mode = str(match_info.get("metadata", {}).get("mode") or "").lower()
     if mode == "deathmatch":
         return "deathmatch"
 
-    riot_id = riot_id.lower()
-    tag_line = tag_line.lower()
+    clean_riot_id = (riot_id or "").strip().lower()
+    clean_tag_line = (tag_line or "").strip().lower()
     
     target_team = None
-    players = match_info.get("players", {}).get("all_players", [])
+    players = match_info.get("players", {}).get("all_players") or []
     
-    for p in players:
-        p_name = p.get("name", "").lower()
-        p_tag = p.get("tag", "").lower()
-        if p_name == riot_id and p_tag == tag_line:
-            target_team = p.get("team", "").lower()
-            break
+    if clean_riot_id and clean_tag_line:
+        for p in players:
+            p_name = str(p.get("name") or "").strip().lower()
+            p_tag = str(p.get("tag") or "").strip().lower()
+            if p_name == clean_riot_id and p_tag == clean_tag_line:
+                target_team = str(p.get("team") or "").lower()
+                break
             
     if not target_team:
         target_display_name = guess_player_name(kills_data)
         if target_display_name:
             for p in players:
                 if p.get("name") == target_display_name:
-                    target_team = p.get("team", "").lower()
+                    target_team = str(p.get("team") or "").lower()
                     break
                     
     if not target_team:
         return "unknown"
         
-    teams = match_info.get("teams", {})
-    team_info = teams.get(target_team)
+    teams = match_info.get("teams") or {}
+    team_info = teams.get(target_team) if isinstance(teams, dict) else None
     if team_info:
         has_won = team_info.get("has_won")
         if has_won:

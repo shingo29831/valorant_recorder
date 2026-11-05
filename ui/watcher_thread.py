@@ -46,9 +46,9 @@ class WatcherThread(QThread):
         self.recording_start_time = 0
         self.real_start_time = 0
         self._is_running = True
-        self.current_riot_id = self.config.RIOT_ID if self.config.RIOT_ID else None
-        self.current_tag_line = self.config.TAG_LINE if self.config.TAG_LINE else None
-        self.current_region = self.config.REGION
+        self.current_riot_id = self.config.RIOT_ID.strip() if self.config.RIOT_ID and self.config.RIOT_ID.strip() else None
+        self.current_tag_line = self.config.TAG_LINE.strip() if self.config.TAG_LINE and self.config.TAG_LINE.strip() else None
+        self.current_region = (self.config.REGION or "ap").strip() or "ap"
         self._stop_timer = None
         self._is_manual_action = False
         self._is_manual_recording = False
@@ -62,7 +62,7 @@ class WatcherThread(QThread):
         if name and tag:
             self.current_riot_id = name
             self.current_tag_line = tag
-            self.current_region = region if region else self.config.REGION
+            self.current_region = region if region else (self.config.REGION or "ap")
             
             # UI側が自分を特定できるようにConfigを更新して保存する
             if self.config.RIOT_ID != name or self.config.TAG_LINE != tag or self.config.REGION != self.current_region:
@@ -73,10 +73,14 @@ class WatcherThread(QThread):
                 
             self.log_signal.emit(self.t.log_player_detected.format(name=name, tag=tag, region=self.current_region))
         else:
+            if region and self.config.REGION != region:
+                self.current_region = region
+                self.config.REGION = region
+                self.config.save()
             if self.config.RIOT_ID and self.config.TAG_LINE:
-                self.current_riot_id = self.config.RIOT_ID
-                self.current_tag_line = self.config.TAG_LINE
-                self.current_region = self.config.REGION
+                self.current_riot_id = self.config.RIOT_ID.strip()
+                self.current_tag_line = self.config.TAG_LINE.strip()
+                self.current_region = self.config.REGION or "ap"
             self.log_signal.emit(self.t.log_player_detect_failed)
 
     def _cancel_stop_timer(self):
@@ -277,6 +281,9 @@ class WatcherThread(QThread):
             except Exception as e:
                 self.log_signal.emit(self.t.log_stop_failed.format(error=e))
 
+            if not self.current_riot_id or not self.current_tag_line:
+                self._update_current_player()
+
             raw_map = getattr(self.watcher, 'current_map_name', 'Unknown')
             temp_filepath = self.metadata_service.save_temp_metadata(
                 video_path=video_path,
@@ -309,6 +316,8 @@ class WatcherThread(QThread):
 
     def run(self):
         self.log_signal.emit(self.t.log_app_initialized)
+        if not self.current_riot_id or not self.current_tag_line:
+            self._update_current_player()
         self.supervisor.start()
         
         try:

@@ -133,6 +133,20 @@ class MatchMetadataService:
         self._emit_log(self.t.log_api_checking)
 
         if not riot_id or not tag_line:
+            # 試合開始時に未取得だった場合でも試合終了時点で再取得を試みる
+            from scripts.get_local_api_info import get_client_region, get_current_player
+            detected_name, detected_tag = get_current_player()
+            detected_region = get_client_region()
+            if detected_name and detected_tag:
+                riot_id = detected_name
+                tag_line = detected_tag
+                region = detected_region or region or self.config.REGION or "ap"
+                self.config.RIOT_ID = riot_id
+                self.config.TAG_LINE = tag_line
+                self.config.REGION = region
+                self.config.save()
+
+        if not riot_id or not tag_line:
             self._emit_log(self.t.log_api_no_player_id)
             self.create_dummy_metadata(
                 video_path, start_time, map_name, end_time, events, temp_filepath, start_time_ms, real_match_end_time_ms
@@ -202,11 +216,17 @@ class MatchMetadataService:
 
     @staticmethod
     def _extract_party_members(match_data: dict, riot_id: str, tag_line: str) -> list[str]:
+        clean_id = (riot_id or "").strip().lower()
+        clean_tag = (tag_line or "").strip().lower()
+        if not clean_id or not clean_tag:
+            return []
         party_members = []
         target_party_id = None
-        players = match_data.get("players", {}).get("all_players", [])
+        players = match_data.get("players", {}).get("all_players") or []
         for p in players:
-            if p.get("name", "").lower() == riot_id.lower() and p.get("tag", "").lower() == tag_line.lower():
+            p_name = str(p.get("name") or "").strip().lower()
+            p_tag = str(p.get("tag") or "").strip().lower()
+            if p_name == clean_id and p_tag == clean_tag:
                 target_party_id = p.get("party_id")
                 break
         if target_party_id:
