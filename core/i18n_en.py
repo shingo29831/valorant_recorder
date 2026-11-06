@@ -190,4 +190,13 @@ EN_DICT: dict[str, str] = dict(
     env_item_pipeline="Recording Pipeline Dry-Run",
     retest="Retest",
     close="Close",
+    spec_dialog_title="System Diagnosis & Recommended Settings",
+    spec_dialog_subtitle="Optimal recording settings have been detected for your PC.",
+    spec_hardware_title="Detected System Specifications",
+    spec_cpu="CPU",
+    spec_memory="Memory",
+    spec_gpu="GPU (Graphics)",
+    spec_recommended_title="Recommended Recording Settings",
+    spec_apply_btn="Apply Recommended Settings",
+    spec_skip_btn="Keep Current Settings",
 )

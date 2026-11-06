@@ -190,4 +190,13 @@ JA_DICT: dict[str, str] = dict(
     env_item_pipeline="録画パイプライン疑似動作",
     retest="再テスト",
     close="閉じる",
+    spec_dialog_title="スペック診断とオススメ設定",
+    spec_dialog_subtitle="お使いのPCスペックに最適な録画設定を検出しました",
+    spec_hardware_title="検出されたシステム環境",
+    spec_cpu="CPU",
+    spec_memory="メモリ",
+    spec_gpu="GPU (グラフィックス)",
+    spec_recommended_title="オススメの録画設定",
+    spec_apply_btn="オススメ設定を適用して開始",
+    spec_skip_btn="現在の設定を維持する",
 )

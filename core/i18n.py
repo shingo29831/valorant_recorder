@@ -194,6 +194,15 @@ class Translations:
     env_item_pipeline: str = "Recording Pipeline"
     retest: str = "Retest"
     close: str = "Close"
+    spec_dialog_title: str = "System Diagnosis & Recommended Settings"
+    spec_dialog_subtitle: str = "Optimal recording settings have been detected for your PC."
+    spec_hardware_title: str = "Detected System Specifications"
+    spec_cpu: str = "CPU"
+    spec_memory: str = "Memory"
+    spec_gpu: str = "GPU (Graphics)"
+    spec_recommended_title: str = "Recommended Recording Settings"
+    spec_apply_btn: str = "Apply Recommended Settings"
+    spec_skip_btn: str = "Keep Current Settings"
 
 EN = Translations(**EN_DICT)
 JA = Translations(**JA_DICT)
