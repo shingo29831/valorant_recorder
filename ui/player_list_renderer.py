@@ -214,6 +214,9 @@ class PlayerListRenderer:
                 widget.deleteLater()
             elif item.layout():
                 self._clear_layout(item.layout())
+        self.displayed_count = 0
+        self.current_group_key = None
+        self.current_flow_layout = None
 
     def _clear_layout(self, layout) -> None:
         if layout is not None:

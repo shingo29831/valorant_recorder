@@ -40,6 +40,7 @@ class PlayerTab(QWidget):
 
     def on_back_requested(self):
         self.stacked_widget.setCurrentWidget(self.list_page)
+        self.list_page.refresh_list()
 
     def refresh_list(self):
         self.list_page.refresh_list()
@@ -55,4 +56,5 @@ class PlayerTab(QWidget):
             self.list_page.refresh_list()
         elif self.stacked_widget.currentWidget() == self.video_page:
             self.video_page.restore_media()
+            self.list_page._needs_refresh = True
         self.videoPageVisible.emit(self.stacked_widget.currentWidget() == self.video_page)

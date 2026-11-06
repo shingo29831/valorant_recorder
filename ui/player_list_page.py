@@ -184,8 +184,8 @@ class PlayerListPage(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
-        # 保留されていたリスト更新があれば、画面が表示されたタイミングで実行する
-        if getattr(self, '_needs_refresh', False):
+        # 保留されていたリスト更新や、ウィジェットが空の場合は画面表示時に再構築
+        if getattr(self, '_needs_refresh', False) or getattr(self.renderer, "displayed_count", 0) == 0:
             self.refresh_list()
 
     def toggle_delete_mode(self, checked):
@@ -267,12 +267,16 @@ class PlayerListPage(QWidget):
             self.refresh_list()
 
     def clear_list(self):
+        self._needs_refresh = True
         self.renderer.clear()
 
     def refresh_list(self):
         # ウィンドウが非表示(ゲーム中など)の時にUIを再構築すると、
         # OSがフォーカス要求と誤認してゲームが裏画面に行くため、更新を保留する
-        if not self.isVisible():
+        window = self.window()
+        is_window_visible = window and not window.isHidden() and not window.isMinimized()
+        is_current_widget = getattr(self.parent(), "currentWidget", lambda: self)() == self
+        if not (self.isVisible() or (is_window_visible and is_current_widget)):
             self._needs_refresh = True
             return
             
