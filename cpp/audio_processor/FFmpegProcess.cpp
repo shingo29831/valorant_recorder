@@ -113,6 +113,13 @@ bool FFmpegProcess::Start(const std::string& command, const std::string& logPath
 
     if (WaitForSingleObject(m_hProcess, 200) == WAIT_OBJECT_0) {
         DWORD exitCode = GetExitCode();
+        if (m_hErrReadPipe != NULL) {
+            CloseHandle(m_hErrReadPipe);
+            m_hErrReadPipe = NULL;
+        }
+        if (m_logThread.joinable()) {
+            m_logThread.join();
+        }
         outError = "FFmpeg process crashed immediately with exit code " + std::to_string(exitCode);
         CleanupHandles();
         return false;

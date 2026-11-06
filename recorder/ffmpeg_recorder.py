@@ -204,9 +204,19 @@ class FFmpegRecorder:
 
             if not started_ok:
                 err = self.native_lib.Recorder_GetLastError().decode('utf-8', errors='replace')
+                ffmpeg_log_tail = ""
+                ffmpeg_log_file = os.path.join(self.config.SAVE_DIR, "native_ffmpeg.log")
+                if os.path.exists(ffmpeg_log_file):
+                    try:
+                        with open(ffmpeg_log_file, "r", encoding="utf-8", errors="replace") as lf:
+                            tail_lines = [l.strip() for l in lf.readlines()[-8:] if l.strip()]
+                            if tail_lines:
+                                ffmpeg_log_tail = " -> FFmpeg Log: " + " | ".join(tail_lines)
+                    except Exception:
+                        pass
                 if not err:
-                    err = "FFmpeg or audio capture pipeline terminated unexpectedly (see recording_diagnostic.log)"
-                full_err = f"Recorder initialization failed: {err}"
+                    err = "FFmpeg or audio capture pipeline terminated unexpectedly"
+                full_err = f"Recorder initialization failed: {err}{ffmpeg_log_tail}"
                 logging.error(f"[FFmpegRecorder] {full_err}")
                 collect_and_save_diagnostic(self.native_lib, self.config.SAVE_DIR, full_err)
                 raise RuntimeError(full_err)

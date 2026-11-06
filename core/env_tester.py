@@ -125,6 +125,21 @@ def generate_diagnostic_report(config, test_errors: list = None) -> str:
                 lines.append(f"  {tl[:110]}")
         except Exception as e:
             lines.append(f"- Status: ERROR READING app.log ({e})")
+    lines.append("")
+
+    # 5. FFmpeg ネイティブ実行ログ (native_ffmpeg.log) 直近末尾
+    if save_dir:
+        ffmpeg_log_path = os.path.join(save_dir, "native_ffmpeg.log")
+        if os.path.exists(ffmpeg_log_path):
+            try:
+                lines.append("[5. NATIVE FFMPEG LOG TAIL]")
+                lines.append(f"- Native FFmpeg Log Path: {ffmpeg_log_path}")
+                with open(ffmpeg_log_path, "r", encoding="utf-8", errors="replace") as ff_log:
+                    ff_lines = [l.strip() for l in ff_log.read().splitlines() if l.strip()]
+                for fl in ff_lines[-10:]:
+                    lines.append(f"  {fl[:110]}")
+            except Exception:
+                pass
 
     lines.append("=== END OF REPORT ===")
     return "\n".join(lines)

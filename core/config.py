@@ -11,7 +11,14 @@ class Config:
         self.AUTO_PERFORMANCE_CONTROL = os.environ.get("AUTO_PERFORMANCE_CONTROL", "True").lower() == "true"
         self.RIOT_ID = os.environ.get("RIOT_ID") or ""
         self.TAG_LINE = os.environ.get("TAG_LINE") or ""
-        self.SAVE_DIR = os.environ.get("RECORD_SAVE_DIR", "./records")
+        default_save_dir = os.path.join(os.path.expanduser("~"), "Videos", "ValoReco")
+        raw_save_dir = os.environ.get("RECORD_SAVE_DIR", "").strip()
+        if raw_save_dir and raw_save_dir != "./records":
+            self.SAVE_DIR = os.path.abspath(raw_save_dir)
+        elif raw_save_dir == "./records" and os.path.exists("./records"):
+            self.SAVE_DIR = os.path.abspath("./records")
+        else:
+            self.SAVE_DIR = os.path.abspath(default_save_dir)
         
         self.RECORD_VIDEO_FORMAT = os.environ.get("RECORD_VIDEO_FORMAT", "ddagrab")
         self.RECORD_INPUT_SOURCE = os.environ.get("RECORD_INPUT_SOURCE", "desktop")
@@ -27,7 +34,8 @@ class Config:
         self.RECORD_FPS = os.environ.get("RECORD_FPS", "60")
         self.RECORD_RESOLUTION = os.environ.get("RECORD_RESOLUTION", "1920x1080")
         self.AUTO_DELETE_DAYS = int(os.environ.get("AUTO_DELETE_DAYS", "0"))
-        self.CLIP_SAVE_DIR = os.environ.get("CLIP_SAVE_DIR", os.path.join(self.SAVE_DIR, "clips"))
+        clip_env = os.environ.get("CLIP_SAVE_DIR", "").strip()
+        self.CLIP_SAVE_DIR = os.path.abspath(clip_env) if clip_env else os.path.join(self.SAVE_DIR, "clips")
         self.UPDATE_API_URL = os.environ.get("UPDATE_API_URL") or "https://valoreco-api.meld-task.com/api/version"
         self.PLAYER_SYS_VOLUME = self._parse_volume(os.environ.get("PLAYER_SYS_VOLUME", "1.0"))
         self.PLAYER_MIC_VOLUME = self._parse_volume(os.environ.get("PLAYER_MIC_VOLUME", "1.0"))

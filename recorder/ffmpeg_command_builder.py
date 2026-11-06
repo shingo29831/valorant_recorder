@@ -114,8 +114,12 @@ def build_ffmpeg_command(
 
     # NVENCとAMD AMFはD3D11テクスチャの直接入力に対応しているためゼロコピーで処理する
     use_d3d11_direct = (not use_gdigrab) and (is_nvenc or is_amf) and not force_sw_download
-    # Intel QSVはGPU上のscale_d3d11で縮小後にnv12へ変換する（マルチGPU競合回避のためグローバルd3d11vaは指定しない）
+    # Intel QSVはGPU上のscale_d3d11で縮小後にnv12へ変換する
     use_qsv_gpu_scale = (not use_gdigrab) and is_qsv and not force_sw_download
+
+    # ddagrabは全分岐でD3D11VAデバイス必須。CUDA等との競合防止のため名前付きデバイスとして明示バインド
+    if not use_gdigrab:
+        cmd.extend(["-init_hw_device", "d3d11va=d3d11", "-filter_hw_device", "d3d11"])
 
     # 画面静止時のフレーム枯渇とPTS乖離による多重化キュー溢れを防ぐためdup_framesと0起点PTS正規化を適用
     dda_base = f"ddagrab=output_idx={output_idx}:framerate={fps}:draw_mouse=1:dup_frames=1"
@@ -123,7 +127,6 @@ def build_ffmpeg_command(
         scale_part = f"scale={target_w}:{target_h}:flags={sw_flag}," if needs_scale else ""
         video_filter = f"[1:v]setpts=PTS-STARTPTS,{scale_part}format={out_pix_fmt}[v_out];"
     elif use_d3d11_direct:
-        cmd.extend(["-init_hw_device", "d3d11va"])
         d3d_scale = f",scale_d3d11=w={target_w}:h={target_h}" if needs_scale else ""
         video_filter = f"{dda_base},setpts=PTS-STARTPTS{d3d_scale}[v_out];"
     elif use_qsv_gpu_scale:
@@ -218,11 +221,11 @@ def build_ffmpeg_command(
         else:
             encoder_opts.extend(["-threads", "4"])
 
-    # aresampleのasync同期でクロックドリフトを自動補正し、サンプル数基準の連続PTSを付与して2系統へ分離
+    # panフィルタのチャンネル識別子混在エラー(-EINVAL)を防ぐため番号形式(c0,c1...)で統一
     audio_filter = (
         "[0:a]aresample=async=1000:first_pts=0,asetpts=N/SR/TB,asplit=2[sys_in][mic_in];"
-        "[sys_in]pan=stereo|FL=c0|FR=c1[a_sys];"
-        "[mic_in]pan=stereo|FL=c2|FR=c3[a_mic]"
+        "[sys_in]pan=stereo|c0=c0|c1=c1[a_sys];"
+        "[mic_in]pan=stereo|c0=c2|c1=c3[a_mic]"
     )
     filter_complex = video_filter + audio_filter
 
@@ -233,6 +236,7 @@ def build_ffmpeg_command(
         "-f", "f32le",
         "-ar", "48000",
         "-ac", "4",
+        "-channel_layout", "quad",
         "-i", "pipe:0",
     ])
     if use_gdigrab:

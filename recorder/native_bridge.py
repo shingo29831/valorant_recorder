@@ -162,8 +162,10 @@ def resolve_deepfilter_model_path(denoise_mode: int) -> str:
 
 
 def collect_and_save_diagnostic(native_lib: ctypes.CDLL, save_dir: str, err_msg: str) -> None:
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    diagnostic_path = os.path.join(project_root, "recording_diagnostic.log")
+    # PyInstaller環境の一時フォルダ消失を防ぎ永続ログディレクトリへ保存
+    app_data_dir = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "ValorantRecorder")
+    os.makedirs(app_data_dir, exist_ok=True)
+    diagnostic_path = os.path.join(app_data_dir, "recording_diagnostic.log")
     try:
         with open(diagnostic_path, "w", encoding="utf-8") as f:
             f.write("=== Recording Error Diagnostic ===\n")
