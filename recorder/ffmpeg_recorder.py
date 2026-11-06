@@ -285,6 +285,8 @@ class FFmpegRecorder:
                 temp_filepath = self.temp_filepath
                 current_filepath = self.current_filepath
                 actual_encoder = self.actual_encoder
+                self.current_filepath = None
+                self.temp_filepath = None
         
         if temp_filepath and current_filepath:
             remux_mkv_to_mp4(self.ffmpeg_path, temp_filepath, current_filepath, actual_encoder)

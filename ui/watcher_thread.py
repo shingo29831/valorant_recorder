@@ -265,6 +265,10 @@ class WatcherThread(QThread):
             self._processing_video_paths.add(os.path.basename(video_path))
         self.current_video_path = None
         self._is_manual_recording = False
+        self.local_recording_start_time_ms = None
+        self.real_match_end_time_ms = None
+        self.local_round_events = []
+        self.local_ability_events = []
         self.recording_state_changed.emit(False)
         
         # 録画停止処理（FFmpegの終了待ちなど）を別スレッドで実行

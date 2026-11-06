@@ -164,10 +164,12 @@ class MatchMetadataService:
             try:
                 api_match_data = api.fetch_latest_match()
                 game_start = api_match_data.get("metadata", {}).get("game_start", 0)
-                is_time_match = (
-                    abs(game_start - start_time) < 7200
-                    or (end_time > start_time and (start_time - 1800) <= game_start <= (end_time + 600))
-                )
+                duration = max(0.0, end_time - start_time) if end_time else 0.0
+                # 短時間録画(テスト・手動等)で過去マッチを誤誤認しないよう、録画時間に応じた時間窓で検証
+                if duration > 300:
+                    is_time_match = (start_time - 1800) <= game_start <= (end_time + 600)
+                else:
+                    is_time_match = abs(game_start - start_time) <= 600
                 if is_time_match:
                     match_data = api_match_data
                     match_id = match_data["metadata"]["matchid"]

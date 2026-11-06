@@ -6,29 +6,64 @@ def find_video_for_json(save_dir: str, json_filename: str, json_data: dict, vide
     match_info = json_data.get("match_info", json_data)
     video_path = match_info.get("local_video_path") or json_data.get("local_video_path")
     
+    valid_exts = ('.mp4', '.mkv', '.avi', '.mov', '.webm')
+    date_pattern = re.compile(r"(\d{8}_\d{6})")
+
     if video_path:
         video_path = video_path.replace("\\", "/")
-        if video_path.startswith("./"):
-            abs_path = os.path.abspath(video_path)
-            if os.path.exists(abs_path):
-                return abs_path
-        elif os.path.exists(video_path):
-            return os.path.abspath(video_path)
-            
+        norm_path = os.path.abspath(video_path)
+        if os.path.exists(norm_path):
+            return norm_path
+
         basename = os.path.basename(video_path)
         fallback_path = os.path.join(save_dir, basename)
         if os.path.exists(fallback_path):
             return fallback_path
 
-    date_pattern = re.compile(r"(\d{8}_\d{6})")
-    json_match = date_pattern.search(json_filename)
-    
-    if not json_match:
-        return ""
-        
-    try:
-        json_time = datetime.strptime(json_match.group(1), "%Y%m%d_%H%M%S")
-    except ValueError:
+        # Remux前後や失敗時を考慮し、拡張子違いの同一ベース名ファイルを検索
+        base_root, _ = os.path.splitext(basename)
+        for ext in valid_exts:
+            cand = os.path.join(save_dir, base_root + ext)
+            if os.path.exists(cand):
+                return cand
+
+    # フォールバック: 保存日時ではなく真の録画開始時刻を基準に最も近い動画を特定
+    target_time = None
+    if video_path:
+        m = date_pattern.search(os.path.basename(video_path))
+        if m:
+            try:
+                target_time = datetime.strptime(m.group(1), "%Y%m%d_%H%M%S")
+            except ValueError:
+                pass
+
+    if target_time is None:
+        start_ts = (
+            match_info.get("local_match_start_time")
+            or json_data.get("local_match_start_time")
+            or (
+                (match_info.get("local_recording_start_time_ms") or json_data.get("local_recording_start_time_ms"))
+                / 1000.0
+                if (match_info.get("local_recording_start_time_ms") or json_data.get("local_recording_start_time_ms"))
+                else None
+            )
+            or match_info.get("metadata", {}).get("game_start")
+        )
+        if start_ts:
+            try:
+                target_time = datetime.fromtimestamp(float(start_ts))
+            except (ValueError, OSError, OverflowError):
+                pass
+
+    if target_time is None:
+        json_match = date_pattern.search(json_filename)
+        if json_match:
+            try:
+                target_time = datetime.strptime(json_match.group(1), "%Y%m%d_%H%M%S")
+            except ValueError:
+                pass
+
+    if target_time is None:
         return ""
 
     best_video = ""
@@ -36,24 +71,27 @@ def find_video_for_json(save_dir: str, json_filename: str, json_data: dict, vide
 
     if video_cache is not None:
         for f, vid_time in video_cache.items():
-            diff = abs((json_time - vid_time).total_seconds())
+            diff = abs((target_time - vid_time).total_seconds())
             if diff < min_diff and diff < 7200:
                 min_diff = diff
                 best_video = os.path.join(save_dir, f)
     else:
-        for f in os.listdir(save_dir):
-            if f.endswith(('.mp4', '.mkv', '.avi')):
-                vid_match = date_pattern.search(f)
-                if vid_match:
-                    try:
-                        vid_time = datetime.strptime(vid_match.group(1), "%Y%m%d_%H%M%S")
-                        diff = abs((json_time - vid_time).total_seconds())
-                        if diff < min_diff and diff < 7200:
-                            min_diff = diff
-                            best_video = os.path.join(save_dir, f)
-                    except ValueError:
-                        continue
-                    
+        try:
+            for f in os.listdir(save_dir):
+                if f.endswith(valid_exts):
+                    vid_match = date_pattern.search(f)
+                    if vid_match:
+                        try:
+                            vid_time = datetime.strptime(vid_match.group(1), "%Y%m%d_%H%M%S")
+                            diff = abs((target_time - vid_time).total_seconds())
+                            if diff < min_diff and diff < 7200:
+                                min_diff = diff
+                                best_video = os.path.join(save_dir, f)
+                        except ValueError:
+                            continue
+        except OSError:
+            pass
+
     return best_video
 
 def guess_player_name(kills: list) -> str:
