@@ -97,12 +97,20 @@ class EnvTestItemRow(QWidget):
 
 
 class EnvTestDialog(QDialog):
-    def __init__(self, config: Config, t: Translations, parent: Optional[QWidget] = None) -> None:
+    def __init__(
+        self,
+        config: Config,
+        t: Translations,
+        parent: Optional[QWidget] = None,
+        auto_start: bool = True,
+        initial_results: Optional[dict] = None,
+        initial_errors: Optional[list] = None
+    ) -> None:
         super().__init__(parent)
         self.config = config
         self.t = t
         self.tester_thread: Optional[EnvTesterThread] = None
-        self.last_errors: list = []
+        self.last_errors: list = initial_errors or []
 
         self.setWindowTitle(getattr(self.t, 'env_test_dialog_title', "Environment Test"))
         self.setFixedSize(580, 560)
@@ -224,7 +232,22 @@ class EnvTestDialog(QDialog):
 
         layout.addLayout(btn_layout)
 
-        QTimer.singleShot(100, self.start_test)
+        if auto_start:
+            QTimer.singleShot(100, self.start_test)
+        elif initial_results is not None:
+            self._apply_initial_results(initial_results, self.last_errors)
+
+    def _apply_initial_results(self, step_results: dict, errors: list) -> None:
+        for step_idx, row in self.rows.items():
+            if step_idx in step_results:
+                success, summary, _ = step_results[step_idx]
+                if success:
+                    row.set_passed(getattr(self.t, 'env_status_passed', "Passed"), summary)
+                else:
+                    row.set_failed(getattr(self.t, 'env_status_failed', "Failed"), summary)
+            else:
+                row.set_waiting(getattr(self.t, 'env_status_waiting', "Waiting"))
+        self._on_all_finished([], errors)
 
     def _set_progress_style(self, chunk_color: str) -> None:
         self.progress_bar.setStyleSheet(f"""

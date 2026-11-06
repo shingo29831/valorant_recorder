@@ -87,13 +87,19 @@ class MainWindow(QMainWindow):
         self.watcher_thread.recording_state_changed.connect(self.show_recording_notification)
         self.watcher_thread.start()
         
+        self._active_tutorial_dialog = None
+        self._pending_env_test_failures = None
+
         # 起動時の自動アップデート確認と環境テスト
         self._check_for_updates()
-        self._run_env_tests()
+        is_first_run = not getattr(self.config, 'TUTORIAL_COMPLETED', False)
+        self._run_env_tests(full_test=is_first_run)
 
-    def _run_env_tests(self):
-        # 起動時は疑似録画をスキップして高速にチェック・フォールバックを実行
-        self.env_tester = EnvTesterThread(self.config, dry_run_recording=False)
+    def _run_env_tests(self, full_test: bool = False):
+        self._is_initial_env_test = full_test
+        self._pending_env_test_failures = None
+        # 初回起動時は裏でフルテスト、通常起動時は高速チェックを実行
+        self.env_tester = EnvTesterThread(self.config, dry_run_recording=full_test)
         self.env_tester.finished_signal.connect(self._on_env_test_finished)
         self.env_tester.start()
 
@@ -102,7 +108,20 @@ class MainWindow(QMainWindow):
             if hasattr(self.settings_tab.general_widget, 'refresh_from_config'):
                 self.settings_tab.general_widget.refresh_from_config()
 
-        # 起動時はエラーがあった場合のみポップアップを表示する
+        # 初回起動テストで問題があった場合は環境テスト結果画面を表示
+        if getattr(self, '_is_initial_env_test', False):
+            if errors:
+                step_results = getattr(self.env_tester, 'step_results', {})
+                if getattr(self, '_active_tutorial_dialog', None) is not None:
+                    self._pending_env_test_failures = {
+                        'step_results': step_results,
+                        'errors': errors
+                    }
+                else:
+                    self._show_env_test_result_dialog(step_results, errors)
+            return
+
+        # 通常起動時はエラーがあった場合のみポップアップを表示する
         if errors:
             title = getattr(self.t, 'env_test_failed_title', "Environment Test Failed")
             msg_template = getattr(self.t, 'env_test_failed_msg', "Some environment tests failed:\n\n{errors}")
@@ -403,7 +422,32 @@ class MainWindow(QMainWindow):
         if force or not getattr(self.config, 'TUTORIAL_COMPLETED', False):
             from ui.tutorial_dialog import TutorialDialog
             dialog = TutorialDialog(self.config, self.t, self)
-            dialog.exec()
+            self._active_tutorial_dialog = dialog
+            try:
+                dialog.exec()
+            finally:
+                self._active_tutorial_dialog = None
+
+            # チュートリアル終了後、初回環境テストで失敗していた場合は環境テスト結果画面を表示
+            pending = getattr(self, '_pending_env_test_failures', None)
+            if pending:
+                self._pending_env_test_failures = None
+                self._show_env_test_result_dialog(
+                    pending.get('step_results', {}),
+                    pending.get('errors', [])
+                )
+
+    def _show_env_test_result_dialog(self, step_results: dict, errors: list) -> None:
+        from ui.env_test_dialog import EnvTestDialog
+        dialog = EnvTestDialog(
+            self.config,
+            self.t,
+            parent=self,
+            auto_start=False,
+            initial_results=step_results,
+            initial_errors=errors
+        )
+        dialog.exec()
 
     def update_status(self, message: str):
         # バックグラウンドでの頻繁なUI更新はフルスクリーンゲームのフォーカスを奪う原因になるため、
@@ -436,14 +480,14 @@ class MainWindow(QMainWindow):
             self.player_tab.on_shown()
         self.update_storage_gauge()
 
-        # 初回起動時にスペック診断・オススメ設定、続いてチュートリアルを表示
+        # 初回起動時にチュートリアルを表示
         if not self._tutorial_checked:
             self._tutorial_checked = True
             from PyQt6.QtCore import QTimer
-            if not getattr(self.config, 'INITIAL_SETUP_COMPLETED', False):
-                QTimer.singleShot(300, self._run_initial_setup_flow)
-            elif not getattr(self.config, 'TUTORIAL_COMPLETED', False):
-                QTimer.singleShot(400, self.show_tutorial_dialog)
+            if not getattr(self.config, 'TUTORIAL_COMPLETED', False):
+                QTimer.singleShot(300, self.show_tutorial_dialog)
+            elif not getattr(self.config, 'INITIAL_SETUP_COMPLETED', False):
+                QTimer.singleShot(300, self.show_spec_recommend_dialog)
             
         # 保留されていたアップデートがあれば、UIの描画完了を待ってからダイアログを表示する
         if getattr(self, '_pending_update', None):
