@@ -130,10 +130,20 @@ def generate_diagnostic_report(config, test_errors: list = None) -> str:
     return "\n".join(lines)
 
 
+STEP_FFMPEG = 0
+STEP_ENCODER = 1
+STEP_AUDIO = 2
+STEP_LOG = 3
+STEP_PIPELINE = 4
+TOTAL_STEPS = 5
+
+
 class EnvTesterThread(QThread):
     """
-    アプリ起動時に動作環境（FFmpeg, エンコーダ, オーディオ, ログアクセス）をテストするスレッド
+    動作環境（FFmpeg, エンコーダ, オーディオ, ログアクセス, 録画パイプライン）をテストするスレッド
     """
+    step_started = pyqtSignal(int, str)
+    step_finished = pyqtSignal(int, str, bool, str, str)
     finished_signal = pyqtSignal(list, list)
     _GLOBAL_TEST_LOCK = threading.Lock()
     _current_running_instance = None
@@ -142,9 +152,14 @@ class EnvTesterThread(QThread):
     def is_test_running(cls) -> bool:
         return cls._current_running_instance is not None and cls._current_running_instance.isRunning()
 
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, dry_run_recording: bool = True):
         super().__init__()
         self.config = config
+        self.dry_run_recording = dry_run_recording
+        self._is_cancelled = False
+
+    def cancel(self):
+        self._is_cancelled = True
 
     def run(self):
         with self._GLOBAL_TEST_LOCK:
@@ -160,6 +175,9 @@ class EnvTesterThread(QThread):
         errors = []
 
         # 1. FFmpeg Test
+        if self._is_cancelled:
+            return
+        self.step_started.emit(STEP_FFMPEG, "ffmpeg")
         ffmpeg_path = None
         try:
             from recorder.ffmpeg_downloader import ensure_ffmpeg_downloaded
@@ -170,19 +188,24 @@ class EnvTesterThread(QThread):
             subprocess.run([ffmpeg_path, "-version"], capture_output=True, check=True, creationflags=creationflags)
             logging.info("[EnvTest] FFmpeg test: PASSED")
             successes.append("FFmpeg Executable")
+            self.step_finished.emit(STEP_FFMPEG, "ffmpeg", True, "FFmpeg Executable", "")
         except Exception as e:
             import traceback
             err_detail = traceback.format_exc()
             logging.error(f"[EnvTest] FFmpeg test failed: {e}")
-            errors.append(("FFmpeg is not available or cannot be executed.", err_detail))
+            err_title = "FFmpeg is not available or cannot be executed."
+            errors.append((err_title, err_detail))
+            self.step_finished.emit(STEP_FFMPEG, "ffmpeg", False, err_title, err_detail)
 
         # 2. Encoder Test
+        if self._is_cancelled:
+            return
+        self.step_started.emit(STEP_ENCODER, "encoder")
         if ffmpeg_path:
             try:
                 from recorder.encoder_utils import test_encoder, get_available_encoders
                 success, msg = test_encoder(ffmpeg_path, self.config.RECORD_ENCODER)
                 if not success:
-                    # 初回起動時(デフォルトh264_nvenc)やGPU変更時に非対応環境でエラーにならないよう最適エンコーダへ自動切替
                     available, _ = get_available_encoders(ffmpeg_path)
                     if available:
                         fallback_enc = available[0]
@@ -198,18 +221,31 @@ class EnvTesterThread(QThread):
                         else:
                             msg = fb_msg
                 if success:
+                    summary = f"Video Encoder ({self.config.RECORD_ENCODER})"
                     logging.info(f"[EnvTest] Encoder test ({self.config.RECORD_ENCODER}): PASSED")
-                    successes.append(f"Video Encoder ({self.config.RECORD_ENCODER})")
+                    successes.append(summary)
+                    self.step_finished.emit(STEP_ENCODER, "encoder", True, summary, "")
                 else:
+                    err_title = f"Encoder '{self.config.RECORD_ENCODER}' is not supported on this system."
                     logging.warning(f"[EnvTest] Encoder test ({self.config.RECORD_ENCODER}): FAILED - {msg}")
-                    errors.append((f"Encoder '{self.config.RECORD_ENCODER}' is not supported on this system.", msg))
+                    errors.append((err_title, msg))
+                    self.step_finished.emit(STEP_ENCODER, "encoder", False, err_title, msg)
             except Exception as e:
                 import traceback
                 err_detail = traceback.format_exc()
                 logging.error(f"[EnvTest] Encoder test exception: {e}")
-                errors.append(("Failed to test video encoder.", err_detail))
+                err_title = "Failed to test video encoder."
+                errors.append((err_title, err_detail))
+                self.step_finished.emit(STEP_ENCODER, "encoder", False, err_title, err_detail)
+        else:
+            err_title = "Encoder test skipped because FFmpeg was not found."
+            errors.append((err_title, ""))
+            self.step_finished.emit(STEP_ENCODER, "encoder", False, err_title, "")
 
         # 3. Audio Device Test
+        if self._is_cancelled:
+            return
+        self.step_started.emit(STEP_AUDIO, "audio")
         com_initialized = False
         if os.name == 'nt':
             try:
@@ -223,12 +259,16 @@ class EnvTesterThread(QThread):
             speaker = sc.default_speaker()
             mic = sc.default_microphone()
             logging.info(f"[EnvTest] Audio test: PASSED (Speaker: {speaker.name}, Mic: {mic.name})")
+            summary = f"Speaker: {speaker.name} / Mic: {mic.name}"
             successes.append("Audio Devices (Speaker/Mic)")
+            self.step_finished.emit(STEP_AUDIO, "audio", True, summary, "")
         except Exception as e:
             import traceback
             err_detail = traceback.format_exc()
             logging.error(f"[EnvTest] Audio device test failed: {e}")
-            errors.append(("Could not detect default audio devices (Speaker/Mic).", err_detail))
+            err_title = "Could not detect default audio devices (Speaker/Mic)."
+            errors.append((err_title, err_detail))
+            self.step_finished.emit(STEP_AUDIO, "audio", False, err_title, err_detail)
         finally:
             if com_initialized:
                 try:
@@ -238,6 +278,9 @@ class EnvTesterThread(QThread):
                     pass
 
         # 4. Log Access Test
+        if self._is_cancelled:
+            return
+        self.step_started.emit(STEP_LOG, "log")
         try:
             local_app_data = os.environ.get('LOCALAPPDATA')
             if not local_app_data:
@@ -250,21 +293,31 @@ class EnvTesterThread(QThread):
             log_dir = os.path.join(local_app_data, 'VALORANT', 'Saved', 'Logs')
             os.makedirs(log_dir, exist_ok=True)
             
-            # 書き込み権限のテスト
             test_file = os.path.join(log_dir, 'valoreco_test.tmp')
             with open(test_file, 'w') as f:
                 f.write('test')
             os.remove(test_file)
             logging.info("[EnvTest] Log directory access test: PASSED")
             successes.append("VALORANT Log Access")
+            self.step_finished.emit(STEP_LOG, "log", True, "VALORANT Log Access", "")
         except Exception as e:
             import traceback
             err_detail = traceback.format_exc()
             logging.error(f"[EnvTest] Log access test failed: {e}")
-            errors.append(("Cannot access VALORANT log directory. Vanguard or permissions might be blocking it.", err_detail))
+            err_title = "Cannot access VALORANT log directory. Vanguard or permissions might be blocking it."
+            errors.append((err_title, err_detail))
+            self.step_finished.emit(STEP_LOG, "log", False, err_title, err_detail)
 
-        # 5. Mock / Dry-Run Recording Test (疑似録画テスト・内容は即時破棄)
-        if ffmpeg_path:
+        # 5. Mock / Dry-Run Recording Test
+        if self._is_cancelled:
+            return
+        self.step_started.emit(STEP_PIPELINE, "pipeline")
+        if not self.dry_run_recording:
+            # 起動時のサイレント検証では疑似録画を省略し即完了
+            summary = "Skipped during startup check"
+            successes.append("Recording Pipeline (Startup Skipped)")
+            self.step_finished.emit(STEP_PIPELINE, "pipeline", True, summary, "")
+        elif ffmpeg_path:
             recorder = None
             try:
                 from recorder.ffmpeg_recorder import FFmpegRecorder
@@ -272,10 +325,12 @@ class EnvTesterThread(QThread):
                 if recorder.is_recording():
                     logging.info("[EnvTest] Recording pipeline test skipped: recorder is already active.")
                     successes.append("Recording Pipeline (Active Recording)")
+                    self.step_finished.emit(STEP_PIPELINE, "pipeline", True, "Active Recording", "")
                 else:
                     recorder.start_recording()
-                    # 画面キャプチャ・音声・FFmpegプロセスの安定初期化を検証
                     for _ in range(12):
+                        if self._is_cancelled:
+                            break
                         time.sleep(0.1)
                         if not recorder.is_recording():
                             break
@@ -287,16 +342,23 @@ class EnvTesterThread(QThread):
                     recorder.cancel_recording()
                     logging.info("[EnvTest] Recording pipeline test: PASSED")
                     successes.append("Recording Pipeline (Screen & Audio Capture)")
+                    self.step_finished.emit(STEP_PIPELINE, "pipeline", True, "Screen & Audio Capture OK", "")
             except Exception as e:
                 import traceback
                 err_detail = traceback.format_exc()
                 logging.error(f"[EnvTest] Recording pipeline test failed: {e}")
-                errors.append(("Recording pipeline dry-run failed.", err_detail))
+                err_title = "Recording pipeline dry-run failed."
+                errors.append((err_title, err_detail))
+                self.step_finished.emit(STEP_PIPELINE, "pipeline", False, err_title, err_detail)
                 if recorder:
                     try:
                         recorder.cancel_recording()
                     except Exception:
                         pass
+        else:
+            err_title = "Pipeline test skipped because FFmpeg is missing."
+            errors.append((err_title, ""))
+            self.step_finished.emit(STEP_PIPELINE, "pipeline", False, err_title, "")
 
         logging.info("=== Environment Tests Completed ===")
         self.finished_signal.emit(successes, errors)

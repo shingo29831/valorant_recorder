@@ -179,6 +179,21 @@ class Translations:
     tutorial_manual_desc: str = ""
     tutorial_dont_show_again: str = "Do not show again"
     tutorial_start_btn: str = "Get Started"
+    env_test_dialog_title: str = "Environment Test"
+    env_test_diagnosing: str = "Diagnosing environment..."
+    env_test_all_passed: str = "All environment tests passed successfully."
+    env_test_some_failed: str = "Issues were detected in some tests."
+    env_status_waiting: str = "Waiting"
+    env_status_running: str = "Testing..."
+    env_status_passed: str = "Passed"
+    env_status_failed: str = "Failed"
+    env_item_ffmpeg: str = "FFmpeg Executable"
+    env_item_encoder: str = "Video Encoder"
+    env_item_audio: str = "Audio Devices"
+    env_item_log: str = "VALORANT Log Access"
+    env_item_pipeline: str = "Recording Pipeline"
+    retest: str = "Retest"
+    close: str = "Close"
 
 EN = Translations(**EN_DICT)
 JA = Translations(**JA_DICT)

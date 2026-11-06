@@ -126,64 +126,11 @@ class GeneralSettingsWidget(QWidget):
         self.setLayout(layout)
 
     def _run_env_test(self):
-        from core.env_tester import EnvTesterThread
-        if EnvTesterThread.is_test_running():
-            return
-        self.run_test_btn.setEnabled(False)
-        self.run_test_btn.setText(getattr(self.t, 'env_test_running', "Running tests..."))
-        
-        self.env_tester = EnvTesterThread(self.config)
-        self.env_tester.finished_signal.connect(self._on_env_test_finished)
-        self.env_tester.start()
-
-    def _on_env_test_finished(self, successes, errors):
-        self.run_test_btn.setEnabled(True)
-        self.run_test_btn.setText(getattr(self.t, 'run_env_test', "Run Environment Test"))
+        from ui.env_test_dialog import EnvTestDialog
+        dialog = EnvTestDialog(self.config, self.t, self)
+        dialog.exec()
         if self.parent_tab and hasattr(self.parent_tab, 'record_widget') and hasattr(self.parent_tab.record_widget, 'refresh_from_config'):
             self.parent_tab.record_widget.refresh_from_config()
-        
-        if not errors:
-            title = getattr(self.t, 'env_test_success_title', "Test Passed")
-            msg_template = getattr(self.t, 'env_test_success_msg', "All environment tests passed successfully:\n\n{successes}")
-            success_text = "\n".join([f"✅ {s}" for s in successes])
-
-            msg_box = QMessageBox(self)
-            msg_box.setIcon(QMessageBox.Icon.Information)
-            msg_box.setWindowTitle(title)
-            msg_box.setText(msg_template.format(successes=success_text))
-
-            open_folder_btn = msg_box.addButton(getattr(self.t, 'open_log_folder', "Open Log Folder"), QMessageBox.ButtonRole.ActionRole)
-            msg_box.addButton(QMessageBox.StandardButton.Ok)
-            msg_box.exec()
-
-            if msg_box.clickedButton() == open_folder_btn:
-                open_log_folder(self, self.t)
-        else:
-            title = getattr(self.t, 'env_test_failed_title', "Environment Test Failed")
-            msg_template = getattr(self.t, 'env_test_mixed_msg', "Test completed with some errors.\n\n[Passed]\n{successes}\n\n[Failed]\n{errors}")
-            
-            success_text = "\n".join([f"✅ {s}" for s in successes]) if successes else "None"
-            error_summary = "\n".join([f"❌ {e[0]}" for e in errors])
-            detailed_text = "\n\n".join([f"[{e[0]}]\n{e[1]}" for e in errors])
-            
-            msg_box = QMessageBox(self)
-            msg_box.setIcon(QMessageBox.Icon.Warning)
-            msg_box.setWindowTitle(title)
-            msg_box.setText(msg_template.format(successes=success_text, errors=error_summary))
-            msg_box.setDetailedText(detailed_text)
-            
-            copy_button = msg_box.addButton(getattr(self.t, 'copy_diagnostic_report', getattr(self.t, 'copy_log', "Copy Diagnostic Report")), QMessageBox.ButtonRole.ActionRole)
-            open_folder_btn = msg_box.addButton(getattr(self.t, 'open_log_folder', "Open Log Folder"), QMessageBox.ButtonRole.ActionRole)
-            msg_box.addButton(QMessageBox.StandardButton.Close)
-            
-            msg_box.exec()
-            
-            if msg_box.clickedButton() == copy_button:
-                report = generate_diagnostic_report(self.config, test_errors=errors)
-                QGuiApplication.clipboard().setText(report)
-                QMessageBox.information(self, "Copied", getattr(self.t, 'copied_to_clipboard', "Copied!"))
-            elif msg_box.clickedButton() == open_folder_btn:
-                open_log_folder(self, self.t)
 
     def _quit_application(self):
         title = getattr(self.t, 'confirm_quit_title', "Confirm Exit")
@@ -331,13 +278,8 @@ class GeneralSettingsWidget(QWidget):
         self.auto_start_checkbox.setChecked(self.config.AUTO_START)
         self.auto_start_checkbox.blockSignals(False)
 
-        from core.env_tester import EnvTesterThread
-        if EnvTesterThread.is_test_running():
-            self.run_test_btn.setEnabled(False)
-            self.run_test_btn.setText(getattr(self.t, 'env_test_running', "Running tests..."))
-        else:
-            self.run_test_btn.setEnabled(True)
-            self.run_test_btn.setText(getattr(self.t, 'run_env_test', "Run Environment Test"))
+        self.run_test_btn.setEnabled(True)
+        self.run_test_btn.setText(getattr(self.t, 'run_env_test', "Run Environment Test"))
 
     def showEvent(self, event):
         super().showEvent(event)

@@ -92,7 +92,8 @@ class MainWindow(QMainWindow):
         self._run_env_tests()
 
     def _run_env_tests(self):
-        self.env_tester = EnvTesterThread(self.config)
+        # 起動時は疑似録画をスキップして高速にチェック・フォールバックを実行
+        self.env_tester = EnvTesterThread(self.config, dry_run_recording=False)
         self.env_tester.finished_signal.connect(self._on_env_test_finished)
         self.env_tester.start()
 
