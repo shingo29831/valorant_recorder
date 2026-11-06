@@ -1,11 +1,13 @@
 """Module: @role: 録画映像設定（FPS・エンコーダ・解像度・軽量モード）のUI管理と音声設定ウィジェットの統合を担うモジュール"""
 import os
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFormLayout,
     QGroupBox,
     QLabel,
+    QPushButton,
     QVBoxLayout,
     QWidget,
 )
@@ -26,6 +28,31 @@ class RecordSettingsWidget(QWidget):
         video_group = QGroupBox(self.t.video_settings)
         video_layout = QFormLayout()
         video_layout.setSpacing(15)
+
+        self.spec_diag_btn = QPushButton("🔍 " + getattr(self.t, "run_spec_diag", "PCスペックに合わせてオススメ設定を診断"))
+        self.spec_diag_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.spec_diag_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #102A43;
+                color: #38BEC9;
+                border: 1px solid #2680C2;
+                border-radius: 4px;
+                padding: 7px 14px;
+                font-weight: bold;
+                font-size: 12px;
+                text-align: center;
+            }
+            QPushButton:hover {
+                background-color: #1A365D;
+                color: #FFFFFF;
+                border-color: #38BEC9;
+            }
+            QPushButton:pressed {
+                background-color: #0B1D33;
+            }
+        """)
+        self.spec_diag_btn.clicked.connect(self._open_spec_dialog)
+        video_layout.addRow("", self.spec_diag_btn)
 
         self.fps_input = QComboBox()
         fps_items = ["30", "60", "120", "144"]
@@ -203,6 +230,12 @@ class RecordSettingsWidget(QWidget):
         is_rec = getattr(main_win, "rec_button", None) and main_win.rec_button.isChecked()
         if not is_rec:
             self.start_monitors()
+
+    def _open_spec_dialog(self) -> None:
+        from ui.spec_recommend_dialog import SpecRecommendDialog
+        dialog = SpecRecommendDialog(self.config, self.t, self)
+        dialog.exec()
+        self.refresh_from_config()
 
     def _save_settings(self) -> None:
         self.config.RECORD_FPS = self.fps_input.currentText()

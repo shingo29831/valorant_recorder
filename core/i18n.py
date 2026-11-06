@@ -203,6 +203,7 @@ class Translations:
     spec_recommended_title: str = "Recommended Recording Settings"
     spec_apply_btn: str = "Apply Recommended Settings"
     spec_skip_btn: str = "Keep Current Settings"
+    run_spec_diag: str = "Diagnose Recommended Settings"
 
 EN = Translations(**EN_DICT)
 JA = Translations(**JA_DICT)

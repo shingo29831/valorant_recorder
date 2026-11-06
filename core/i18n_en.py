@@ -199,4 +199,5 @@ EN_DICT: dict[str, str] = dict(
     spec_recommended_title="Recommended Recording Settings",
     spec_apply_btn="Apply Recommended Settings",
     spec_skip_btn="Keep Current Settings",
+    run_spec_diag="Diagnose Recommended Settings by Specs",
 )

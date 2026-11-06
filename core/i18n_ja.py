@@ -199,4 +199,5 @@ JA_DICT: dict[str, str] = dict(
     spec_recommended_title="オススメの録画設定",
     spec_apply_btn="オススメ設定を適用して開始",
     spec_skip_btn="現在の設定を維持する",
+    run_spec_diag="PCスペックに合わせてオススメ設定を診断",
 )
