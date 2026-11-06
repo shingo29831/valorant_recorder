@@ -125,18 +125,18 @@ def build_ffmpeg_command(
     elif use_d3d11_direct:
         cmd.extend(["-init_hw_device", "d3d11va"])
         d3d_scale = f",scale_d3d11=w={target_w}:h={target_h}" if needs_scale else ""
-        video_filter = f"{dda_base}{d3d_scale},setpts=PTS-STARTPTS[v_out];"
+        video_filter = f"{dda_base},setpts=PTS-STARTPTS{d3d_scale}[v_out];"
     elif use_qsv_gpu_scale:
         d3d_scale = f",scale_d3d11=w={target_w}:h={target_h}" if needs_scale else ""
         video_filter = (
-            f"{dda_base}{d3d_scale},"
-            f"hwdownload,format=bgra,format=nv12,setpts=PTS-STARTPTS[v_out];"
+            f"{dda_base},setpts=PTS-STARTPTS{d3d_scale},"
+            f"hwdownload,format=bgra,format=nv12[v_out];"
         )
     else:
         scale_part = f",scale={target_w}:{target_h}:flags={sw_flag}" if needs_scale else ""
         video_filter = (
-            f"{dda_base},"
-            f"hwdownload,format=bgra{scale_part},format={out_pix_fmt},setpts=PTS-STARTPTS[v_out];"
+            f"{dda_base},setpts=PTS-STARTPTS,"
+            f"hwdownload,format=bgra{scale_part},format={out_pix_fmt}[v_out];"
         )
 
     if is_nvenc:
