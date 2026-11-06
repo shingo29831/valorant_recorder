@@ -4,6 +4,7 @@ import logging
 import platform
 import datetime
 import subprocess
+import threading
 from PyQt6.QtCore import QThread, pyqtSignal
 from core.config import Config
 
