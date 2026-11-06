@@ -140,6 +140,7 @@ class Translations:
     app_logs: str
     open_log_folder: str
     copy_log: str
+    copy_diagnostic_report: str
     copied_to_clipboard: str
     log_not_found: str
     initializing: str
