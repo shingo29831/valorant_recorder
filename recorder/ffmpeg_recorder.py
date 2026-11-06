@@ -20,11 +20,13 @@ from recorder.native_bridge import (
 )
 
 class FFmpegRecorder:
+    _GLOBAL_LOCK = threading.RLock()
+
     def __init__(self, config: Config):
         self.config = config
         self.current_filepath = None
         self.temp_filepath = None
-        self._lock = threading.Lock()
+        self._lock = self._GLOBAL_LOCK
         
         self.app_data_dir = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'ValoReco')
         os.makedirs(self.app_data_dir, exist_ok=True)

@@ -97,6 +97,10 @@ class MainWindow(QMainWindow):
         self.env_tester.start()
 
     def _on_env_test_finished(self, successes, errors):
+        if hasattr(self, 'settings_tab') and hasattr(self.settings_tab, 'general_widget'):
+            if hasattr(self.settings_tab.general_widget, 'refresh_from_config'):
+                self.settings_tab.general_widget.refresh_from_config()
+
         # 起動時はエラーがあった場合のみポップアップを表示する
         if errors:
             title = getattr(self.t, 'env_test_failed_title', "Environment Test Failed")
@@ -115,19 +119,30 @@ class MainWindow(QMainWindow):
                 # 詳細なエラーログをポップアップ内に格納
                 msg_box.setDetailedText(detailed_text)
                 
-                # ログをコピーするボタンを追加
-                copy_button = msg_box.addButton(getattr(self.t, 'copy_log', "Copy Log"), QMessageBox.ButtonRole.ActionRole)
+                # 診断レポートコピーとログフォルダ表示ボタンを配置
+                copy_button = msg_box.addButton(
+                    getattr(self.t, 'copy_diagnostic_report', getattr(self.t, 'copy_log', "Copy Diagnostic Report")),
+                    QMessageBox.ButtonRole.ActionRole,
+                )
+                open_folder_btn = msg_box.addButton(
+                    getattr(self.t, 'open_log_folder', "Open Log Folder"),
+                    QMessageBox.ButtonRole.ActionRole,
+                )
                 msg_box.addButton(QMessageBox.StandardButton.Close)
                 
                 msg_box.exec()
                 
                 if msg_box.clickedButton() == copy_button:
+                    from core.env_tester import generate_diagnostic_report
                     from PyQt6.QtGui import QGuiApplication
-                    QGuiApplication.clipboard().setText(detailed_text)
+                    report = generate_diagnostic_report(self.config, test_errors=errors)
+                    QGuiApplication.clipboard().setText(report)
                     
-                    # コピー完了のフィードバック
                     copied_text = getattr(self.t, 'copied_to_clipboard', "Copied!")
                     QMessageBox.information(self, "Copied", copied_text)
+                elif msg_box.clickedButton() == open_folder_btn:
+                    from ui.settings_general import open_log_folder
+                    open_log_folder(self, self.t)
             else:
                 self.statusBar().showMessage(f"Environment Test Failed: {len(errors)} errors")
 

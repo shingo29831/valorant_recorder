@@ -40,6 +40,7 @@ extern "C" {
 static std::atomic<bool> g_isRunning{false};
 static std::string g_lastError = "";
 static std::mutex g_errorMutex;
+static std::mutex g_recorderMutex;
 static std::thread g_recordingThread;
 static std::mutex g_processMutex;
 static FFmpegProcess* g_activeProcess = nullptr;
@@ -79,7 +80,8 @@ static void WriterThreadFunc(FFmpegProcess* ffmpeg, AudioSyncQueue* outQueue) {
 }
 
 static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice, std::string ffmpegCmd, std::string dfModelPath) {
-    NativeLog("Starting RecordingThreadFunc...");
+    try {
+        NativeLog("Starting RecordingThreadFunc...");
 
     g_sysCapture = std::make_unique<WasapiCapture>(CaptureType::SystemLoopback);
     g_sysCapture->SetLogger(NativeLog);
@@ -362,87 +364,118 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
         g_activeProcess = nullptr;
     }
     g_isRunning = false;
+    } catch (const std::exception& e) {
+        SetLastErrorMsg(std::string("Exception in RecordingThreadFunc: ") + e.what());
+        g_isRunning = false;
+    } catch (...) {
+        SetLastErrorMsg("Unknown exception in RecordingThreadFunc.");
+        g_isRunning = false;
+    }
 }
 
 EXPORT_API bool Recorder_Start(const RecorderConfig* config) {
-    if (g_recordingThread.joinable()) {
-        g_recordingThread.join();
-    }
-
-    if (g_isRunning) {
-        SetLastErrorMsg("Recorder is already running.");
-        return false;
-    }
-
-    if (!config) {
-        SetLastErrorMsg("Invalid configuration.");
-        return false;
-    }
-
-    std::string saveDir = config->save_file_path ? config->save_file_path : "";
-    std::string logPath = "native_recorder_debug.log";
-    if (!saveDir.empty()) {
-        size_t pos = saveDir.find_last_of("\\/");
-        if (pos != std::string::npos) {
-            logPath = saveDir.substr(0, pos) + "/native_recorder_debug.log";
-        }
-    }
-
-    {
-        std::lock_guard<std::mutex> lock(g_logMutex);
-        if (g_logFile.is_open()) {
-            g_logFile.close();
-        }
-        g_logFile.open(logPath, std::ios::app);
-        if (g_logFile.is_open()) {
-            auto now = std::chrono::system_clock::now();
-            auto time = std::chrono::system_clock::to_time_t(now);
-            g_logFile << "\n--- New Recording Session Started at " << std::put_time(std::localtime(&time), "%Y-%m-%d %H:%M:%S") << " ---\n";
-            g_logFile << "Log path: " << logPath << "\n";
-            g_logFile << "Requested save path was: " << (config->save_file_path ? config->save_file_path : "NULL") << "\n";
-        }
-    }
-
-    std::string micDevice = config->mic_device_name ? config->mic_device_name : "";
-    std::string ffmpegCmd = config->ffmpeg_command ? config->ffmpeg_command : "";
-    std::string dfModelPath = config->df_model_path ? config->df_model_path : "";
-
-    RecorderConfig configCopy = *config;
-
-    g_isRunning = true;
-    SetLastErrorMsg("");
-
-    g_recordingThread = std::thread(RecordingThreadFunc, configCopy, micDevice, ffmpegCmd, dfModelPath);
-    return true;
-}
-
-EXPORT_API void Recorder_Stop() {
-    if (g_isRunning) {
-        g_isRunning = false;
+    std::lock_guard<std::mutex> lock(g_recorderMutex);
+    try {
         if (g_recordingThread.joinable()) {
             g_recordingThread.join();
         }
-    }
 
-    std::lock_guard<std::mutex> lock(g_logMutex);
-    if (g_logFile.is_open()) {
-        g_logFile << "--- Recording Session Ended ---\n";
-        g_logFile.close();
+        if (g_isRunning) {
+            SetLastErrorMsg("Recorder is already running.");
+            return false;
+        }
+
+        if (!config) {
+            SetLastErrorMsg("Invalid configuration.");
+            return false;
+        }
+
+        std::string saveDir = config->save_file_path ? config->save_file_path : "";
+        std::string logPath = "native_recorder_debug.log";
+        if (!saveDir.empty()) {
+            size_t pos = saveDir.find_last_of("\\/");
+            if (pos != std::string::npos) {
+                logPath = saveDir.substr(0, pos) + "/native_recorder_debug.log";
+            }
+        }
+
+        {
+            std::lock_guard<std::mutex> lockLog(g_logMutex);
+            if (g_logFile.is_open()) {
+                g_logFile.close();
+            }
+            g_logFile.open(logPath, std::ios::app);
+            if (g_logFile.is_open()) {
+                auto now = std::chrono::system_clock::now();
+                auto time = std::chrono::system_clock::to_time_t(now);
+                g_logFile << "\n--- New Recording Session Started at " << std::put_time(std::localtime(&time), "%Y-%m-%d %H:%M:%S") << " ---\n";
+                g_logFile << "Log path: " << logPath << "\n";
+                g_logFile << "Requested save path was: " << (config->save_file_path ? config->save_file_path : "NULL") << "\n";
+            }
+        }
+
+        std::string micDevice = config->mic_device_name ? config->mic_device_name : "";
+        std::string ffmpegCmd = config->ffmpeg_command ? config->ffmpeg_command : "";
+        std::string dfModelPath = config->df_model_path ? config->df_model_path : "";
+
+        RecorderConfig configCopy = *config;
+
+        g_isRunning = true;
+        SetLastErrorMsg("");
+
+        g_recordingThread = std::thread(RecordingThreadFunc, configCopy, micDevice, ffmpegCmd, dfModelPath);
+        return true;
+    } catch (const std::exception& e) {
+        SetLastErrorMsg(std::string("Exception in Recorder_Start: ") + e.what());
+        g_isRunning = false;
+        return false;
+    } catch (...) {
+        SetLastErrorMsg("Unknown exception in Recorder_Start.");
+        g_isRunning = false;
+        return false;
+    }
+}
+
+EXPORT_API void Recorder_Stop() {
+    std::lock_guard<std::mutex> lock(g_recorderMutex);
+    try {
+        if (g_isRunning) {
+            g_isRunning = false;
+            if (g_recordingThread.joinable()) {
+                g_recordingThread.join();
+            }
+        }
+
+        std::lock_guard<std::mutex> lockLog(g_logMutex);
+        if (g_logFile.is_open()) {
+            g_logFile << "--- Recording Session Ended ---\n";
+            g_logFile.close();
+        }
+    } catch (const std::exception& e) {
+        SetLastErrorMsg(std::string("Exception in Recorder_Stop: ") + e.what());
+    } catch (...) {
+        SetLastErrorMsg("Unknown exception in Recorder_Stop.");
     }
 }
 
 EXPORT_API bool Recorder_IsRunning() {
-    return g_isRunning;
+    return g_isRunning.load();
 }
 
 EXPORT_API void Recorder_SetLowPriority(bool lowPriority) {
-    std::lock_guard<std::mutex> lock(g_processMutex);
-    if (g_activeProcess != nullptr) {
-        g_activeProcess->SetLowPriority(lowPriority);
-    }
+    try {
+        std::lock_guard<std::mutex> lock(g_processMutex);
+        if (g_activeProcess != nullptr) {
+            g_activeProcess->SetLowPriority(lowPriority);
+        }
+    } catch (...) {}
 }
 
 EXPORT_API const char* Recorder_GetLastError() {
-    std::lock_guard<std::mutex> lock(g_errorMutex);
-    return g_lastError.c_str();
+    try {
+        std::lock_guard<std::mutex> lock(g_errorMutex);
+        return g_lastError.c_str();
+    } catch (...) {
+        return "";
+    }
 }
