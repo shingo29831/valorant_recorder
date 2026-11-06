@@ -20,6 +20,123 @@ from core.autostart import set_autostart
 from ui.settings_utils import change_save_directory
 
 
+def generate_diagnostic_report(config) -> str:
+    """管理者共有用に、近況エラー・VALORANTログ状態・環境設定を端的にまとめた診断レポートを生成する"""
+    import datetime
+    import platform
+    import time
+    from core.version import APP_VERSION
+
+    lines = []
+    lines.append("=== VALORANT RECORDER DIAGNOSTIC REPORT ===")
+    lines.append(f"Timestamp: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    lines.append("")
+
+    # 1. システム & 録画設定情報
+    lines.append("[1. SYSTEM & CONFIG]")
+    lines.append(f"- App Version: {APP_VERSION}")
+    try:
+        win_ver = platform.win32_ver()
+        os_info = f"Windows {win_ver[0]} ({win_ver[1]} {win_ver[2]})"
+    except Exception:
+        os_info = platform.platform()
+    lines.append(f"- OS: {os_info}")
+    lines.append(f"- Python: {platform.python_version()}")
+
+    save_dir = getattr(config, "SAVE_DIR", "")
+    dir_exists = os.path.exists(save_dir) if save_dir else False
+    dir_writable = os.access(save_dir, os.W_OK) if dir_exists else False
+    lines.append(f"- Save Dir: {save_dir} (Exists: {dir_exists}, Writable: {dir_writable})")
+    lines.append(f"- Encoder: {getattr(config, 'RECORD_ENCODER', 'unknown')}")
+    lines.append(f"- Video Format: {getattr(config, 'RECORD_VIDEO_FORMAT', 'unknown')}")
+    lines.append(f"- Resolution / FPS: {getattr(config, 'RECORD_RESOLUTION', 'unknown')} / {getattr(config, 'RECORD_FPS', 'unknown')}fps")
+    lines.append(f"- Lightweight Mode: {getattr(config, 'LIGHTWEIGHT_MODE', False)}")
+    lines.append(f"- Auto Perf Control: {getattr(config, 'AUTO_PERFORMANCE_CONTROL', True)}")
+    lines.append(f"- Audio System: {getattr(config, 'RECORD_AUDIO_SYSTEM', 'default')} (Gain: {getattr(config, 'RECORD_AUDIO_SYSTEM_GAIN', '1.0')})")
+    lines.append(f"- Audio Mic: {getattr(config, 'RECORD_AUDIO_MIC', 'None') or 'None'} (Preprocess: {getattr(config, 'RECORD_AUDIO_MIC_PREPROCESS', 'None')})")
+    lines.append("")
+
+    # 2. VALORANTログ (ShooterGame.log) の状態
+    lines.append("[2. VALORANT LOG STATUS]")
+    local_app_data = os.environ.get("LOCALAPPDATA")
+    if not local_app_data:
+        user_profile = os.environ.get("USERPROFILE")
+        if user_profile:
+            local_app_data = os.path.join(user_profile, "AppData", "Local")
+
+    valo_log_path = os.path.join(local_app_data, "VALORANT", "Saved", "Logs", "ShooterGame.log") if local_app_data else ""
+    lines.append(f"- Log Path: {valo_log_path}")
+
+    if not valo_log_path or not os.path.exists(valo_log_path):
+        lines.append("- Status: NOT FOUND (VALORANT might not be running or path is customized)")
+    else:
+        try:
+            mtime = os.path.getmtime(valo_log_path)
+            diff_min = int((time.time() - mtime) / 60)
+            mtime_str = datetime.datetime.fromtimestamp(mtime).strftime("%Y-%m-%d %H:%M:%S")
+            size_kb = os.path.getsize(valo_log_path) // 1024
+            lines.append(f"- Status: FOUND (Size: {size_kb} KB, Last Modified: {mtime_str}, {diff_min} min ago)")
+
+            # 末尾 64KB からゲーム状態遷移や最新行を抽出（大容量ログでも低負荷）
+            file_size = os.path.getsize(valo_log_path)
+            with open(valo_log_path, "r", encoding="utf-8", errors="replace") as vf:
+                vf.seek(max(0, file_size - 64 * 1024))
+                tail_content = vf.read()
+                raw_lines = [ln.strip() for ln in tail_content.splitlines() if ln.strip()]
+
+            relevant_keywords = ("State:", "Transition", "Match", "GameFlow", "Phase", "Round", "Session")
+            matched_lines = [l for l in raw_lines if any(k in l for k in relevant_keywords)]
+
+            lines.append("- Recent Relevant Game State Lines:")
+            if matched_lines:
+                for ml in matched_lines[-12:]:
+                    lines.append(f"  {ml[:140]}")
+            elif raw_lines:
+                for rl in raw_lines[-8:]:
+                    lines.append(f"  {rl[:140]}")
+            else:
+                lines.append("  (Log file is empty)")
+        except PermissionError:
+            lines.append("- Status: ACCESS DENIED (Locked by Vanguard/Anti-Cheat)")
+        except Exception as e:
+            lines.append(f"- Status: ERROR READING LOG ({e})")
+    lines.append("")
+
+    # 3. アプリログ (app.log) の直近エラー & 末尾ログ
+    lines.append("[3. RECENT ERRORS & APP LOG TAIL]")
+    app_log_path = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "ValorantRecorder", "app.log")
+    lines.append(f"- App Log Path: {app_log_path}")
+
+    if not os.path.exists(app_log_path):
+        lines.append("- Status: app.log NOT FOUND")
+    else:
+        try:
+            af_size = os.path.getsize(app_log_path)
+            with open(app_log_path, "r", encoding="utf-8", errors="replace") as af:
+                af.seek(max(0, af_size - 64 * 1024))
+                log_tail_text = af.read()
+                log_lines = [l.strip() for l in log_tail_text.splitlines() if l.strip()]
+
+            error_keywords = ("ERROR", "CRITICAL", "Exception", "Traceback", "failed", "Failed", "[Error]")
+            recent_errors = [l for l in log_lines if any(k in l for k in error_keywords)]
+
+            lines.append("- Extracted Recent Error / Warning Lines (Up to 10):")
+            if recent_errors:
+                for el in recent_errors[-10:]:
+                    lines.append(f"  ❌ {el[:150]}")
+            else:
+                lines.append("  (No recent error patterns detected)")
+
+            lines.append("- Recent App Log Tail (Last 30 lines):")
+            for tl in log_lines[-30:]:
+                lines.append(f"  {tl[:150]}")
+        except Exception as e:
+            lines.append(f"- Status: ERROR READING app.log ({e})")
+
+    lines.append("=== END OF REPORT ===")
+    return "\n".join(lines)
+
+
 class GeneralSettingsWidget(QWidget):
     def __init__(self, config, t, parent=None):
         super().__init__(parent)
@@ -172,25 +289,20 @@ class GeneralSettingsWidget(QWidget):
             QMessageBox.warning(self, "Not Found", getattr(self.t, 'log_not_found', "Log directory not found."))
 
     def _copy_log(self):
-        log_file = os.path.join(os.environ.get('LOCALAPPDATA', os.path.expanduser('~')), 'ValorantRecorder', 'app.log')
-        if os.path.exists(log_file):
-            try:
-                with open(log_file, 'r', encoding='utf-8') as f:
-                    log_content = f.read()
-                clipboard = QGuiApplication.clipboard()
-                clipboard.setText(log_content)
-                
-                # ポップアップを出さず、ボタンのテキストを一時的に変更する
-                original_text = self.copy_log_btn.text()
-                self.copy_log_btn.setText(getattr(self.t, 'copied_to_clipboard', "Copied!"))
-                self.copy_log_btn.setEnabled(False)
-                
-                from PyQt6.QtCore import QTimer
-                QTimer.singleShot(2000, lambda: self._reset_copy_btn(original_text))
-            except Exception as e:
-                QMessageBox.warning(self, "Error", f"Failed to read log file: {e}")
-        else:
-            QMessageBox.warning(self, "Not Found", getattr(self.t, 'log_not_found', "Log file not found."))
+        try:
+            report = generate_diagnostic_report(self.config)
+            clipboard = QGuiApplication.clipboard()
+            clipboard.setText(report)
+
+            # ポップアップを出さず、ボタンのテキストを一時的に変更する
+            original_text = self.copy_log_btn.text()
+            self.copy_log_btn.setText(getattr(self.t, 'copied_to_clipboard', "Copied!"))
+            self.copy_log_btn.setEnabled(False)
+
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(2000, lambda: self._reset_copy_btn(original_text))
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"Failed to generate diagnostic report: {e}")
 
     def _reset_copy_btn(self, original_text):
         self.copy_log_btn.setText(original_text)
