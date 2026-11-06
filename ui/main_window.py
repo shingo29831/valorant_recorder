@@ -326,12 +326,15 @@ class MainWindow(QMainWindow):
         tray_menu = QMenu()
         show_action = QAction("Show", self)
         show_action.triggered.connect(self.show_window)
+        spec_action = QAction(getattr(self.t, 'spec_dialog_title', "Recommended Settings"), self)
+        spec_action.triggered.connect(lambda: self.show_spec_recommend_dialog(force=True))
         tutorial_action = QAction(getattr(self.t, 'tutorial_title', "Tutorial"), self)
         tutorial_action.triggered.connect(lambda: self.show_tutorial_dialog(force=True))
         quit_action = QAction("Quit", self)
         quit_action.triggered.connect(self.quit_app)
         
         tray_menu.addAction(show_action)
+        tray_menu.addAction(spec_action)
         tray_menu.addAction(tutorial_action)
         tray_menu.addAction(quit_action)
         
@@ -381,6 +384,21 @@ class MainWindow(QMainWindow):
         else:
             self.notification_overlay.show_message(getattr(self.t, 'recording_stopped', "⏹ Recording stopped"), 3000)
 
+    def _run_initial_setup_flow(self) -> None:
+        self.show_spec_recommend_dialog()
+        if not getattr(self.config, 'TUTORIAL_COMPLETED', False):
+            from PyQt6.QtCore import QTimer
+            QTimer.singleShot(300, self.show_tutorial_dialog)
+
+    def show_spec_recommend_dialog(self, force: bool = False) -> None:
+        if force or not getattr(self.config, 'INITIAL_SETUP_COMPLETED', False):
+            from ui.spec_recommend_dialog import SpecRecommendDialog
+            dialog = SpecRecommendDialog(self.config, self.t, self)
+            if dialog.exec():
+                if hasattr(self, 'settings_tab') and hasattr(self.settings_tab, 'record_widget'):
+                    if hasattr(self.settings_tab.record_widget, 'refresh_from_config'):
+                        self.settings_tab.record_widget.refresh_from_config()
+
     def show_tutorial_dialog(self, force: bool = False) -> None:
         if force or not getattr(self.config, 'TUTORIAL_COMPLETED', False):
             from ui.tutorial_dialog import TutorialDialog
@@ -418,11 +436,13 @@ class MainWindow(QMainWindow):
             self.player_tab.on_shown()
         self.update_storage_gauge()
 
-        # 初回起動時に未完了であればチュートリアルを表示
+        # 初回起動時にスペック診断・オススメ設定、続いてチュートリアルを表示
         if not self._tutorial_checked:
             self._tutorial_checked = True
-            if not getattr(self.config, 'TUTORIAL_COMPLETED', False):
-                from PyQt6.QtCore import QTimer
+            from PyQt6.QtCore import QTimer
+            if not getattr(self.config, 'INITIAL_SETUP_COMPLETED', False):
+                QTimer.singleShot(300, self._run_initial_setup_flow)
+            elif not getattr(self.config, 'TUTORIAL_COMPLETED', False):
                 QTimer.singleShot(400, self.show_tutorial_dialog)
             
         # 保留されていたアップデートがあれば、UIの描画完了を待ってからダイアログを表示する

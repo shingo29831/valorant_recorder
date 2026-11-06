@@ -33,6 +33,7 @@ class Config:
         self.PLAYER_MIC_VOLUME = self._parse_volume(os.environ.get("PLAYER_MIC_VOLUME", "1.0"))
         self.AUTO_START = os.environ.get("AUTO_START", "False").lower() == "true"
         self.TUTORIAL_COMPLETED = os.environ.get("TUTORIAL_COMPLETED", "False").lower() == "true"
+        self.INITIAL_SETUP_COMPLETED = os.environ.get("INITIAL_SETUP_COMPLETED", "False").lower() == "true"
 
     def _parse_volume(self, val_str, default=1.0):
         try:
@@ -74,3 +75,4 @@ class Config:
         set_key(self.env_file, "PLAYER_MIC_VOLUME", str(self.PLAYER_MIC_VOLUME))
         set_key(self.env_file, "AUTO_START", str(self.AUTO_START))
         set_key(self.env_file, "TUTORIAL_COMPLETED", str(self.TUTORIAL_COMPLETED))
+        set_key(self.env_file, "INITIAL_SETUP_COMPLETED", str(self.INITIAL_SETUP_COMPLETED))
