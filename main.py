@@ -217,8 +217,14 @@ def main():
     # コマンドライン引数に --tray が指定されていない場合のみ初回起動時にUIを表示する
     if "--tray" not in sys.argv:
         window.show()
-        
-    sys.exit(app.exec())
+
+    ret = app.exec()
+    try:
+        server.close()
+    except Exception:
+        pass
+    # バックグラウンドプロセスのゾンビ残存を完全に防止しプロセスを終了
+    os._exit(ret)
 
 if __name__ == "__main__":
     main()

@@ -213,8 +213,15 @@ class GeneralSettingsWidget(QWidget):
             else:
                 from PyQt6.QtWidgets import QApplication
                 app = QApplication.instance()
+                found = False
                 if app:
-                    app.quit()
+                    for widget in app.topLevelWidgets():
+                        if hasattr(widget, 'quit_app'):
+                            widget.quit_app()
+                            found = True
+                            break
+                    if not found:
+                        app.quit()
 
     def _check_update(self):
         from core.updater import UpdateCheckerThread

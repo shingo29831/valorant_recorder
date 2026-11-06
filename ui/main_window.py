@@ -40,6 +40,7 @@ class MainWindow(QMainWindow):
         self._titlebar_color_applied = False
         self._pending_update = None
         self._tutorial_checked = False
+        self._is_quitting = False
         
         self.config = Config()
         self.t = get_trans(self.config.LANGUAGE)
@@ -378,10 +379,12 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(message)
 
     def closeEvent(self, event):
-        # ウィンドウの閉じるボタンが押された時は非表示にしてトレイに格納する
-        event.ignore()
-        self.hide()
-        # システム通知(トースト)は無効化
+        # アプリ終了処理中はクローズを許可し、通常時はトレイに格納
+        if getattr(self, '_is_quitting', False):
+            event.accept()
+        else:
+            event.ignore()
+            self.hide()
 
     def hideEvent(self, event):
         super().hideEvent(event)
@@ -415,8 +418,30 @@ class MainWindow(QMainWindow):
 
     def quit_app(self):
         # トレイメニューや設定画面から完全に終了する
-        self.watcher_thread.stop()
-        self.watcher_thread.wait()
+        if getattr(self, '_is_quitting', False):
+            return
+        self._is_quitting = True
+
+        # タスクバー通知領域のゾンビアイコン化を防止
+        if hasattr(self, 'tray_icon') and self.tray_icon:
+            self.tray_icon.hide()
+
+        # オーディオ設定モニター等のバックグラウンドスレッドを停止
+        if hasattr(self, 'settings_tab') and hasattr(self.settings_tab, 'record_widget'):
+            try:
+                self.settings_tab.record_widget.stop_monitors()
+            except Exception:
+                pass
+
+        # 録画およびログ監視スレッドの安全な停止
+        if hasattr(self, 'watcher_thread') and self.watcher_thread:
+            self.watcher_thread.stop()
+
+        self.close()
+
+        # 終了がブロックされた場合でもプロセスを残さない安全用フォールバック
+        threading.Timer(2.0, lambda: os._exit(0)).start()
+
         from PyQt6.QtWidgets import QApplication
         app = QApplication.instance()
         if app:
