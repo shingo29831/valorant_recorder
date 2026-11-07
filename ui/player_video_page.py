@@ -15,6 +15,7 @@ from ui.player_components import ClickableVideoWidget, PlayerContainer
 from ui.volume_widgets import VolumeWidget, MicVolumeWidget
 from ui.timeline_overlay import TimelineOverlay
 from ui.player_utils import find_video_for_json, guess_player_name
+from ui.player_list_actions import toggle_favorite_status, delete_single_record_files
 from ui.event_toggle_widget import EventToggleWidget
 from ui.clip_generator_thread import ClipGeneratorThread
 from PyQt6.QtWidgets import QGraphicsOpacityEffect
@@ -40,6 +41,18 @@ ZOOM_IN_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fi
 
 ZOOM_OUT_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white">
   <path d="M19 13H5v-2h14v2z"/>
+</svg>"""
+
+STAR_FILLED_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#FFD700">
+  <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+</svg>"""
+
+STAR_OUTLINE_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="transparent" stroke="white" stroke-width="2">
+  <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/>
+</svg>"""
+
+TRASH_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white">
+  <path d="M16 9v10H8V9h8m-1.5-6h-5l-1 1H5v2h14V4h-3.5l-1-1zM18 7H6v12c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7z"/>
 </svg>"""
 
 class PlayerVideoPage(QWidget):
@@ -156,13 +169,39 @@ class PlayerVideoPage(QWidget):
         self.edit_mode_btn.setIcon(self._create_icon(SCISSORS_SVG, 24))
         self.edit_mode_btn.setIconSize(QSize(24, 24))
         self.edit_mode_btn.setToolTip(self.t.create_clip)
+
+        self.fav_btn = QPushButton()
+        self.fav_btn.setFixedSize(40, 40)
+        self.fav_btn.setStyleSheet("""
+            QPushButton { border-radius: 20px; background-color: #333333; }
+            QPushButton:hover { background-color: #444444; }
+        """)
+        self.fav_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.fav_btn.setIcon(self._create_icon(STAR_OUTLINE_SVG, 22))
+        self.fav_btn.setIconSize(QSize(22, 22))
+        self.fav_btn.setToolTip(getattr(self.t, 'filter_favorite', "お気に入り"))
+        self.fav_btn.clicked.connect(self.toggle_favorite)
+
+        self.delete_btn = QPushButton()
+        self.delete_btn.setFixedSize(40, 40)
+        self.delete_btn.setStyleSheet("""
+            QPushButton { border-radius: 20px; background-color: #333333; }
+            QPushButton:hover { background-color: #FF4655; }
+        """)
+        self.delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.delete_btn.setIcon(self._create_icon(TRASH_SVG, 22))
+        self.delete_btn.setIconSize(QSize(22, 22))
+        self.delete_btn.setToolTip(getattr(self.t, 'confirm_deletion_title', "削除"))
+        self.delete_btn.clicked.connect(self.delete_recording)
         
         self.event_toggle_widget = EventToggleWidget()
         self.event_toggle_widget.filterChanged.connect(self.timeline_overlay.set_filters)
         
         right_layout.addWidget(self.edit_mode_btn, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
-        right_layout.addWidget(self.event_toggle_widget, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        right_layout.addWidget(self.fav_btn, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        right_layout.addWidget(self.delete_btn, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
         right_layout.addStretch()
+        right_layout.addWidget(self.event_toggle_widget, alignment=Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter)
         
         top_layout.addWidget(left_container)
         top_layout.addWidget(self.player_container, stretch=1)
@@ -230,6 +269,38 @@ class PlayerVideoPage(QWidget):
         current_zoom = self.timeline_overlay.zoom_factor
         self.timeline_overlay.set_zoom(current_zoom / 1.5, center_ms=self.player_core.position())
 
+    def _update_favorite_icon(self, is_favorite: bool):
+        svg = STAR_FILLED_SVG if is_favorite else STAR_OUTLINE_SVG
+        self.fav_btn.setIcon(self._create_icon(svg, 22))
+
+    def toggle_favorite(self):
+        if not getattr(self, 'current_json_filename', None) or not self.current_match_data:
+            return
+        toggle_favorite_status(self.config.SAVE_DIR, self.current_json_filename)
+        is_fav = not self.current_match_data.get("is_favorite", False)
+        self.current_match_data["is_favorite"] = is_fav
+        self._update_favorite_icon(is_fav)
+
+    def delete_recording(self):
+        if not getattr(self, 'current_json_filename', None):
+            return
+        title = getattr(self.t, 'confirm_deletion_title', '削除の確認')
+        msg = getattr(self.t, 'confirm_deletion_msg', 'この録画を削除してもよろしいですか？')
+        reply = QMessageBox.question(
+            self,
+            title,
+            msg,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if reply == QMessageBox.StandardButton.Yes:
+            json_filename = self.current_json_filename
+            self.player_core.load_source(None)
+            delete_single_record_files(self.config.SAVE_DIR, json_filename)
+            self.current_json_filename = None
+            self.current_match_data = None
+            self.backRequested.emit()
+
     def request_back(self):
         self.player_core.load_source(None)
         self.backRequested.emit()
@@ -249,6 +320,7 @@ class PlayerVideoPage(QWidget):
         try:
             with open(json_path, 'r', encoding='utf-8') as f:
                 self.current_match_data = json.load(f)
+            self._update_favorite_icon(bool(self.current_match_data.get("is_favorite", False)))
             self.clip_controller.set_current_recording(json_filename, self.current_match_data)
             video_path = find_video_for_json(self.config.SAVE_DIR, json_filename, self.current_match_data)
             
