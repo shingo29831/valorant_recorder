@@ -26,10 +26,7 @@ ffmpeg.exe
 # Logs and extracted diagnostic data
 *.log
 ffmpeg_error.log
-filtered_log*.txt
-filtered_match_logs*.txt
-potential_logs*.txt
-useless_logs*.txt
+extracted_logs/
 
 # Match data and recordings
 records/*

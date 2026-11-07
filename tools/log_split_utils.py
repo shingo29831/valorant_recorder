@@ -3,6 +3,8 @@ import glob
 import os
 from typing import Iterable, List
 
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DEFAULT_OUTPUT_DIR = os.path.join(PROJECT_ROOT, "extracted_logs")
 DEFAULT_MAX_LINES_PER_PART = 250
 DEFAULT_MAX_CHARS_PER_PART = 12000
 
@@ -98,8 +100,13 @@ def save_split_log_files(
     lines: Iterable[str],
     max_lines_per_part: int = DEFAULT_MAX_LINES_PER_PART,
     max_chars_per_part: int = DEFAULT_MAX_CHARS_PER_PART,
+    output_dir: str = DEFAULT_OUTPUT_DIR,
 ) -> List[str]:
     """ログ行リストを単一ファイルおよびチャット貼り付け用の分割パートファイル群へ保存する"""
+    if not os.path.dirname(base_filepath):
+        base_filepath = os.path.join(output_dir, base_filepath)
+    os.makedirs(os.path.dirname(os.path.abspath(base_filepath)), exist_ok=True)
+
     normalized_lines = [line if line.endswith("\n") else f"{line}\n" for line in lines]
     stem, ext = os.path.splitext(base_filepath)
     if not ext:
