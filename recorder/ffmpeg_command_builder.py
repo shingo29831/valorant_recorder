@@ -32,6 +32,55 @@ def parse_target_resolution(config: Config) -> tuple[int, int]:
     return 1920, 1080
 
 
+_THREAD_QUEUE_SIZE_SUPPORT_CACHE: dict[str, tuple[bool, bool]] = {}
+
+
+def get_thread_queue_size_support(ffmpeg_path: str) -> tuple[bool, bool]:
+    """FFmpegのバージョン差異によるthread_queue_sizeの入出力オプション仕様を動的判定"""
+    if not ffmpeg_path or not os.path.exists(ffmpeg_path):
+        return False, False
+    if ffmpeg_path in _THREAD_QUEUE_SIZE_SUPPORT_CACHE:
+        return _THREAD_QUEUE_SIZE_SUPPORT_CACHE[ffmpeg_path]
+
+    creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    # 旧仕様(demuxer入力)の受け付け可否を検査
+    supports_input = False
+    try:
+        res_in = subprocess.run(
+            [ffmpeg_path, "-v", "error", "-thread_queue_size", "16", "-f", "lavfi", "-i", "anullsrc", "-frames:a", "1", "-f", "null", "-"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            creationflags=creationflags,
+            timeout=3.0,
+        )
+        err_in = res_in.stderr.decode("utf-8", errors="replace").lower() if res_in.stderr else ""
+        if res_in.returncode == 0 and "cannot be applied to input" not in err_in and "unrecognized option" not in err_in:
+            supports_input = True
+    except Exception:
+        supports_input = False
+
+    # 新仕様(muxer出力)の受け付け可否を検査
+    supports_output = False
+    try:
+        res_out = subprocess.run(
+            [ffmpeg_path, "-v", "error", "-f", "lavfi", "-i", "anullsrc", "-frames:a", "1", "-thread_queue_size", "16", "-f", "null", "-"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            creationflags=creationflags,
+            timeout=3.0,
+        )
+        err_out = res_out.stderr.decode("utf-8", errors="replace").lower() if res_out.stderr else ""
+        if res_out.returncode == 0 and "cannot be applied to output" not in err_out and "unrecognized option" not in err_out:
+            supports_output = True
+    except Exception:
+        supports_output = False
+
+    _THREAD_QUEUE_SIZE_SUPPORT_CACHE[ffmpeg_path] = (supports_input, supports_output)
+    return supports_input, supports_output
+
+
 def resolve_rnnoise_filter(app_data_dir: str) -> str:
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     candidates = [
@@ -229,8 +278,14 @@ def build_ffmpeg_command(
     )
     filter_complex = video_filter + audio_filter
 
-    cmd.extend([
-        "-thread_queue_size", "4096" if is_lightweight else "8192",
+    supports_input_tqs, supports_output_tqs = get_thread_queue_size_support(ffmpeg_path)
+    tqs_val = "4096" if is_lightweight else "8192"
+    gdi_tqs_val = "1024" if is_lightweight else "4096"
+
+    pipe_opts = []
+    if supports_input_tqs:
+        pipe_opts.extend(["-thread_queue_size", tqs_val])
+    pipe_opts.extend([
         "-probesize", "32",
         "-analyzeduration", "0",
         "-f", "f32le",
@@ -239,16 +294,22 @@ def build_ffmpeg_command(
         "-channel_layout", "quad",
         "-i", "pipe:0",
     ])
+    cmd.extend(pipe_opts)
+
     if use_gdigrab:
         gdi_src = input_source if not input_source.isdigit() and not input_source.startswith("output_idx=") else "desktop"
-        cmd.extend([
-            "-thread_queue_size", "1024" if is_lightweight else "4096",
+        gdi_opts = []
+        if supports_input_tqs:
+            gdi_opts.extend(["-thread_queue_size", gdi_tqs_val])
+        gdi_opts.extend([
             "-use_wallclock_as_timestamps", "1",
             "-f", "gdigrab",
             "-framerate", fps,
             "-draw_mouse", "1",
             "-i", gdi_src,
         ])
+        cmd.extend(gdi_opts)
+
     cmd.extend([
         "-filter_complex", filter_complex,
         "-map", "[v_out]",
@@ -263,6 +324,10 @@ def build_ffmpeg_command(
         "-fps_mode", "cfr",
         "-max_interleave_delta", "10000000",
         "-max_muxing_queue_size", "32768" if is_lightweight else "65536",
+    ])
+    if supports_output_tqs:
+        cmd.extend(["-thread_queue_size", tqs_val])
+    cmd.extend([
         "-c:a", "aac",
         "-b:a", "96k" if is_lightweight else "192k",
         "-ar", "48000",
