@@ -204,6 +204,10 @@ class Translations:
     spec_apply_btn: str = "Apply Recommended Settings"
     spec_skip_btn: str = "Keep Current Settings"
     run_spec_diag: str = "Diagnose Recommended Settings"
+    close_confirm_title: str = "Confirm Exit"
+    close_confirm_msg: str = "Do you want to completely exit the application, including background monitoring?\n\n* If you exit completely, VALORANT matches will not be recorded automatically.\n* Select 'Keep in Background' to minimize to the system tray and keep recording active."
+    close_btn_quit: str = "Exit Completely"
+    close_btn_minimize: str = "Keep in Background"
 
 EN = Translations(**EN_DICT)
 JA = Translations(**JA_DICT)

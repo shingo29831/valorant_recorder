@@ -200,4 +200,8 @@ JA_DICT: dict[str, str] = dict(
     spec_apply_btn="オススメ設定を適用して開始",
     spec_skip_btn="現在の設定を維持する",
     run_spec_diag="PCスペックに合わせてオススメ設定を診断",
+    close_confirm_title="アプリの終了確認",
+    close_confirm_msg="バックグラウンド監視を含めてアプリを完全に終了しますか？\n\n※完全に終了するとVALORANTの自動録画は行われません。\n「バックグラウンドで継続」を選ぶとタスクトレイに最小化され、自動録画を継続します。",
+    close_btn_quit="完全に終了 (自動録画停止)",
+    close_btn_minimize="バックグラウンドで継続",
 )

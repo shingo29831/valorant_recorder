@@ -200,4 +200,8 @@ EN_DICT: dict[str, str] = dict(
     spec_apply_btn="Apply Recommended Settings",
     spec_skip_btn="Keep Current Settings",
     run_spec_diag="Diagnose Recommended Settings by Specs",
+    close_confirm_title="Confirm Exit",
+    close_confirm_msg="Do you want to completely exit the application, including background monitoring?\n\n* If you exit completely, VALORANT matches will not be recorded automatically.\n* Select 'Keep in Background' to minimize to the system tray and keep auto-recording active.",
+    close_btn_quit="Exit Completely",
+    close_btn_minimize="Keep in Background",
 )

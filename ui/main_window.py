@@ -457,12 +457,34 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(message)
 
     def closeEvent(self, event):
-        # アプリ終了処理中はクローズを許可し、通常時はトレイに格納
+        # アプリ終了処理中はクローズを許可
         if getattr(self, '_is_quitting', False):
             event.accept()
-        else:
+            return
+
+        msg_box = QMessageBox(self)
+        msg_box.setIcon(QMessageBox.Icon.Question)
+        msg_box.setWindowTitle(getattr(self.t, 'close_confirm_title', "Confirm Exit"))
+        msg_box.setText(getattr(self.t, 'close_confirm_msg', "Do you want to completely exit the application, including background monitoring?\n\n* If you exit, automatic recording will not work.\n* Choose 'Keep in Background' to minimize to the tray and keep recording active."))
+
+        quit_btn = msg_box.addButton(getattr(self.t, 'close_btn_quit', "Exit Completely"), QMessageBox.ButtonRole.DestructiveRole)
+        minimize_btn = msg_box.addButton(getattr(self.t, 'close_btn_minimize', "Keep in Background"), QMessageBox.ButtonRole.AcceptRole)
+        cancel_btn = msg_box.addButton(getattr(self.t, 'cancel', "Cancel"), QMessageBox.ButtonRole.RejectRole)
+
+        msg_box.setDefaultButton(minimize_btn)
+        msg_box.setEscapeButton(cancel_btn)
+
+        msg_box.exec()
+        clicked = msg_box.clickedButton()
+
+        if clicked == quit_btn:
+            event.accept()
+            self.quit_app()
+        elif clicked == minimize_btn:
             event.ignore()
             self.hide()
+        else:
+            event.ignore()
 
     def hideEvent(self, event):
         super().hideEvent(event)
