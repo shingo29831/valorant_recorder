@@ -3,6 +3,48 @@ import re
 from datetime import datetime
 from ui.player_utils import guess_player_name
 
+def is_headshot_kill(kill: dict, match_info: dict) -> bool:
+    """キルがヘッドショットによるものかを判定する"""
+    if kill.get("headshot") is True or kill.get("is_headshot") is True:
+        return True
+
+    for de in kill.get("damage_events") or []:
+        if isinstance(de, dict) and de.get("headshots", 0) > 0:
+            return True
+
+    killer_puuid = kill.get("killer_puuid")
+    victim_puuid = kill.get("victim_puuid")
+    killer_name = kill.get("killer_display_name")
+    victim_name = kill.get("victim_display_name")
+
+    rounds = match_info.get("rounds") or []
+    k_round = kill.get("round")
+
+    target_rounds = []
+    if isinstance(k_round, int) and 0 <= k_round < len(rounds):
+        target_rounds.append(rounds[k_round])
+    else:
+        for r in rounds:
+            if r.get("round_num") == k_round or r.get("round") == k_round:
+                target_rounds.append(r)
+                break
+        if not target_rounds:
+            target_rounds = rounds
+
+    for r in target_rounds:
+        player_stats = r.get("player_stats") or []
+        for ps in player_stats:
+            p_puuid = ps.get("player_puuid") or ps.get("puuid")
+            p_name = ps.get("player_display_name") or ps.get("display_name")
+            if (killer_puuid and p_puuid == killer_puuid) or (killer_name and p_name == killer_name):
+                for de in ps.get("damage_events") or []:
+                    rec_puuid = de.get("receiver_puuid") or de.get("puuid")
+                    rec_name = de.get("receiver_display_name") or de.get("display_name")
+                    if (victim_puuid and rec_puuid == victim_puuid) or (victim_name and rec_name == victim_name):
+                        if de.get("headshots", 0) > 0:
+                            return True
+    return False
+
 def build_timeline_data(match_info: dict, duration_ms: int, riot_id: str, tag_line: str) -> tuple[list, list]:
     # 1. 録画開始のUNIXタイムスタンプ(ms)を取得
     recording_start_ms = match_info.get("local_recording_start_time_ms")
@@ -121,7 +163,8 @@ def build_timeline_data(match_info: dict, duration_ms: int, riot_id: str, tag_li
                     assistant_puuids.append(ast)
 
             if killer_puuid == target_puuid:
-                events.append({"time": time_in_video, "type": "kill"})
+                is_hs = is_headshot_kill(kill, match_info)
+                events.append({"time": time_in_video, "type": "kill", "headshot": is_hs})
             elif victim_puuid == target_puuid:
                 events.append({"time": time_in_video, "type": "death"})
             elif target_puuid in assistant_puuids:
@@ -139,13 +182,15 @@ def build_timeline_data(match_info: dict, duration_ms: int, riot_id: str, tag_li
                     assistant_names.append(ast)
                     
             if target_display_name and target_display_name in killer:
-                events.append({"time": time_in_video, "type": "kill"})
+                is_hs = is_headshot_kill(kill, match_info)
+                events.append({"time": time_in_video, "type": "kill", "headshot": is_hs})
             elif target_display_name and target_display_name in victim:
                 events.append({"time": time_in_video, "type": "death"})
             elif target_display_name and any(target_display_name in ast for ast in assistant_names):
                 events.append({"time": time_in_video, "type": "assist"})
             elif not target_display_name:
-                events.append({"time": time_in_video, "type": "kill"})
+                is_hs = is_headshot_kill(kill, match_info)
+                events.append({"time": time_in_video, "type": "kill", "headshot": is_hs})
 
     for ev in local_ability_events:
         t_local = ev["time_ms"]

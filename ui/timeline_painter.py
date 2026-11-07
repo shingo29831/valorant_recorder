@@ -14,6 +14,22 @@ KILL_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
   </g>
 </svg>"""
 
+HEADSHOT_KILL_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+  <g stroke="#000000" stroke-width="0.5">
+    <g fill="#00A2FF">
+      <g transform="translate(12,12) rotate(45) translate(-12,-12)">
+        <path d="M10.5,17 H13.5 V21 H10.5 Z M7,15 H17 V17 H7 Z M10.5,5 L12,2 L13.5,5 V15 H10.5 Z" />
+      </g>
+      <g transform="translate(12,12) rotate(-45) translate(-12,-12)">
+        <path d="M10.5,17 H13.5 V21 H10.5 Z M7,15 H17 V17 H7 Z M10.5,5 L12,2 L13.5,5 V15 H10.5 Z" />
+      </g>
+    </g>
+    <circle cx="12" cy="12" r="6" fill="#111111" fill-opacity="0.75" stroke="#FF4655" stroke-width="1.8" />
+    <circle cx="12" cy="12" r="1.8" fill="#FF4655" />
+    <path d="M12,3.5 L12,6.5 M12,17.5 L12,20.5 M3.5,12 L6.5,12 M17.5,12 L20.5,12" stroke="#FF4655" stroke-width="1.8" stroke-linecap="round" />
+  </g>
+</svg>"""
+
 DEATH_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
   <g fill="#FF0000" stroke="#000000" stroke-width="0.5">
     <path d="M12,2 C6.5,2 3,6 3,11 c0,3.5 2,6 4,7 h10 c2,-1 4,-3.5 4,-7 C21,6 17.5,2 12,2 z M8,13 c-1.5,0 -2.5,-1.5 -2.5,-3 c0,-1.5 1,-3 2.5,-3 s2.5,1.5 2.5,3 C10.5,11.5 9.5,13 8,13 z M16,13 c-1.5,0 -2.5,-1.5 -2.5,-3 c0,-1.5 1,-3 2.5,-3 s2.5,1.5 2.5,3 C18.5,11.5 17.5,13 16,13 z M12,15.5 l-1.5,-2 h3 L12,15.5 z" />
@@ -103,7 +119,10 @@ def paint_timeline(widget: QWidget, painter: QPainter) -> None:
             painter.drawRect(int(end_x) - 2, 0, 4, height)
 
     for ev in widget.events:
-        if not widget.filters.get(ev["type"], True):
+        if hasattr(widget, 'is_event_visible'):
+            if not widget.is_event_visible(ev):
+                continue
+        elif not widget.filters.get(ev["type"], True):
             continue
 
         x = widget.ms_to_x(ev["time"])
@@ -111,8 +130,12 @@ def paint_timeline(widget: QWidget, painter: QPainter) -> None:
             continue
 
         if ev["type"] == "kill":
-            color = QColor("#00A2FF")
-            renderer = widget.kill_renderer
+            if ev.get("headshot", False):
+                color = QColor("#FF4655")
+                renderer = getattr(widget, 'headshot_renderer', widget.kill_renderer)
+            else:
+                color = QColor("#00A2FF")
+                renderer = widget.kill_renderer
         elif ev["type"] == "death":
             color = QColor("#FF0000")
             renderer = widget.death_renderer

@@ -4,7 +4,7 @@ from PyQt6.QtWidgets import QWidget, QSizePolicy
 from PyQt6.QtCore import Qt, pyqtSignal, QByteArray
 from PyQt6.QtGui import QPainter
 from PyQt6.QtSvg import QSvgRenderer
-from ui.timeline_painter import ASSIST_SVG, DEATH_SVG, KILL_SVG, paint_timeline
+from ui.timeline_painter import ASSIST_SVG, DEATH_SVG, HEADSHOT_KILL_SVG, KILL_SVG, paint_timeline
 
 class TimelineOverlay(QWidget):
     seekStarted = pyqtSignal()
@@ -26,9 +26,10 @@ class TimelineOverlay(QWidget):
         self.setMouseTracking(True)
         self.hover_x = -1
         self.is_dragging = False
-        self.filters = {"kill": True, "death": True, "assist": True}
+        self.filters = {"kill": True, "headshot": True, "death": True, "assist": True}
         
         self.kill_renderer = QSvgRenderer(QByteArray(KILL_SVG))
+        self.headshot_renderer = QSvgRenderer(QByteArray(HEADSHOT_KILL_SVG))
         self.death_renderer = QSvgRenderer(QByteArray(DEATH_SVG))
         self.assist_renderer = QSvgRenderer(QByteArray(ASSIST_SVG))
         
@@ -101,6 +102,13 @@ class TimelineOverlay(QWidget):
         self.clip_end = end
         self.update()
 
+    def is_event_visible(self, ev: dict) -> bool:
+        if ev.get("type") == "kill":
+            if ev.get("headshot", False):
+                return bool(self.filters.get("headshot", True))
+            return bool(self.filters.get("kill", True))
+        return bool(self.filters.get(ev.get("type", ""), True))
+
     def set_filters(self, filters):
         self.filters = filters
         self.update()
@@ -117,7 +125,13 @@ class TimelineOverlay(QWidget):
     def set_data(self, rounds, events):
         self.rounds = rounds
         priority = {'assist': 0, 'death': 1, 'kill': 2}
-        self.events = sorted(events, key=lambda e: (priority.get(e['type'], -1), e['time']))
+        self.events = sorted(
+            events,
+            key=lambda e: (
+                priority.get(e.get('type'), -1) + (0.5 if e.get('type') == 'kill' and e.get('headshot') else 0),
+                e.get('time', 0)
+            )
+        )
         self.update()
 
     def leaveEvent(self, event):
@@ -172,7 +186,7 @@ class TimelineOverlay(QWidget):
                 is_hovering_icon = False
                 if self.duration > 0:
                     for ev in self.events:
-                        if not self.filters.get(ev['type'], True):
+                        if not self.is_event_visible(ev):
                             continue
                         ev_x = self.ms_to_x(ev['time'])
                         if (ev_x - 12) <= self.hover_x <= (ev_x + 12) and (round_y - 34) <= y <= (round_y - 10):
@@ -202,7 +216,7 @@ class TimelineOverlay(QWidget):
         
         clicked_event_time = None
         for ev in reversed(self.events):
-            if not self.filters.get(ev['type'], True):
+            if not self.is_event_visible(ev):
                 continue
             ev_x = self.ms_to_x(ev['time'])
             if (ev_x - 12) <= x <= (ev_x + 12) and (round_y - 34) <= y <= (round_y - 10):

@@ -2,7 +2,7 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout, QLabel
 from PyQt6.QtCore import Qt, pyqtSignal, QByteArray
 from PyQt6.QtGui import QPixmap, QPainter
 from PyQt6.QtSvg import QSvgRenderer
-from ui.timeline_overlay import KILL_SVG, DEATH_SVG, ASSIST_SVG
+from ui.timeline_painter import ASSIST_SVG, DEATH_SVG, HEADSHOT_KILL_SVG, KILL_SVG
 
 class EventToggleIcon(QLabel):
     toggled = pyqtSignal(str, bool)
@@ -47,17 +47,20 @@ class EventToggleWidget(QWidget):
         layout.setSpacing(15)
         layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self.filters = {"kill": True, "death": True, "assist": True}
+        self.filters = {"kill": True, "headshot": True, "death": True, "assist": True}
 
         self.kill_icon = EventToggleIcon("kill", KILL_SVG)
+        self.headshot_icon = EventToggleIcon("headshot", HEADSHOT_KILL_SVG)
         self.death_icon = EventToggleIcon("death", DEATH_SVG)
         self.assist_icon = EventToggleIcon("assist", ASSIST_SVG)
 
         self.kill_icon.toggled.connect(self.on_toggled)
+        self.headshot_icon.toggled.connect(self.on_toggled)
         self.death_icon.toggled.connect(self.on_toggled)
         self.assist_icon.toggled.connect(self.on_toggled)
 
         layout.addWidget(self.kill_icon)
+        layout.addWidget(self.headshot_icon)
         layout.addWidget(self.death_icon)
         layout.addWidget(self.assist_icon)
 
