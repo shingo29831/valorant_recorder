@@ -21,7 +21,7 @@ class TimelineOverlay(QWidget):
         self.position = 0
         self.zoom_factor = 1.0
         self.view_start_ms = 0
-        self.setFixedHeight(55)
+        self.setFixedHeight(68)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setMouseTracking(True)
         self.hover_x = -1

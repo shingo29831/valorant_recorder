@@ -139,10 +139,24 @@ def paint_timeline(widget: QWidget, painter: QPainter) -> None:
 
     if 0 <= widget.hover_x <= width:
         hover_ms = widget.x_to_ms(widget.hover_x)
-        s = int(hover_ms // 1000)
-        m = s // 60
-        s = s % 60
-        time_str = f"{m:02d}:{s:02d}"
+        s = max(0, int(hover_ms // 1000))
+        h = s // 3600
+        m = (s % 3600) // 60
+        sec = s % 60
+        time_str = f"{h:02d}:{m:02d}:{sec:02d}" if h > 0 else f"{m:02d}:{sec:02d}"
+
+        fm = painter.fontMetrics()
+        text_w = fm.horizontalAdvance(time_str)
+        text_h = fm.height()
+        bubble_w = text_w + 12
+        bubble_h = text_h + 4
+        bubble_x = max(2.0, min(float(width - bubble_w - 2), widget.hover_x - (bubble_w / 2)))
+        bubble_y = max(2.0, float(round_y - 34 - bubble_h - 2))
+
+        bubble_rect = QRectF(bubble_x, bubble_y, bubble_w, bubble_h)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(0, 0, 0, 180))
+        painter.drawRoundedRect(bubble_rect, 4.0, 4.0)
 
         painter.setPen(QColor("#FFFFFF"))
-        painter.drawText(int(widget.hover_x) - 15, round_y - 38, time_str)
+        painter.drawText(bubble_rect, Qt.AlignmentFlag.AlignCenter, time_str)
