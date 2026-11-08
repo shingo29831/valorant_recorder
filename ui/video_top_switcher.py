@@ -14,7 +14,6 @@ from ui.record_data_loader import RecordDataLoader
 
 class SwitcherState(Enum):
     HIDDEN = auto()
-    PEEK = auto()
     EXPANDED = auto()
 
 
@@ -133,8 +132,7 @@ class VideoTopSwitcher(QWidget):
     recordSelected = pyqtSignal(str)
 
     BAR_HEIGHT = 145
-    PEEK_HEIGHT = 46
-    TRIGGER_ZONE_Y = 100
+    TRIGGER_ZONE_Y = 65
 
     def __init__(self, config: Config, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -180,7 +178,7 @@ class VideoTopSwitcher(QWidget):
         self.cards_layout.addWidget(self.empty_label)
         self.cards_layout.addStretch()
 
-        self.handle_bar = QLabel("▲ ほかの録画 (クリックで切替) ▲")
+        self.handle_bar = QLabel("▼ ほかの録画 (クリックで切替) ▼")
         self.handle_bar.setFixedHeight(24)
         self.handle_bar.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.handle_bar.setStyleSheet("""
@@ -246,8 +244,6 @@ class VideoTopSwitcher(QWidget):
     def _get_target_offset(self, state: SwitcherState) -> int:
         if state == SwitcherState.HIDDEN:
             return 0
-        elif state == SwitcherState.PEEK:
-            return self.PEEK_HEIGHT
         return self.BAR_HEIGHT
 
     def set_state(self, new_state: SwitcherState, immediate: bool = False) -> None:
@@ -278,16 +274,9 @@ class VideoTopSwitcher(QWidget):
         if self.state == SwitcherState.HIDDEN:
             if 0 <= y <= self.TRIGGER_ZONE_Y:
                 self.hide_timer.stop()
-                self.set_state(SwitcherState.PEEK)
-        elif self.state == SwitcherState.PEEK:
-            # 覗き見領域にマウスが触れたら全展開
-            if 0 <= y <= self.PEEK_HEIGHT + 25:
-                self.hide_timer.stop()
                 self.set_state(SwitcherState.EXPANDED)
-            elif y > self.TRIGGER_ZONE_Y + 30:
-                self._start_hide_timer()
         elif self.state == SwitcherState.EXPANDED:
-            if y > self.BAR_HEIGHT + 25 or y < 0:
+            if y > self.BAR_HEIGHT + 20 or y < 0:
                 self._start_hide_timer()
             else:
                 self.hide_timer.stop()
@@ -340,13 +329,13 @@ class VideoTopSwitcher(QWidget):
             empty = QLabel("他の録画がありません")
             empty.setStyleSheet("color: #888888; font-size: 12px; background: transparent;")
             self.cards_layout.addWidget(empty)
-            self.handle_bar.setText("▲ ほかの録画はありません ▲")
+            self.handle_bar.setText("▼ ほかの録画はありません ▼")
         else:
             for rec in self._all_records[:30]:
                 card = SwitcherItemCard(rec, self.cards_container)
                 card.clicked.connect(self._on_card_clicked)
                 self.cards_layout.addWidget(card)
-            self.handle_bar.setText(f"▲ ほかの録画 ({len(self._all_records)}件) ▲")
+            self.handle_bar.setText(f"▼ ほかの録画 ({len(self._all_records)}件) ▼")
 
         self.cards_layout.addStretch()
 
