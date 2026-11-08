@@ -10,7 +10,6 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from api.henrik_api import HenrikAPI
-from core.config import Config
 from scripts.get_local_api_info import get_client_region, get_current_player
 from tools.log_split_utils import get_valorant_log_path, save_split_log_files
 from watcher.log_parser import (
@@ -99,11 +98,10 @@ def extract_matches_from_log(log_path: str) -> List[Dict[str, Any]]:
 def fetch_api_latest_match(
     name: Optional[str] = None, tag: Optional[str] = None, region: Optional[str] = None
 ) -> Optional[Dict[str, Any]]:
-    """HenrikAPIから最新マッチ情報を取得する（未指定時はローカルAPI/Configより補完）"""
-    config = Config()
-    final_name = name or config.riot_id
-    final_tag = tag or config.tag_line
-    final_region = region or config.region
+    """HenrikAPIから最新マッチ情報を取得する（未指定時はローカルクライアントから自動取得）"""
+    final_name = name
+    final_tag = tag
+    final_region = region
 
     if not final_name or not final_tag:
         local_name, local_tag = get_current_player()
@@ -114,7 +112,11 @@ def fetch_api_latest_match(
         final_region = get_client_region() or "ap"
 
     if not final_name or not final_tag:
-        return None
+        return {
+            "player": "Unknown",
+            "region": final_region,
+            "error": "Could not auto-detect Riot ID / Tag. Please ensure Riot Client is running or specify --name and --tag.",
+        }
 
     try:
         api = HenrikAPI(region=final_region, name=final_name, tag=final_tag)
