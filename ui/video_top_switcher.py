@@ -279,7 +279,9 @@ class VideoTopSwitcher(QWidget):
                 self.hide_timer.stop()
                 self.set_state(SwitcherState.EXPANDED)
         elif self.state == SwitcherState.EXPANDED:
-            if y > self.BAR_HEIGHT + 20 or y < 0:
+            # 展開後は画面下半分地点に達するまで戻さない
+            dismiss_threshold_y = parent.height() / 2
+            if y >= dismiss_threshold_y or y < 0:
                 self._start_hide_timer()
             else:
                 self.hide_timer.stop()
@@ -295,6 +297,13 @@ class VideoTopSwitcher(QWidget):
 
     def leaveEvent(self, event) -> None:
         super().leaveEvent(event)
+        parent = self.parentWidget()
+        if parent:
+            parent_pos = parent.mapFromGlobal(QCursor.pos())
+            dismiss_threshold_y = parent.height() / 2
+            # 画面上半分にいる間はスイッチャーを戻さない
+            if parent.rect().contains(parent_pos) and 0 <= parent_pos.y() < dismiss_threshold_y:
+                return
         self._start_hide_timer()
 
     def _start_hide_timer(self) -> None:
@@ -305,7 +314,10 @@ class VideoTopSwitcher(QWidget):
         parent = self.parentWidget()
         if parent:
             parent_pos = parent.mapFromGlobal(QCursor.pos())
-            if self.geometry().contains(parent_pos):
+            dismiss_threshold_y = parent.height() / 2
+            if self.geometry().contains(parent_pos) or (
+                parent.rect().contains(parent_pos) and 0 <= parent_pos.y() < dismiss_threshold_y
+            ):
                 return
         self.set_state(SwitcherState.HIDDEN)
 
