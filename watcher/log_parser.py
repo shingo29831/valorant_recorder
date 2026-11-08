@@ -6,8 +6,69 @@ from typing import Optional, Tuple
 
 TIME_PATTERN = re.compile(r"^\[(\d{4})\.(\d{2})\.(\d{2})-(\d{2})\.(\d{2})\.(\d{2}):(\d{3})\]")
 MAP_NAME_PATTERN = re.compile(r"\[Map Name:\s*([^\]|]+)", re.IGNORECASE)
+MAP_UPDATE_PATTERN = re.compile(r"\[Map:\s*([^\]|]+)", re.IGNORECASE)
 WORLD_MAP_PATTERN = re.compile(r"/Game/Maps/(?:[A-Za-z0-9_]+/)*([A-Za-z0-9_]+)", re.IGNORECASE)
 RANGE_KEYWORD_PATTERN = re.compile(r"(?:Range|ShootingRange|Pingo|BasicTraining)", re.IGNORECASE)
+GAME_MODE_URL_PATTERN = re.compile(
+    r"[?&]game=(?:/Game/GameModes/)?([A-Za-z0-9_]+)(?:\.[A-Za-z0-9_]+)?",
+    re.IGNORECASE,
+)
+QUEUE_ID_PATTERN = re.compile(
+    r"(?:queueId|queue_id|\"queueId\")[\"'\s:=]+([A-Za-z0-9_-]+)",
+    re.IGNORECASE,
+)
+
+MAP_CODENAME_MAP: dict[str, str] = {
+    "ascent": "Ascent",
+    "bonsai": "Split",
+    "duality": "Bind",
+    "foxtrot": "Breeze",
+    "canyon": "Fracture",
+    "triad": "Haven",
+    "port": "Icebox",
+    "pitt": "Pearl",
+    "jam": "Lotus",
+    "juliett": "Sunset",
+    "infinity": "Abyss",
+    "pingo": "Range",
+    "range": "Range",
+    "basic_training": "Range",
+    "kasbah": "Kasbah",
+    "district": "District",
+    "piazza": "Piazza",
+    "drift": "Drift",
+    "glitch": "Glitch",
+}
+
+QUEUE_NAME_MAP: dict[str, str] = {
+    "competitive": "Competitive",
+    "unrated": "Unrated",
+    "spikerush": "Spike Rush",
+    "quickbomb": "Spike Rush",
+    "swiftplay": "Swiftplay",
+    "deathmatch": "Deathmatch",
+    "ggteam": "Escalation",
+    "onefa": "Replication",
+    "snowball": "Snowball Fight",
+    "hurm": "Team Deathmatch",
+    "newmap": "New Map",
+    "custom": "Custom Game",
+}
+
+MODE_CLASS_MAP: dict[str, str] = {
+    "bombgamemode": "Standard",
+    "bomb": "Standard",
+    "quickbombgamemode": "Spike Rush",
+    "quickbomb": "Spike Rush",
+    "deathmatchgamemode": "Deathmatch",
+    "deathmatch": "Deathmatch",
+    "gungame_gamemode": "Escalation",
+    "oneforall_gamemode": "Replication",
+    "snowballfight_gamemode": "Snowball Fight",
+    "hurm_gamemode": "Team Deathmatch",
+    "hurmgamemode": "Team Deathmatch",
+    "shootingrangegamemode": "The Range",
+}
 
 STATE_TRANSITION_PATTERN = re.compile(
     r"(?:Match State Changed from|Transitioning from|State changed from|State:)\s*(\w+)\s*(?:to|->)\s*(\w+)",
@@ -141,6 +202,11 @@ def parse_map_update_from_line(
     raw_map_name = m_map.group(1).strip() if m_map else ""
 
     if not raw_map_name:
+        m_map2 = MAP_UPDATE_PATTERN.search(line)
+        if m_map2:
+            raw_map_name = m_map2.group(1).strip()
+
+    if not raw_map_name:
         m_url = WORLD_MAP_PATTERN.search(line)
         if m_url:
             cand = m_url.group(1).strip()
@@ -160,3 +226,32 @@ def parse_map_update_from_line(
     new_range = bool(RANGE_KEYWORD_PATTERN.search(raw_map_name))
     is_updated = (raw_map_name != current_map_name)
     return raw_map_name, new_range, is_updated, False
+
+
+def normalize_map_name(raw_name: str) -> str:
+    """内部コード名または表示名を正規化されたマップ表示名へ変換する"""
+    clean = raw_name.strip()
+    return MAP_CODENAME_MAP.get(clean.lower(), clean)
+
+
+def parse_game_mode_from_line(line: str) -> Optional[str]:
+    """ログ行からキューIDまたはGameModeクラスをパースして表示用ゲームモード名を返す"""
+    m_queue = QUEUE_ID_PATTERN.search(line)
+    if m_queue:
+        raw_qid = m_queue.group(1).strip().lower()
+        if raw_qid in QUEUE_NAME_MAP:
+            return QUEUE_NAME_MAP[raw_qid]
+        if raw_qid not in ("none", "null", "undefined"):
+            return raw_qid.capitalize()
+
+    m_url = GAME_MODE_URL_PATTERN.search(line)
+    if m_url:
+        raw_mode = m_url.group(1).strip().lower()
+        if raw_mode in MODE_CLASS_MAP:
+            return MODE_CLASS_MAP[raw_mode]
+        for key, val in MODE_CLASS_MAP.items():
+            if key in raw_mode:
+                return val
+        return raw_mode.capitalize()
+
+    return None
