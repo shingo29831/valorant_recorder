@@ -36,10 +36,19 @@ class SwitcherItemCard(QWidget):
         layout.setSpacing(2)
         
         self.thumb_label = QLabel()
+        self.thumb_label.setObjectName("thumbLabel")
         self.thumb_label.setFixedSize(132, 74)
         self.thumb_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.thumb_label.setStyleSheet("background-color: #000000; border-radius: 4px;")
-        self._load_thumbnail()
+        self.thumb_label.setScaledContents(True)
+
+        self._thumb_retries = 0
+        if not self._load_thumbnail():
+            self.thumb_label.setText("No Image")
+            self.thumb_label.setStyleSheet("background-color: #111111; color: #888888; font-size: 10px; border-radius: 4px;")
+            if self.thumb_path:
+                self.thumb_timer = QTimer(self)
+                self.thumb_timer.timeout.connect(self._check_thumbnail)
+                self.thumb_timer.start(800)
         
         self.title_label = QLabel()
         self.title_label.setStyleSheet("color: #FFFFFF; font-size: 11px; font-weight: bold; background: transparent;")
@@ -64,26 +73,51 @@ class SwitcherItemCard(QWidget):
                 background-color: rgba(40, 60, 85, 0.98);
                 border: 2px solid #FFFFFF;
             }}
+            QLabel#thumbLabel {{
+                background-color: transparent;
+                border-radius: 4px;
+            }}
         """)
 
-    def _load_thumbnail(self) -> None:
-        if self.thumb_path and os.path.exists(self.thumb_path):
-            cached = QPixmapCache.find(self.thumb_path)
-            if cached is not None:
-                self.thumb_label.setPixmap(cached)
-                return
-            pixmap = QPixmap(self.thumb_path)
-            if not pixmap.isNull():
-                scaled = pixmap.scaled(
-                    132, 74,
-                    Qt.AspectRatioMode.KeepAspectRatioByExpanding,
-                    Qt.TransformationMode.SmoothTransformation
-                )
-                QPixmapCache.insert(self.thumb_path, scaled)
-                self.thumb_label.setPixmap(scaled)
-                return
-        self.thumb_label.setText("No Image")
-        self.thumb_label.setStyleSheet("background-color: #111111; color: #888888; font-size: 10px; border-radius: 4px;")
+    def _load_thumbnail(self) -> bool:
+        if not self.thumb_path or not os.path.exists(self.thumb_path):
+            return False
+
+        cache_key = f"switcher_thumb_{self.thumb_path}"
+        cached = QPixmapCache.find(cache_key)
+        if cached is not None and not cached.isNull():
+            self.thumb_label.setText("")
+            self.thumb_label.setStyleSheet("background-color: transparent; border-radius: 4px;")
+            self.thumb_label.setPixmap(cached)
+            return True
+
+        pixmap = QPixmap(self.thumb_path)
+        if not pixmap.isNull():
+            scaled = pixmap.scaled(
+                132, 74,
+                Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            if scaled.width() > 132 or scaled.height() > 74:
+                x = max(0, (scaled.width() - 132) // 2)
+                y = max(0, (scaled.height() - 74) // 2)
+                scaled = scaled.copy(x, y, 132, 74)
+
+            QPixmapCache.insert(cache_key, scaled)
+            self.thumb_label.setText("")
+            self.thumb_label.setStyleSheet("background-color: transparent; border-radius: 4px;")
+            self.thumb_label.setPixmap(scaled)
+            return True
+        return False
+
+    def _check_thumbnail(self) -> None:
+        self._thumb_retries += 1
+        if self._load_thumbnail():
+            if hasattr(self, 'thumb_timer') and self.thumb_timer.isActive():
+                self.thumb_timer.stop()
+        elif self._thumb_retries >= 15:
+            if hasattr(self, 'thumb_timer') and self.thumb_timer.isActive():
+                self.thumb_timer.stop()
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:

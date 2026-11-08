@@ -26,6 +26,7 @@ from ui.clip_edit_panel import ClipEditPanel
 from ui.in_app_notification import InAppNotification
 from ui.player_clip_controller import PlayerClipController
 from ui.player_navigation_controller import PlayerNavigationController
+from ui.video_top_switcher import VideoTopSwitcher
 
 BACK_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white">
   <path d="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z" />
@@ -74,8 +75,9 @@ class PlayerVideoPage(QWidget):
         
         left_container = QWidget()
         left_container.setFixedWidth(50)
-        left_layout = QVBoxLayout(left_container)
-        left_layout.setContentsMargins(0, 0, 0, 0)
+        self.left_layout = QVBoxLayout(left_container)
+        self.left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout = self.left_layout
         
         back_btn = QPushButton()
         back_btn.setFixedSize(40, 40)
@@ -98,6 +100,7 @@ class PlayerVideoPage(QWidget):
         
         self.video_widget = ClickableVideoWidget()
         self.video_widget.setStyleSheet("background-color: #000000;")
+        self.video_widget.setMouseTracking(True)
         self.video_widget.clicked.connect(self.toggle_play)
         
         self.player_core = VideoPlayerCore(self.video_widget, self.config, self)
@@ -151,6 +154,7 @@ class PlayerVideoPage(QWidget):
         controls_layout.addWidget(self.zoom_in_btn)
         
         self.player_container = PlayerContainer(self.video_widget)
+        self.player_container.setMouseTracking(True)
         
         # クリップ編集パネル
         self.edit_panel = ClipEditPanel(self.t)
@@ -158,9 +162,10 @@ class PlayerVideoPage(QWidget):
 
         right_container = QWidget()
         right_container.setFixedWidth(50)
-        right_layout = QVBoxLayout(right_container)
-        right_layout.setContentsMargins(0, 0, 0, 0)
-        right_layout.setSpacing(10)
+        self.right_layout = QVBoxLayout(right_container)
+        self.right_layout.setContentsMargins(0, 0, 0, 0)
+        self.right_layout.setSpacing(10)
+        right_layout = self.right_layout
 
         self.edit_mode_btn = QPushButton()
         self.edit_mode_btn.setFixedSize(40, 40)
@@ -246,6 +251,26 @@ class PlayerVideoPage(QWidget):
             parent=self,
         )
         self.video_widget.installEventFilter(self)
+        self.player_container.installEventFilter(self)
+        self.setMouseTracking(True)
+
+        self.top_switcher = VideoTopSwitcher(self.config, self)
+        self.top_switcher.recordSelected.connect(self._on_switch_recording)
+        self.top_switcher.offsetChanged.connect(self._on_switcher_offset_changed)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.top_switcher.update_geometry(self.width())
+        self.top_switcher.raise_()
+
+    def _on_switch_recording(self, json_filename: str):
+        self.load_recording(json_filename)
+        self.player_core.play()
+
+    def _on_switcher_offset_changed(self, offset: int):
+        self.left_layout.setContentsMargins(0, offset, 0, 0)
+        self.right_layout.setContentsMargins(0, offset, 0, 0)
+        self.player_container.set_top_offset(offset)
 
     def _create_icon(self, svg_bytes, size=24):
         pixmap = QPixmap(size, size)
@@ -382,6 +407,10 @@ class PlayerVideoPage(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
+        self.top_switcher.update_geometry(self.width())
+        self.top_switcher.show()
+        self.top_switcher.raise_()
+        self.top_switcher.refresh_records(self.current_json_filename)
         sys_vol = float(getattr(self.config, 'PLAYER_SYS_VOLUME', '1.0'))
         if self.player_core.current_sys_volume != sys_vol:
             self.player_core.set_sys_volume(sys_vol * 100)
