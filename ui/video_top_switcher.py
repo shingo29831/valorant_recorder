@@ -201,7 +201,7 @@ class VideoTopSwitcher(QWidget):
 
         self._offset = 0
         self.anim = QPropertyAnimation(self, b"offset", self)
-        self.anim.setDuration(180)
+        self.anim.setDuration(320)
         self.anim.setEasingCurve(QEasingCurve.Type.OutCubic)
 
         self.hide_timer = QTimer(self)
@@ -255,6 +255,9 @@ class VideoTopSwitcher(QWidget):
         if immediate:
             self.offset = target
         else:
+            # 出現時は滑らかに減速、収納時は自然に加速して戻るイージングを設定
+            curve = QEasingCurve.Type.OutCubic if new_state == SwitcherState.EXPANDED else QEasingCurve.Type.InCubic
+            self.anim.setEasingCurve(curve)
             self.anim.setStartValue(self._offset)
             self.anim.setEndValue(target)
             self.anim.start()
