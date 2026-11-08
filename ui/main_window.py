@@ -117,22 +117,30 @@ class MainWindow(QMainWindow):
         if status_bar.isHidden() == (not visible):
             return
         status_bar.setVisible(visible)
-        # 最大化中のQStatusBar表示切替でタスクバー領域の再計算が漏れる現象を防止
+        if self.layout() is not None:
+            self.layout().invalidate()
+            self.layout().activate()
+        # 最大化中のQStatusBar表示切替でレイアウト領域の再計算が漏れる現象を防止
         if self.isVisible() and self.isMaximized():
             QTimer.singleShot(0, self._refresh_maximized_geometry)
 
     def _refresh_maximized_geometry(self) -> None:
         if not self.isVisible() or not self.isMaximized():
             return
-        self.setUpdatesEnabled(False)
-        try:
-            self.showNormal()
-            if self.layout() is not None:
-                self.layout().activate()
-            self.showMaximized()
-        finally:
-            self.setUpdatesEnabled(True)
-            self.update()
+        layout = self.layout()
+        if layout is not None:
+            layout.invalidate()
+            layout.activate()
+        central = self.centralWidget()
+        if central is not None:
+            central.updateGeometry()
+            if central.layout() is not None:
+                central.layout().invalidate()
+                central.layout().activate()
+        if hasattr(self, 'player_tab') and hasattr(self.player_tab, 'video_page'):
+            self.player_tab.video_page.update_safe_area()
+        self.updateGeometry()
+        self.update()
 
     def _on_video_page_visible(self, is_visible: bool) -> None:
         if self.stacked_widget.currentWidget() == self.player_tab:
