@@ -4,12 +4,35 @@ import os
 from enum import Enum, auto
 from typing import Optional, List, Dict, Any
 from PyQt6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QLabel
+    QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QLabel, QPushButton
 )
-from PyQt6.QtCore import Qt, QPoint, QPropertyAnimation, QEasingCurve, QTimer, pyqtSignal, pyqtProperty
-from PyQt6.QtGui import QPixmap, QPixmapCache, QFontMetrics, QWheelEvent, QCursor
+from PyQt6.QtCore import (
+    Qt, QPoint, QSize, QByteArray, QPropertyAnimation, QVariantAnimation,
+    QEasingCurve, QTimer, pyqtSignal, pyqtProperty
+)
+from PyQt6.QtGui import QPixmap, QPixmapCache, QFontMetrics, QWheelEvent, QCursor, QIcon, QPainter
+from PyQt6.QtSvg import QSvgRenderer
 from core.config import Config
 from ui.record_data_loader import RecordDataLoader
+
+
+CHEVRON_LEFT_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white">
+  <path d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/>
+</svg>"""
+
+CHEVRON_RIGHT_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white">
+  <path d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/>
+</svg>"""
+
+
+def _create_svg_icon(svg_bytes: bytes, size: int = 20) -> QIcon:
+    pixmap = QPixmap(size, size)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    renderer = QSvgRenderer(QByteArray(svg_bytes))
+    renderer.render(painter)
+    painter.end()
+    return QIcon(pixmap)
 
 
 class SwitcherState(Enum):
@@ -133,6 +156,12 @@ class VideoTopSwitcher(QWidget):
 
     BAR_HEIGHT = 145
     TRIGGER_ZONE_Y = 65
+    CARD_WIDTH = 140
+    CARD_HEIGHT = 100
+    CARD_GAP = 8
+    VISIBLE_CARD_COUNT = 5
+    SCROLL_AREA_WIDTH = (CARD_WIDTH * VISIBLE_CARD_COUNT) + (CARD_GAP * (VISIBLE_CARD_COUNT - 1))
+    SLIDE_STEP = (CARD_WIDTH + CARD_GAP) * 4
 
     def __init__(self, config: Config, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -157,18 +186,68 @@ class VideoTopSwitcher(QWidget):
         main_layout.setContentsMargins(10, 6, 10, 0)
         main_layout.setSpacing(2)
 
+        carousel_container = QWidget()
+        carousel_container.setStyleSheet("background: transparent;")
+        carousel_layout = QHBoxLayout(carousel_container)
+        carousel_layout.setContentsMargins(0, 0, 0, 0)
+        carousel_layout.setSpacing(8)
+        carousel_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        self.btn_left = QPushButton()
+        self.btn_left.setFixedSize(32, self.CARD_HEIGHT)
+        self.btn_left.setIcon(_create_svg_icon(CHEVRON_LEFT_SVG, 20))
+        self.btn_left.setIconSize(QSize(20, 20))
+        self.btn_left.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_left.setToolTip("前の動画へスライド")
+        self.btn_left.clicked.connect(self._slide_left)
+
         self.scroll_area = QScrollArea()
-        self.scroll_area.setFixedHeight(106)
+        self.scroll_area.setFixedSize(self.SCROLL_AREA_WIDTH, 106)
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.scroll_area.setStyleSheet("QScrollArea { background: transparent; border: none; }")
 
+        self.btn_right = QPushButton()
+        self.btn_right.setFixedSize(32, self.CARD_HEIGHT)
+        self.btn_right.setIcon(_create_svg_icon(CHEVRON_RIGHT_SVG, 20))
+        self.btn_right.setIconSize(QSize(20, 20))
+        self.btn_right.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_right.setToolTip("次の動画へスライド")
+        self.btn_right.clicked.connect(self._slide_right)
+
+        btn_style = """
+            QPushButton {
+                background-color: rgba(20, 30, 42, 0.9);
+                border: 1px solid rgba(255, 70, 85, 0.6);
+                border-radius: 6px;
+            }
+            QPushButton:hover:!disabled {
+                background-color: #FF4655;
+                border: 1px solid #FFFFFF;
+            }
+            QPushButton:pressed:!disabled {
+                background-color: #CC3744;
+            }
+            QPushButton:disabled {
+                background-color: rgba(20, 30, 42, 0.35);
+                border: 1px solid rgba(80, 80, 80, 0.25);
+            }
+        """
+        self.btn_left.setStyleSheet(btn_style)
+        self.btn_right.setStyleSheet(btn_style)
+
+        carousel_layout.addStretch()
+        carousel_layout.addWidget(self.btn_left)
+        carousel_layout.addWidget(self.scroll_area)
+        carousel_layout.addWidget(self.btn_right)
+        carousel_layout.addStretch()
+
         self.cards_container = QWidget()
         self.cards_container.setStyleSheet("background: transparent;")
         self.cards_layout = QHBoxLayout(self.cards_container)
         self.cards_layout.setContentsMargins(0, 0, 0, 0)
-        self.cards_layout.setSpacing(8)
+        self.cards_layout.setSpacing(self.CARD_GAP)
         self.scroll_area.setWidget(self.cards_container)
 
         self.empty_label = QLabel("他の録画が見つかりません")
@@ -196,13 +275,23 @@ class VideoTopSwitcher(QWidget):
         """)
         self.handle_bar.setCursor(Qt.CursorShape.PointingHandCursor)
 
-        main_layout.addWidget(self.scroll_area)
+        main_layout.addWidget(carousel_container)
         main_layout.addWidget(self.handle_bar)
 
         self._offset = 0
         self.anim = QPropertyAnimation(self, b"offset", self)
         self.anim.setDuration(320)
         self.anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+        self.scroll_anim = QVariantAnimation(self)
+        self.scroll_anim.setDuration(260)
+        self.scroll_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self.scroll_anim.valueChanged.connect(self._on_scroll_anim_step)
+        self.scroll_anim.finished.connect(self._update_arrow_buttons)
+
+        bar = self.scroll_area.horizontalScrollBar()
+        bar.valueChanged.connect(self._update_arrow_buttons)
+        bar.rangeChanged.connect(self._update_arrow_buttons)
 
         self.hide_timer = QTimer(self)
         self.hide_timer.setSingleShot(True)
@@ -321,6 +410,32 @@ class VideoTopSwitcher(QWidget):
                 return
         self.set_state(SwitcherState.HIDDEN)
 
+    def _slide_left(self) -> None:
+        self._slide_by(-self.SLIDE_STEP)
+
+    def _slide_right(self) -> None:
+        self._slide_by(self.SLIDE_STEP)
+
+    def _slide_by(self, delta: int) -> None:
+        bar = self.scroll_area.horizontalScrollBar()
+        start_val = bar.value()
+        target_val = max(bar.minimum(), min(bar.maximum(), start_val + delta))
+        if target_val == start_val:
+            return
+        self.scroll_anim.stop()
+        self.scroll_anim.setStartValue(start_val)
+        self.scroll_anim.setEndValue(target_val)
+        self.scroll_anim.start()
+
+    def _on_scroll_anim_step(self, val: Any) -> None:
+        self.scroll_area.horizontalScrollBar().setValue(int(val))
+
+    def _update_arrow_buttons(self) -> None:
+        bar = self.scroll_area.horizontalScrollBar()
+        has_scroll = bar.maximum() > bar.minimum()
+        self.btn_left.setEnabled(has_scroll and bar.value() > bar.minimum())
+        self.btn_right.setEnabled(has_scroll and bar.value() < bar.maximum())
+
     def refresh_records(self, current_filename: Optional[str]) -> None:
         self.current_filename = current_filename
         loader = RecordDataLoader(self.config)
@@ -329,7 +444,8 @@ class VideoTopSwitcher(QWidget):
         flat_records = []
         for records in records_by_date.values():
             flat_records.extend(records)
-        flat_records.sort(key=lambda r: r.get("timestamp", 0), reverse=True)
+        # 左から右にかけて時間順に降順（最新→過去）で並べる
+        flat_records.sort(key=lambda r: float(r.get("timestamp") or 0), reverse=True)
 
         self._all_records = [r for r in flat_records if r.get("filename") != self.current_filename]
 
@@ -346,13 +462,15 @@ class VideoTopSwitcher(QWidget):
             self.cards_layout.addWidget(empty)
             self.handle_bar.setText("▼ ほかの録画はありません ▼")
         else:
-            for rec in self._all_records[:30]:
+            for rec in self._all_records:
                 card = SwitcherItemCard(rec, self.cards_container)
                 card.clicked.connect(self._on_card_clicked)
                 self.cards_layout.addWidget(card)
             self.handle_bar.setText(f"▼ ほかの録画 ({len(self._all_records)}件) ▼")
 
         self.cards_layout.addStretch()
+        self.scroll_area.horizontalScrollBar().setValue(0)
+        QTimer.singleShot(0, self._update_arrow_buttons)
 
     def _on_card_clicked(self, filename: str) -> None:
         self.set_state(SwitcherState.HIDDEN, immediate=True)
