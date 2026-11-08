@@ -1,6 +1,7 @@
 """Module: @role: メインウィンドウのUI構成、タブ切り替え、録画手動制御およびライフサイクルを管理するモジュール"""
 
 import os
+import sys
 import threading
 from typing import Optional
 
