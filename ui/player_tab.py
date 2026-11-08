@@ -1,5 +1,5 @@
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QStackedWidget
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import pyqtSignal, QTimer
 from core.config import Config
 from ui.player_list_page import PlayerListPage
 from ui.player_video_page import PlayerVideoPage
@@ -39,8 +39,9 @@ class PlayerTab(QWidget):
         self.stacked_widget.setCurrentWidget(self.video_page)
 
     def on_back_requested(self):
-        self.stacked_widget.setCurrentWidget(self.list_page)
-        self.list_page.refresh_list()
+        self.list_page._needs_refresh = True
+        # WMF/Direct3Dレンダラーの非同期停止完了を待ってからスタックを切り替え
+        QTimer.singleShot(0, lambda: self.stacked_widget.setCurrentWidget(self.list_page))
 
     def refresh_list(self):
         self.list_page.refresh_list()
