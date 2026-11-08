@@ -39,9 +39,11 @@ class VideoPlayerCore(QObject):
         
         self.media_loaded = False
         self.mic_loaded = False
+        self.auto_play_on_load = False
         self.was_playing_before_seek = False
         self.is_seeking = False
         self.pending_play_after_seek = False
+        self._is_unloading = False
         
         # positionChanged が発火しなかった場合のフェールセーフ（保険）タイマー
         self._failsafe_play_timer = QTimer(self)
@@ -65,6 +67,8 @@ class VideoPlayerCore(QObject):
             self.play()
 
     def _on_position_changed(self, pos):
+        if self._is_unloading:
+            return
         self.positionChanged.emit(pos)
         # シーク完了を検知したら、即座に再生を再開する
         if self.pending_play_after_seek:
@@ -77,9 +81,13 @@ class VideoPlayerCore(QObject):
                 self.mic_player.setPosition(pos)
 
     def _on_duration_changed(self, duration):
+        if self._is_unloading:
+            return
         self.durationChanged.emit(duration)
 
     def _on_error_occurred(self, error, error_string):
+        if self._is_unloading:
+            return
         self.errorOccurred.emit(error, error_string)
 
     def _on_mic_error_occurred(self, error, error_string):
@@ -99,21 +107,30 @@ class VideoPlayerCore(QObject):
             self.mic_player.setActiveAudioTrack(-1)
 
     def _on_media_tracks_changed(self):
+        if self._is_unloading or self.media_player.source().isEmpty():
+            return
         self._apply_audio_tracks()
         self._restore_volume()
 
     def _on_mic_tracks_changed(self):
-        self.mic_player.setActiveVideoTrack(-1)
+        if self._is_unloading or self.mic_player.source().isEmpty():
+            return
+        if len(self.mic_player.videoTracks()) > 0:
+            self.mic_player.setActiveVideoTrack(-1)
         self._apply_audio_tracks()
         self._restore_volume()
 
     def _on_media_player_status_changed(self, status):
+        if self._is_unloading:
+            return
         if status == QMediaPlayer.MediaStatus.LoadedMedia:
             self._apply_audio_tracks()
             self.media_loaded = True
             self._check_both_loaded_and_play()
 
     def _on_mic_player_status_changed(self, status):
+        if self._is_unloading:
+            return
         if status == QMediaPlayer.MediaStatus.LoadedMedia:
             self.mic_player.setActiveVideoTrack(-1)
             self._apply_audio_tracks()
@@ -121,7 +138,8 @@ class VideoPlayerCore(QObject):
             self._check_both_loaded_and_play()
 
     def _check_both_loaded_and_play(self):
-        if self.media_loaded and self.mic_loaded:
+        if self.auto_play_on_load and self.media_loaded and self.mic_loaded:
+            self.auto_play_on_load = False
             self.media_loaded = False
             self.mic_loaded = False
             self._apply_audio_tracks()
@@ -130,6 +148,8 @@ class VideoPlayerCore(QObject):
             QTimer.singleShot(150, self._restore_volume)
 
     def _restore_volume(self):
+        if self.media_player.playbackState() != QMediaPlayer.PlaybackState.PlayingState:
+            return
         self.audio_output.setVolume(self.current_sys_volume)
         mic_tracks = self.mic_player.audioTracks()
         active_mic_track = self.mic_player.activeAudioTrack()
@@ -148,34 +168,66 @@ class VideoPlayerCore(QObject):
         self.stop()
         self.media_loaded = False
         self.mic_loaded = False
+        self.auto_play_on_load = False
         
         self.audio_output.setVolume(0)
         self.mic_audio_output.setVolume(0)
         
         if file_path and os.path.exists(file_path):
+            if self.media_player.videoOutput() != self.video_widget:
+                self.media_player.setVideoOutput(self.video_widget)
+            self.auto_play_on_load = True
             url = QUrl.fromLocalFile(os.path.abspath(file_path))
             self.media_player.setSource(url)
             self.mic_player.setSource(url)
-            self.mic_player.setActiveVideoTrack(-1)
+            if len(self.mic_player.videoTracks()) > 0:
+                self.mic_player.setActiveVideoTrack(-1)
         else:
-            self.media_player.setSource(QUrl())
-            self.mic_player.setSource(QUrl())
+            self.unload()
+
+    def unload(self):
+        if self._is_unloading:
+            return
+        self._is_unloading = True
+        try:
+            self.stop()
+            # 非表示・リサイズ時のD3D11スワップチェーン競合を防ぐため映像出力を先に切り離す
+            if self.media_player.videoOutput() is not None:
+                self.media_player.setVideoOutput(None)
+            if not self.media_player.source().isEmpty():
+                self.media_player.setSource(QUrl())
+            if not self.mic_player.source().isEmpty():
+                self.mic_player.setSource(QUrl())
+        finally:
+            self._is_unloading = False
 
     def play(self):
+        self.audio_output.setVolume(self.current_sys_volume)
         self.media_player.play()
         # マイク音量が0またはトラック未確立時はmic_playerを動かさずクロック競合を防止
         if self.current_mic_volume > 0 and len(self.mic_player.audioTracks()) >= 2:
+            self.mic_audio_output.setVolume(self.current_mic_volume)
             self.mic_player.play()
         else:
             self.mic_player.pause()
 
     def pause(self):
+        self.auto_play_on_load = False
         self.media_player.pause()
         self.mic_player.pause()
 
     def stop(self):
-        self.media_player.stop()
-        self.mic_player.stop()
+        self.auto_play_on_load = False
+        self.media_loaded = False
+        self.mic_loaded = False
+        self.pending_play_after_seek = False
+        self._failsafe_play_timer.stop()
+        self.audio_output.setVolume(0.0)
+        self.mic_audio_output.setVolume(0.0)
+        if self.media_player.playbackState() != QMediaPlayer.PlaybackState.StoppedState:
+            self.media_player.stop()
+        if self.mic_player.playbackState() != QMediaPlayer.PlaybackState.StoppedState:
+            self.mic_player.stop()
 
     def toggle_play(self):
         if self.media_player.playbackState() == QMediaPlayer.PlaybackState.PlayingState:

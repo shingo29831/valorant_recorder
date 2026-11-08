@@ -39,9 +39,12 @@ class PlayerTab(QWidget):
         self.stacked_widget.setCurrentWidget(self.video_page)
 
     def on_back_requested(self):
+        self.video_page.cleanup_media()
         self.list_page._needs_refresh = True
-        # WMF/Direct3Dレンダラーの非同期停止完了を待ってからスタックを切り替え
-        QTimer.singleShot(0, lambda: self.stacked_widget.setCurrentWidget(self.list_page))
+        QTimer.singleShot(0, self._switch_to_list_page)
+
+    def _switch_to_list_page(self):
+        self.stacked_widget.setCurrentWidget(self.list_page)
 
     def refresh_list(self):
         self.list_page.refresh_list()

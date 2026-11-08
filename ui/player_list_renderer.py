@@ -36,6 +36,7 @@ class PlayerListRenderer:
         self.displayed_count = 0
         self.current_group_key: Optional[str] = None
         self.current_flow_layout: Optional[FlowLayout] = None
+        self._flow_layouts: list[FlowLayout] = []
         self.current_sort = "date_desc"
         self.delete_mode = False
         self.favorite_mode = False
@@ -103,6 +104,7 @@ class PlayerListRenderer:
 
                 flow_widget = QWidget()
                 self.current_flow_layout = FlowLayout(flow_widget)
+                self._flow_layouts.append(self.current_flow_layout)
                 date_checkbox.toggled.connect(
                     lambda checked, fw=flow_widget, cb=date_checkbox: self._on_date_checkbox_toggled(
                         checked, fw, cb
@@ -206,17 +208,34 @@ class PlayerListRenderer:
                                 selected_files.append(record_widget.json_filename)
         return selected_files
 
+    def _cleanup_widget(self, widget: QWidget) -> None:
+        for child in widget.findChildren(QWidget):
+            if hasattr(child, "cleanup"):
+                child.cleanup()
+        if hasattr(widget, "cleanup"):
+            widget.cleanup()
+        widget.hide()
+        widget.setParent(None)
+        widget.deleteLater()
+
     def clear(self) -> None:
-        while self.scroll_layout.count():
-            item = self.scroll_layout.takeAt(0)
-            widget = item.widget()
-            if widget:
-                widget.deleteLater()
-            elif item.layout():
-                self._clear_layout(item.layout())
-        self.displayed_count = 0
-        self.current_group_key = None
-        self.current_flow_layout = None
+        scrollbar = self.scroll_area.verticalScrollBar()
+        scrollbar.blockSignals(True)
+        try:
+            while self.scroll_layout.count():
+                item = self.scroll_layout.takeAt(0)
+                widget = item.widget()
+                if widget:
+                    self._cleanup_widget(widget)
+                elif item.layout():
+                    self._clear_layout(item.layout())
+            self.displayed_count = 0
+            self.current_group_key = None
+            self.current_flow_layout = None
+            self._flow_layouts.clear()
+            scrollbar.setValue(0)
+        finally:
+            scrollbar.blockSignals(False)
 
     def _clear_layout(self, layout) -> None:
         if layout is not None:
@@ -224,7 +243,7 @@ class PlayerListRenderer:
                 item = layout.takeAt(0)
                 widget = item.widget()
                 if widget:
-                    widget.deleteLater()
+                    self._cleanup_widget(widget)
                 elif item.layout():
                     self._clear_layout(item.layout())
             layout.deleteLater()

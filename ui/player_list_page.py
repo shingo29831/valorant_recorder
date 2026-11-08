@@ -1,7 +1,7 @@
 import os
 import json
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QScrollArea, QLabel, QInputDialog, QMessageBox, QMenu
-from PyQt6.QtCore import Qt, QSize, pyqtSignal, QByteArray, QPoint
+from PyQt6.QtCore import Qt, QSize, pyqtSignal, QByteArray, QPoint, QTimer
 from PyQt6.QtGui import QIcon, QPixmap, QPainter
 from PyQt6.QtSvg import QSvgRenderer
 from core.config import Config
@@ -45,6 +45,7 @@ class PlayerListPage(QWidget):
         self.available_agents = set()
         self.available_maps = set()
         self._needs_refresh = False
+        self._refresh_scheduled = False
         
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 20, 20, 20)
@@ -184,8 +185,15 @@ class PlayerListPage(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
-        # 保留されていたリスト更新や、ウィジェットが空の場合は画面表示時に再構築
+        # QStackedWidget遷移およびステータスバー再表示の完了後にリストを再構築
         if getattr(self, '_needs_refresh', False) or getattr(self.renderer, "displayed_count", 0) == 0:
+            if not self._refresh_scheduled:
+                self._refresh_scheduled = True
+                QTimer.singleShot(0, self._run_scheduled_refresh)
+
+    def _run_scheduled_refresh(self):
+        self._refresh_scheduled = False
+        if self.isVisible() and (getattr(self, '_needs_refresh', False) or getattr(self.renderer, "displayed_count", 0) == 0):
             self.refresh_list()
 
     def toggle_delete_mode(self, checked):

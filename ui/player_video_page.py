@@ -26,7 +26,7 @@ from ui.clip_edit_panel import ClipEditPanel
 from ui.in_app_notification import InAppNotification
 from ui.player_clip_controller import PlayerClipController
 from ui.player_navigation_controller import PlayerNavigationController
-from ui.video_top_switcher import VideoTopSwitcher
+from ui.video_top_switcher import VideoTopSwitcher, SwitcherState
 
 BACK_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white">
   <path d="M20,11V13H8L13.5,18.5L12.08,19.92L4.16,12L12.08,4.08L13.5,5.5L8,11H20Z" />
@@ -222,7 +222,7 @@ class PlayerVideoPage(QWidget):
         page_layout.addWidget(self.playback_controls)
         page_layout.addWidget(self.edit_panel)
         
-        self.speed_osd_label = QLabel("1.0x", self.video_widget)
+        self.speed_osd_label = QLabel("1.0x", self.player_container)
         self.speed_osd_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.speed_osd_label.setStyleSheet("background-color: rgba(0, 0, 0, 150); color: white; font-size: 24px; font-weight: bold; border-radius: 10px; padding: 10px;")
         self.speed_osd_label.hide()
@@ -260,24 +260,8 @@ class PlayerVideoPage(QWidget):
         self.top_switcher.offsetChanged.connect(self._on_switcher_offset_changed)
 
     def update_safe_area(self) -> None:
-        base_margin = 20
-        bottom_margin = base_margin
-        win = self.window()
-        is_maximized = win.isMaximized() if win else False
-
-        if is_maximized:
-            screen = self.screen() or (win.screen() if win else None)
-            bottom_inset = 0
-            if screen:
-                full_bottom = screen.geometry().bottom()
-                avail_bottom = screen.availableGeometry().bottom()
-                bottom_inset = max(0, full_bottom - avail_bottom)
-
-            # 最大化時にタスクバーが下部コントロールに被るのを防ぐ
-            effective_gap = max(bottom_inset, 48)
-            bottom_margin = base_margin + effective_gap
-
-        self.page_layout.setContentsMargins(20, 20, 20, bottom_margin)
+        # 下部コントロールの不要な余白を排除し均等マージンを維持
+        self.page_layout.setContentsMargins(20, 20, 20, 20)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -289,11 +273,15 @@ class PlayerVideoPage(QWidget):
         self.load_recording(json_filename)
 
     def _refresh_switcher_safe(self):
+        if not self.isVisible():
+            return
         if hasattr(self, 'top_switcher') and self.top_switcher:
             self.top_switcher.refresh_records(self.current_json_filename)
             self.top_switcher.raise_()
 
     def _on_switcher_offset_changed(self, offset: int):
+        if not self.isVisible():
+            return
         self.left_layout.setContentsMargins(0, offset, 0, 0)
         self.right_layout.setContentsMargins(0, offset, 0, 0)
         self.player_container.set_top_offset(offset)
@@ -346,21 +334,35 @@ class PlayerVideoPage(QWidget):
         )
         if reply == QMessageBox.StandardButton.Yes:
             json_filename = self.current_json_filename
-            self.player_core.load_source(None)
+            self.cleanup_media()
             delete_single_record_files(self.config.SAVE_DIR, json_filename)
             self.current_json_filename = None
             self.current_match_data = None
             self.backRequested.emit()
 
-    def request_back(self):
-        self.player_core.load_source(None)
+    def request_back(self, *args):
+        self.cleanup_media()
         self.backRequested.emit()
 
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        self.cleanup_media()
+
     def cleanup_media(self):
-        self.player_core.pause()
+        if hasattr(self, 'nav_controller') and self.nav_controller:
+            self.nav_controller.speed_osd_timer.stop()
+        if hasattr(self, 'top_switcher') and self.top_switcher:
+            self.top_switcher.deactivate()
+        if hasattr(self, 'player_core') and self.player_core:
+            self.player_core.unload()
+        if hasattr(self, 'left_layout') and hasattr(self, 'right_layout') and hasattr(self, 'player_container'):
+            self.left_layout.setContentsMargins(0, 0, 0, 0)
+            self.right_layout.setContentsMargins(0, 0, 0, 0)
+            self.player_container.top_offset = 0
 
     def restore_media(self):
-        pass
+        if getattr(self, 'current_json_filename', None) and self.player_core.media_player.source().isEmpty():
+            self.load_recording(self.current_json_filename)
 
     def load_recording(self, json_filename):
         self.player_core.stop()
@@ -437,6 +439,8 @@ class PlayerVideoPage(QWidget):
     def showEvent(self, event):
         super().showEvent(event)
         self.update_safe_area()
+        self.player_container._update_video_geometry()
+        self.top_switcher.activate()
         self.top_switcher.update_geometry(self.width())
         self.top_switcher.show()
         self.top_switcher.raise_()

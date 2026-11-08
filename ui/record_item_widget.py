@@ -176,6 +176,12 @@ class RecordItemWidget(QWidget):
         elif self._thumb_retries >= 15:
             self.thumb_timer.stop()
 
+    def cleanup(self) -> None:
+        if hasattr(self, "thumb_timer") and self.thumb_timer.isActive():
+            self.thumb_timer.stop()
+        if hasattr(self, "spinner") and hasattr(self.spinner, "timer") and self.spinner.timer.isActive():
+            self.spinner.timer.stop()
+
     def _on_checkbox_toggled(self, checked):
         if checked:
             self.checkbox.setText("✓")

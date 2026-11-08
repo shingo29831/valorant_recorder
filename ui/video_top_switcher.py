@@ -362,9 +362,11 @@ class VideoTopSwitcher(QWidget):
                 self._start_hide_timer()
             return
 
+        x = parent_pos.x()
         y = parent_pos.y()
         if self.state == SwitcherState.HIDDEN:
-            if 0 <= y <= self.TRIGGER_ZONE_Y:
+            # 左右端の操作ボタン（戻る・編集等）操作時はスイッチャーを展開しない
+            if 0 <= y <= self.TRIGGER_ZONE_Y and 75 <= x <= parent.width() - 75:
                 self.hide_timer.stop()
                 self.set_state(SwitcherState.EXPANDED)
         elif self.state == SwitcherState.EXPANDED:
@@ -436,6 +438,30 @@ class VideoTopSwitcher(QWidget):
         self.btn_left.setEnabled(has_scroll and bar.value() > bar.minimum())
         self.btn_right.setEnabled(has_scroll and bar.value() < bar.maximum())
 
+    def _clear_cards(self) -> None:
+        while self.cards_layout.count():
+            item = self.cards_layout.takeAt(0)
+            widget = item.widget()
+            if widget:
+                if hasattr(widget, "thumb_timer") and widget.thumb_timer.isActive():
+                    widget.thumb_timer.stop()
+                widget.hide()
+                widget.setParent(None)
+                widget.deleteLater()
+
+    def activate(self) -> None:
+        if not self.poll_timer.isActive():
+            self.poll_timer.start()
+
+    def deactivate(self) -> None:
+        self.poll_timer.stop()
+        self.hide_timer.stop()
+        self.anim.stop()
+        self.scroll_anim.stop()
+        self.state = SwitcherState.HIDDEN
+        self._offset = 0
+        self.move(0, -self.BAR_HEIGHT)
+
     def refresh_records(self, current_filename: Optional[str]) -> None:
         self.current_filename = current_filename
         loader = RecordDataLoader(self.config)
@@ -449,12 +475,7 @@ class VideoTopSwitcher(QWidget):
 
         self._all_records = [r for r in flat_records if r.get("filename") != self.current_filename]
 
-        # 既存カードのクリア
-        while self.cards_layout.count():
-            item = self.cards_layout.takeAt(0)
-            widget = item.widget()
-            if widget:
-                widget.deleteLater()
+        self._clear_cards()
 
         if not self._all_records:
             empty = QLabel("他の録画がありません")
