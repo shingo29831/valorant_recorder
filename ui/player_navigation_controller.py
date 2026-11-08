@@ -74,11 +74,11 @@ class PlayerNavigationController(QObject):
     def show_osd(self, text: str) -> None:
         self.speed_osd_label.setText(text)
         self.speed_osd_label.adjustSize()
-        vw_rect = self.video_widget.rect()
         lbl_rect = self.speed_osd_label.rect()
-        x = (vw_rect.width() - lbl_rect.width()) // 2
-        y = vw_rect.height() - lbl_rect.height() - 30
+        x = self.video_widget.x() + (self.video_widget.width() - lbl_rect.width()) // 2
+        y = self.video_widget.y() + self.video_widget.height() - lbl_rect.height() - 30
         self.speed_osd_label.move(x, y)
+        self.speed_osd_label.raise_()
         self.speed_osd_label.show()
         self.speed_osd_timer.start(2000)
 
@@ -151,9 +151,8 @@ class PlayerNavigationController(QObject):
                 return True
             elif event.type() == QEvent.Type.Resize:
                 if self.speed_osd_label.isVisible():
-                    vw_rect = self.video_widget.rect()
                     lbl_rect = self.speed_osd_label.rect()
-                    x = (vw_rect.width() - lbl_rect.width()) // 2
-                    y = vw_rect.height() - lbl_rect.height() - 30
+                    x = self.video_widget.x() + (self.video_widget.width() - lbl_rect.width()) // 2
+                    y = self.video_widget.y() + self.video_widget.height() - lbl_rect.height() - 30
                     self.speed_osd_label.move(x, y)
         return False

@@ -16,24 +16,30 @@ class PlayerContainer(QWidget):
         self.aspect_ratio = aspect_ratio
         self.video_widget = video_widget
         self.video_widget.setParent(self)
+        self.top_offset = 0
 
-    def resizeEvent(self, event):
-        w = event.size().width()
-        h = event.size().height()
-        
-        if h > 0:
-            if w / h > self.aspect_ratio:
-                new_video_h = h
+    def set_top_offset(self, offset: int) -> None:
+        if self.top_offset != offset:
+            self.top_offset = offset
+            self._update_video_geometry()
+
+    def _update_video_geometry(self) -> None:
+        w = self.width()
+        avail_h = self.height() - self.top_offset
+        if avail_h > 0 and w > 0:
+            if w / avail_h > self.aspect_ratio:
+                new_video_h = avail_h
                 new_video_w = int(new_video_h * self.aspect_ratio)
                 x = (w - new_video_w) // 2
-                y = 0
+                y = self.top_offset
             else:
                 new_video_w = w
                 new_video_h = int(new_video_w / self.aspect_ratio)
                 x = 0
-                y = (h - new_video_h) // 2
-                
-            self.video_widget.setGeometry(x, y, new_video_w, new_video_h)
-            
-        super().resizeEvent(event)
+                y = self.top_offset + (avail_h - new_video_h) // 2
 
+            self.video_widget.setGeometry(x, y, new_video_w, new_video_h)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self._update_video_geometry()
