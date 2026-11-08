@@ -4,7 +4,7 @@ import os
 import threading
 from typing import Optional
 
-from PyQt6.QtCore import QTimer, pyqtSignal
+from PyQt6.QtCore import QEvent, QTimer, pyqtSignal
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QApplication, QMainWindow, QMessageBox, QPushButton, QStackedWidget, QSystemTrayIcon
 
@@ -217,6 +217,12 @@ class MainWindow(QMainWindow):
             self.hide()
         else:
             event.ignore()
+
+    def changeEvent(self, event) -> None:
+        super().changeEvent(event)
+        if event.type() == QEvent.Type.WindowStateChange:
+            if hasattr(self, 'player_tab') and hasattr(self.player_tab, 'video_page'):
+                self.player_tab.video_page.update_safe_area()
 
     def hideEvent(self, event) -> None:
         super().hideEvent(event)

@@ -65,7 +65,8 @@ class PlayerVideoPage(QWidget):
         self.t = get_trans(self.config.LANGUAGE)
         self.current_match_data = None
         
-        page_layout = QVBoxLayout(self)
+        self.page_layout = QVBoxLayout(self)
+        page_layout = self.page_layout
         page_layout.setContentsMargins(20, 20, 20, 20)
         page_layout.setSpacing(10)
         
@@ -258,8 +259,29 @@ class PlayerVideoPage(QWidget):
         self.top_switcher.recordSelected.connect(self._on_switch_recording)
         self.top_switcher.offsetChanged.connect(self._on_switcher_offset_changed)
 
+    def update_safe_area(self) -> None:
+        base_margin = 20
+        bottom_margin = base_margin
+        win = self.window()
+        is_maximized = win.isMaximized() if win else False
+
+        if is_maximized:
+            screen = self.screen() or (win.screen() if win else None)
+            bottom_inset = 0
+            if screen:
+                full_bottom = screen.geometry().bottom()
+                avail_bottom = screen.availableGeometry().bottom()
+                bottom_inset = max(0, full_bottom - avail_bottom)
+
+            # 最大化時にタスクバーが下部コントロールに被るのを防ぐ
+            effective_gap = max(bottom_inset, 48)
+            bottom_margin = base_margin + effective_gap
+
+        self.page_layout.setContentsMargins(20, 20, 20, bottom_margin)
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        self.update_safe_area()
         self.top_switcher.update_geometry(self.width())
         self.top_switcher.raise_()
 
@@ -414,6 +436,7 @@ class PlayerVideoPage(QWidget):
 
     def showEvent(self, event):
         super().showEvent(event)
+        self.update_safe_area()
         self.top_switcher.update_geometry(self.width())
         self.top_switcher.show()
         self.top_switcher.raise_()
