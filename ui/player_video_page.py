@@ -265,7 +265,11 @@ class PlayerVideoPage(QWidget):
 
     def _on_switch_recording(self, json_filename: str):
         self.load_recording(json_filename)
-        self.player_core.play()
+
+    def _refresh_switcher_safe(self):
+        if hasattr(self, 'top_switcher') and self.top_switcher:
+            self.top_switcher.refresh_records(self.current_json_filename)
+            self.top_switcher.raise_()
 
     def _on_switcher_offset_changed(self, offset: int):
         self.left_layout.setContentsMargins(0, offset, 0, 0)
@@ -337,7 +341,7 @@ class PlayerVideoPage(QWidget):
         pass
 
     def load_recording(self, json_filename):
-        self.player_core.load_source(None)
+        self.player_core.stop()
         self.current_json_filename = json_filename
         json_path = os.path.join(self.config.SAVE_DIR, json_filename)
         self.nav_controller.reset_playback_rate()
@@ -355,6 +359,9 @@ class PlayerVideoPage(QWidget):
                 self.player_core.load_source(None)
                 print(f"[PlayerVideoPage] Video file not found for {json_filename}.")
                 self._update_timeline_data(0)
+
+            # メディアパイプライン初期化完了後に非同期でスイッチャーを更新
+            QTimer.singleShot(100, self._refresh_switcher_safe)
                 
         except Exception as e:
             print(f"[PlayerVideoPage] Error loading recording data: {e}")

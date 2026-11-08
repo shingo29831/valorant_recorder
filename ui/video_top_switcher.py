@@ -121,8 +121,10 @@ class SwitcherItemCard(QWidget):
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.MouseButton.LeftButton:
-            self.clicked.emit(self.filename)
+            filename = self.filename
             event.accept()
+            # イベント処理中のウィジェット自己破壊によるAccess Violationを防止
+            QTimer.singleShot(0, lambda: self.clicked.emit(filename))
             return
         super().mousePressEvent(event)
 
@@ -350,4 +352,5 @@ class VideoTopSwitcher(QWidget):
 
     def _on_card_clicked(self, filename: str) -> None:
         self.set_state(SwitcherState.HIDDEN, immediate=True)
-        self.recordSelected.emit(filename)
+        # スイッチャー格納アニメーションとイベントループが安定した後に発火
+        QTimer.singleShot(30, lambda: self.recordSelected.emit(filename))
