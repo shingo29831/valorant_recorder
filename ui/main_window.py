@@ -112,16 +112,38 @@ class MainWindow(QMainWindow):
     def show_tutorial_dialog(self, force: bool = False) -> None:
         self.dialog_controller.show_tutorial_dialog(force=force)
 
+    def _set_status_bar_visible(self, visible: bool) -> None:
+        status_bar = self.statusBar()
+        if status_bar.isHidden() == (not visible):
+            return
+        status_bar.setVisible(visible)
+        # 最大化中のQStatusBar表示切替でタスクバー領域の再計算が漏れる現象を防止
+        if self.isVisible() and self.isMaximized():
+            QTimer.singleShot(0, self._refresh_maximized_geometry)
+
+    def _refresh_maximized_geometry(self) -> None:
+        if not self.isVisible() or not self.isMaximized():
+            return
+        self.setUpdatesEnabled(False)
+        try:
+            self.showNormal()
+            if self.layout() is not None:
+                self.layout().activate()
+            self.showMaximized()
+        finally:
+            self.setUpdatesEnabled(True)
+            self.update()
+
     def _on_video_page_visible(self, is_visible: bool) -> None:
         if self.stacked_widget.currentWidget() == self.player_tab:
-            self.statusBar().setVisible(not is_visible)
+            self._set_status_bar_visible(not is_visible)
 
     def _on_main_tab_changed(self, index: int) -> None:
         if self.stacked_widget.currentWidget() == self.settings_tab:
-            self.statusBar().setVisible(True)
+            self._set_status_bar_visible(True)
         elif self.stacked_widget.currentWidget() == self.player_tab:
             is_video = self.player_tab.stacked_widget.currentWidget() == self.player_tab.video_page
-            self.statusBar().setVisible(not is_video)
+            self._set_status_bar_visible(not is_video)
         self.update_storage_gauge()
 
     def update_storage_gauge(self) -> None:
