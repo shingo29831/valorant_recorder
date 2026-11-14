@@ -125,6 +125,16 @@ class WatcherSupervisor:
                             self.wt.current_tag_line = self.wt.config.TAG_LINE
                             self.wt.current_region = self.wt.config.REGION
                         else:
+                            for video_path, vid_time in pending_videos:
+                                vid_mtime = (
+                                    os.path.getmtime(video_path)
+                                    if os.path.exists(video_path)
+                                    else vid_time
+                                )
+                                if time.time() - vid_mtime > 3600:
+                                    self.wt.metadata_service.create_dummy_metadata(
+                                        video_path, vid_time, end_time=vid_mtime
+                                    )
                             continue
 
                     self.wt.log_signal.emit(

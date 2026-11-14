@@ -27,72 +27,75 @@ def find_video_for_json(save_dir: str, json_filename: str, json_data: dict, vide
             if os.path.exists(cand):
                 return cand
 
-    # フォールバック: 保存日時ではなく真の録画開始時刻を基準に最も近い動画を特定
-    target_time = None
+    # フォールバック: 複数の時刻ソース候補から最も近い動画を特定する
+    candidate_times = []
     if video_path:
         m = date_pattern.search(os.path.basename(video_path))
         if m:
             try:
-                target_time = datetime.strptime(m.group(1), "%Y%m%d_%H%M%S")
+                candidate_times.append(datetime.strptime(m.group(1), "%Y%m%d_%H%M%S"))
             except ValueError:
                 pass
 
-    if target_time is None:
-        start_ts = (
-            match_info.get("local_match_start_time")
-            or json_data.get("local_match_start_time")
-            or (
-                (match_info.get("local_recording_start_time_ms") or json_data.get("local_recording_start_time_ms"))
-                / 1000.0
-                if (match_info.get("local_recording_start_time_ms") or json_data.get("local_recording_start_time_ms"))
-                else None
-            )
-            or match_info.get("metadata", {}).get("game_start")
+    local_ts = (
+        match_info.get("local_match_start_time")
+        or json_data.get("local_match_start_time")
+        or (
+            (match_info.get("local_recording_start_time_ms") or json_data.get("local_recording_start_time_ms"))
+            / 1000.0
+            if (match_info.get("local_recording_start_time_ms") or json_data.get("local_recording_start_time_ms"))
+            else None
         )
-        if start_ts:
-            try:
-                target_time = datetime.fromtimestamp(float(start_ts))
-            except (ValueError, OSError, OverflowError):
-                pass
+    )
+    if local_ts:
+        try:
+            candidate_times.append(datetime.fromtimestamp(float(local_ts)))
+        except (ValueError, OSError, OverflowError):
+            pass
 
-    if target_time is None:
-        json_match = date_pattern.search(json_filename)
-        if json_match:
-            try:
-                target_time = datetime.strptime(json_match.group(1), "%Y%m%d_%H%M%S")
-            except ValueError:
-                pass
+    json_match = date_pattern.search(json_filename)
+    if json_match:
+        try:
+            candidate_times.append(datetime.strptime(json_match.group(1), "%Y%m%d_%H%M%S"))
+        except ValueError:
+            pass
 
-    if target_time is None:
+    game_start_ts = match_info.get("metadata", {}).get("game_start")
+    if game_start_ts:
+        try:
+            candidate_times.append(datetime.fromtimestamp(float(game_start_ts)))
+        except (ValueError, OSError, OverflowError):
+            pass
+
+    if not candidate_times:
         return ""
 
-    best_video = ""
-    min_diff = float('inf')
-
-    if video_cache is not None:
-        for f, vid_time in video_cache.items():
-            diff = abs((target_time - vid_time).total_seconds())
-            if diff < min_diff and diff < 7200:
-                min_diff = diff
-                best_video = os.path.join(save_dir, f)
-    else:
+    if video_cache is None:
+        video_cache = {}
         try:
             for f in os.listdir(save_dir):
-                if f.endswith(valid_exts):
+                if f.endswith(valid_exts) and not f.startswith("temp_"):
                     vid_match = date_pattern.search(f)
                     if vid_match:
                         try:
-                            vid_time = datetime.strptime(vid_match.group(1), "%Y%m%d_%H%M%S")
-                            diff = abs((target_time - vid_time).total_seconds())
-                            if diff < min_diff and diff < 7200:
-                                min_diff = diff
-                                best_video = os.path.join(save_dir, f)
+                            video_cache[f] = datetime.strptime(vid_match.group(1), "%Y%m%d_%H%M%S")
                         except ValueError:
                             continue
         except OSError:
             pass
 
-    return best_video
+    for target_time in candidate_times:
+        best_video = ""
+        min_diff = float("inf")
+        for f, vid_time in video_cache.items():
+            diff = abs((target_time - vid_time).total_seconds())
+            if diff < min_diff and diff < 7200:
+                min_diff = diff
+                best_video = os.path.join(save_dir, f)
+        if best_video:
+            return best_video
+
+    return ""
 
 def guess_player_name(kills: list) -> str:
     counts = {}

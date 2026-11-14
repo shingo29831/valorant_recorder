@@ -1,6 +1,6 @@
 """Module: @role: 録画一覧の日付グループ化描画、オンデマンド分割読み込み、Empty State表示、および選択状態管理を担うレンダラー"""
 from typing import Callable, Optional
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
@@ -51,7 +51,9 @@ class PlayerListRenderer:
         self.delete_mode = False
         self.favorite_mode = False
 
-        self.scroll_area.verticalScrollBar().valueChanged.connect(self._on_scroll)
+        scrollbar = self.scroll_area.verticalScrollBar()
+        scrollbar.valueChanged.connect(self._on_scroll)
+        scrollbar.rangeChanged.connect(self._on_scroll_range_changed)
 
     def set_records(
         self,
@@ -159,6 +161,18 @@ class PlayerListRenderer:
     def _on_scroll(self, value: int) -> None:
         scrollbar = self.scroll_area.verticalScrollBar()
         if scrollbar.maximum() - value < 300:
+            self.load_more_items()
+
+    def _on_scroll_range_changed(self, _min: int, max_val: int) -> None:
+        scrollbar = self.scroll_area.verticalScrollBar()
+        if max_val - scrollbar.value() < 300 and self.displayed_count < len(self.filtered_records):
+            QTimer.singleShot(0, self.check_need_more_items)
+
+    def check_need_more_items(self) -> None:
+        if self.displayed_count >= len(self.filtered_records):
+            return
+        scrollbar = self.scroll_area.verticalScrollBar()
+        if scrollbar.maximum() - scrollbar.value() < 300:
             self.load_more_items()
 
     def load_more_items(self) -> None:
@@ -274,6 +288,9 @@ class PlayerListRenderer:
             self.current_flow_layout.addWidget(item_widget)
 
         self.displayed_count = end
+        if self.displayed_count < len(self.filtered_records):
+            # 初回描画や大画面環境でスクロールバーが未出現の場合も画面が埋まるまで連続読込する
+            QTimer.singleShot(0, self.check_need_more_items)
 
     def _update_date_checkbox_style(
         self, checkbox: QPushButton, checked: bool, mode: str = "delete"

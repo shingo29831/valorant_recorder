@@ -464,6 +464,8 @@ class PlayerListPage(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        if hasattr(self, "renderer"):
+            QTimer.singleShot(0, self.renderer.check_need_more_items)
 
     def showEvent(self, event):
         super().showEvent(event)

@@ -61,11 +61,14 @@ class RecordDataLoader:
         available_maps = set()
         
         # N+1問題防止のため、動画ファイル一覧と日時を1回だけキャッシュする
+        valid_exts = ('.mp4', '.mkv', '.avi', '.mov', '.webm')
         video_cache = {}
+        all_video_files = []
         date_pattern = re.compile(r"(\d{8}_\d{6})")
         try:
             for f in os.listdir(self.config.SAVE_DIR):
-                if f.endswith(('.mp4', '.mkv', '.avi')):
+                if f.endswith(valid_exts) and not f.startswith("temp_"):
+                    all_video_files.append(f)
                     vid_match = date_pattern.search(f)
                     if vid_match:
                         try:
@@ -75,7 +78,10 @@ class RecordDataLoader:
                             pass
         except Exception:
             pass
-            
+
+        # JSONが未生成または欠損した過去動画を検出し自動補完する
+        self._ensure_orphan_video_metadata(all_video_files, video_cache, date_pattern)
+
         for f in sorted(os.listdir(self.config.SAVE_DIR), reverse=True):
             if f.endswith(".json"):
                 json_path = os.path.join(self.config.SAVE_DIR, f)
@@ -207,3 +213,81 @@ class RecordDataLoader:
                     print(f"[RecordDataLoader] Error loading {f}: {e}")
                     
         return records_by_date, available_agents, available_maps
+
+    def _ensure_orphan_video_metadata(self, all_video_files: list, video_cache: dict, date_pattern: re.Pattern) -> None:
+        if not all_video_files:
+            return
+        save_dir = self.config.SAVE_DIR
+        handled_videos = set()
+        try:
+            for f in os.listdir(save_dir):
+                if not f.endswith(".json"):
+                    continue
+                json_path = os.path.join(save_dir, f)
+                try:
+                    with open(json_path, "r", encoding="utf-8") as jf:
+                        data = json.load(jf)
+                    vpath = find_video_for_json(save_dir, f, data, video_cache)
+                    if vpath:
+                        handled_videos.add(os.path.basename(vpath))
+                except Exception:
+                    continue
+        except OSError:
+            return
+
+        now = time.time()
+        for vf in all_video_files:
+            if vf in handled_videos:
+                continue
+            v_full = os.path.join(save_dir, vf)
+            try:
+                if os.path.getsize(v_full) == 0:
+                    continue
+                mtime = os.path.getmtime(v_full)
+                # 現在録画中またはAPI取得待機中の直近ファイルはスキップ
+                if now - mtime < 90:
+                    continue
+            except OSError:
+                continue
+
+            if vf in video_cache:
+                dt = video_cache[vf]
+                start_ts = dt.timestamp()
+            else:
+                dt = datetime.fromtimestamp(mtime)
+                start_ts = mtime
+
+            timestamp_str = dt.strftime("%Y%m%d_%H%M%S")
+            match_id = f"recovered_{int(start_ts)}"
+            json_filename = f"match_{timestamp_str}_{match_id}.json"
+            json_filepath = os.path.join(save_dir, json_filename)
+            if os.path.exists(json_filepath):
+                continue
+
+            payload = {
+                "match_info": {
+                    "metadata": {
+                        "matchid": match_id,
+                        "map": "Custom / Unknown",
+                        "game_start": int(start_ts),
+                        "game_length": int(max(0, mtime - start_ts)),
+                        "mode": "Custom",
+                    },
+                    "players": {"all_players": []},
+                    "kills": [],
+                    "rounds": [],
+                    "local_video_path": v_full,
+                    "local_match_start_time": start_ts,
+                    "local_match_end_time": mtime,
+                    "local_round_events": [],
+                    "local_ability_events": [],
+                    "is_fetching_api": False,
+                },
+                "mmr_change": 0,
+                "recorded_at": timestamp_str,
+            }
+            try:
+                with open(json_filepath, "w", encoding="utf-8") as out_f:
+                    json.dump(payload, out_f, indent=4, ensure_ascii=False)
+            except OSError:
+                pass

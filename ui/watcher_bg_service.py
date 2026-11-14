@@ -8,6 +8,7 @@ from typing import Callable, Optional, Set, Tuple
 from api.henrik_api import HenrikAPI
 from core.config import Config
 from storage.metadata_store import MetadataStore
+from ui.player_utils import find_video_for_json
 
 NON_MMR_MODES = ("deathmatch", "custom game", "escalation", "snowball fight", "replication")
 RECORD_DATE_PATTERN = re.compile(r"(\d{8}_\d{6})")
@@ -245,10 +246,11 @@ class MatchMetadataService:
         if not os.path.exists(self.config.SAVE_DIR):
             return []
 
+        valid_exts = (".mp4", ".mkv", ".avi", ".mov", ".webm")
         videos = []
         jsons = []
         for f in os.listdir(self.config.SAVE_DIR):
-            if f.endswith(".mp4"):
+            if f.endswith(valid_exts) and not f.startswith("temp_"):
                 videos.append(f)
             elif f.endswith(".json"):
                 jsons.append(f)
@@ -258,10 +260,9 @@ class MatchMetadataService:
             try:
                 with open(os.path.join(self.config.SAVE_DIR, jf), "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    match_info = data.get("match_info", data)
-                    vpath = match_info.get("local_video_path", "")
-                    if vpath:
-                        handled_videos.add(os.path.basename(vpath.replace("\\", "/")))
+                    resolved = find_video_for_json(self.config.SAVE_DIR, jf, data)
+                    if resolved:
+                        handled_videos.add(os.path.basename(resolved))
             except (OSError, json.JSONDecodeError):
                 pass
 
@@ -313,11 +314,20 @@ class MatchMetadataService:
                 with open(filepath, "r", encoding="utf-8") as jf:
                     data = json.load(jf)
 
-                video_path = data.get("match_info", data).get("local_video_path", "")
-                v_base = os.path.basename(video_path) if video_path else ""
-                is_active = (video_path and video_path == current_video_path) or (v_base in processing_video_paths)
+                raw_video_path = data.get("match_info", data).get("local_video_path", "")
+                resolved_video_path = find_video_for_json(save_dir, f, data) or raw_video_path
+                v_base = os.path.basename(resolved_video_path) if resolved_video_path else ""
+                is_active = (
+                    (resolved_video_path and resolved_video_path == current_video_path)
+                    or (raw_video_path and raw_video_path == current_video_path)
+                    or (v_base in processing_video_paths)
+                )
                 is_broken = False
-                if not is_active and (not video_path or not os.path.exists(video_path) or os.path.getsize(video_path) == 0):
+                if not is_active and (
+                    not resolved_video_path
+                    or not os.path.exists(resolved_video_path)
+                    or os.path.getsize(resolved_video_path) == 0
+                ):
                     if time.time() - os.path.getmtime(filepath) > 300:
                         is_broken = True
 
