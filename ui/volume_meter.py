@@ -55,3 +55,7 @@ class VolumeMeter(QWidget):
             gate_x = int(width * self.gate_threshold)
             painter.setPen(QColor(255, 255, 255))
             painter.drawLine(gate_x, 0, gate_x, height)
+
+        painter.setPen(QColor("#3A4652"))
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawRect(0, 0, width - 1, height - 1)
