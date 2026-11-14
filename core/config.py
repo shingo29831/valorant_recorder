@@ -1,9 +1,22 @@
 import os
+import sys
 from dotenv import load_dotenv, set_key
+
+
+def _resolve_env_file() -> str:
+    # スタートアップ起動時などCWDがアプリディレクトリ外の場合でも確実に.envを参照する
+    if os.path.exists(".env"):
+        return os.path.abspath(".env")
+    if getattr(sys, "frozen", False):
+        base_dir = os.path.dirname(sys.executable)
+    else:
+        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base_dir, ".env")
+
 
 class Config:
     def __init__(self):
-        self.env_file = ".env"
+        self.env_file = _resolve_env_file()
         load_dotenv(self.env_file)
         self.LANGUAGE = os.environ.get("LANGUAGE", "ja") or "ja"
         self.REGION = os.environ.get("VALORANT_REGION", "ap") or "ap"

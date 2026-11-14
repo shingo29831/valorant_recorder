@@ -174,7 +174,7 @@ class MainDialogController(QObject):
         if self._is_initial_env_test:
             if errors:
                 step_results = getattr(self.env_tester, 'step_results', {})
-                if self._active_tutorial_dialog is not None:
+                if self._active_tutorial_dialog is not None or self._window.isHidden():
                     self._pending_env_test_failures = {
                         'step_results': step_results,
                         'errors': errors
@@ -261,8 +261,19 @@ class MainDialogController(QObject):
         dialog.exec()
 
     def check_pending_on_shown(self) -> None:
-        """ウィンドウ表示時に保留中のアップデートがあれば表示"""
+        """ウィンドウ表示時に保留中のアップデートや環境テスト結果があれば表示"""
         if self._pending_update:
             latest_version, download_url = self._pending_update
             self._pending_update = None
             QTimer.singleShot(500, lambda: self.show_update_dialog(latest_version, download_url))
+
+        if self._pending_env_test_failures and self._active_tutorial_dialog is None and getattr(self._config, 'TUTORIAL_COMPLETED', False):
+            pending = self._pending_env_test_failures
+            self._pending_env_test_failures = None
+            QTimer.singleShot(
+                300,
+                lambda: self.show_env_test_result_dialog(
+                    pending.get('step_results', {}),
+                    pending.get('errors', []),
+                ),
+            )

@@ -22,10 +22,10 @@ def set_autostart(enable: bool):
         if enable:
             if getattr(sys, 'frozen', False):
                 # PyInstaller等でビルドされたexeの場合
-                app_path = f'"{sys.executable}"'
+                app_path = f'"{sys.executable}" --tray'
             else:
                 # Pythonスクリプトとして実行されている場合
-                app_path = f'"{sys.executable}" "{os.path.abspath(sys.argv[0])}"'
+                app_path = f'"{sys.executable}" "{os.path.abspath(sys.argv[0])}" --tray'
                 
             winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, app_path)
         else:

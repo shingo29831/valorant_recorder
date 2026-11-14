@@ -91,6 +91,7 @@ from PyQt6.QtNetwork import QLocalSocket, QLocalServer
 from PyQt6.QtCore import QTextStream
 from ui.main_window import MainWindow, get_resource_path
 from core.config import Config
+from core.autostart import set_autostart
 
 VALORANT_STYLE = """
 QWidget {
@@ -166,6 +167,11 @@ QStatusBar {
 SERVER_NAME = "ValorantRecorderSingleInstance"
 
 def main():
+    # レジストリ自動起動時はCWDがSystem32になるため実行ファイル配置先へ移動
+    app_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
+    if os.path.isdir(app_dir):
+        os.chdir(app_dir)
+
     # Windowsのタスクバーアイコンを正しく表示させるためのAppUserModelID設定
     if sys.platform == "win32":
         try:
@@ -181,11 +187,12 @@ def main():
     socket = QLocalSocket()
     socket.connectToServer(SERVER_NAME)
     if socket.waitForConnected(500):
-        # 起動済みの場合は "show" コマンドを送って自身のプロセスは終了する
-        stream = QTextStream(socket)
-        stream << "show"
-        stream.flush()
-        socket.waitForBytesWritten(500)
+        if "--tray" not in sys.argv:
+            # 通常起動された場合は起動済みインスタンスに "show" コマンドを送って終了する
+            stream = QTextStream(socket)
+            stream << "show"
+            stream.flush()
+            socket.waitForBytesWritten(500)
         return
 
     # 初回起動の場合はローカルサーバーを立ててコマンドを待ち受ける
@@ -199,8 +206,10 @@ def main():
     # 最後のウィンドウが閉じられてもアプリを終了しないように設定
     app.setQuitOnLastWindowClosed(False)
     
-    window = MainWindow()
     config = Config()
+    if config.AUTO_START:
+        set_autostart(True)
+    window = MainWindow()
     
     def handle_connection():
         client = server.nextPendingConnection()
