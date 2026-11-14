@@ -55,7 +55,7 @@ class GeneralSettingsWidget(QWidget):
         layout.setContentsMargins(16, 18, 16, 14)
         layout.setHorizontalSpacing(20)
         layout.setVerticalSpacing(16)
-        layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         layout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
         self.language_input = HoverWheelComboBox()

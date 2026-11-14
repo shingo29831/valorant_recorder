@@ -1,12 +1,18 @@
-from PyQt6.QtWidgets import QWidget
-from PyQt6.QtGui import QPainter, QColor
+from PyQt6.QtWidgets import QSizePolicy, QWidget
+from PyQt6.QtGui import QPainter, QColor, QLinearGradient
+from PyQt6.QtCore import Qt, QRectF, QSize
 
 class VolumeMeter(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setMinimumHeight(20)
+        self.setFixedHeight(22)
+        self.setMinimumWidth(120)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.level = 0.0
         self.gate_threshold = 0.0
+
+    def sizeHint(self) -> QSize:
+        return QSize(240, 22)
 
     def set_level(self, level):
         self.level = min(1.0, max(0.0, level))

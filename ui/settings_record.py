@@ -32,7 +32,7 @@ class RecordSettingsWidget(QWidget):
         video_layout.setContentsMargins(16, 18, 16, 14)
         video_layout.setHorizontalSpacing(20)
         video_layout.setVerticalSpacing(14)
-        video_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        video_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         video_layout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
         self.spec_diag_btn = QPushButton("🔍 " + getattr(self.t, "run_spec_diag", "PCスペックに合わせてオススメ設定を診断"))

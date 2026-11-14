@@ -37,7 +37,7 @@ class AudioSettingsWidget(QWidget):
         audio_layout.setContentsMargins(16, 18, 16, 14)
         audio_layout.setHorizontalSpacing(20)
         audio_layout.setVerticalSpacing(14)
-        audio_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        audio_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         audio_layout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
         self.sys_audio_input = HoverWheelComboBox()
