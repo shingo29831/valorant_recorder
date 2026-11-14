@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
 )
 from core.autostart import set_autostart
 from core.env_tester import generate_diagnostic_report
-from ui.settings_utils import change_save_directory
+from ui.settings_utils import HoverWheelComboBox, change_save_directory
 
 
 def open_log_folder(parent=None, t=None) -> None:
@@ -58,7 +58,7 @@ class GeneralSettingsWidget(QWidget):
         layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
         layout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
-        self.language_input = QComboBox()
+        self.language_input = HoverWheelComboBox()
         self.language_input.setMinimumWidth(200)
         self.language_input.setCursor(Qt.CursorShape.PointingHandCursor)
         self.language_input.addItem("English", "en")
@@ -204,7 +204,8 @@ class GeneralSettingsWidget(QWidget):
             return
         self.config.LANGUAGE = lang
         self.config.save()
-        
+        self.language_input.hidePopup()
+
         dialog = QDialog(self)
         dialog.setWindowTitle("Language Changed")
         dialog.setModal(True)

@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
 )
 from recorder.audio_processor_wrapper import AudioProcessorWrapper
 from ui.audio_monitor_threads import MicMonitorThread, SystemAudioMonitorThread
+from ui.settings_utils import HoverWheelComboBox
 from ui.volume_meter import VolumeMeter
 
 
@@ -39,7 +40,7 @@ class AudioSettingsWidget(QWidget):
         audio_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
         audio_layout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
-        self.sys_audio_input = QComboBox()
+        self.sys_audio_input = HoverWheelComboBox()
         self.sys_audio_input.setCursor(Qt.CursorShape.PointingHandCursor)
         default_label = getattr(self.t, "default_device", "Default")
         self.sys_audio_input.addItem(default_label, "default")
@@ -88,7 +89,7 @@ class AudioSettingsWidget(QWidget):
         self.system_volume_meter = VolumeMeter()
         self.system_volume_meter.setMinimumHeight(20)
 
-        self.mic_input = QComboBox()
+        self.mic_input = HoverWheelComboBox()
         self.mic_input.setCursor(Qt.CursorShape.PointingHandCursor)
         self.mic_input.addItem(self.t.none_option, "None")
         self.mic_input.addItem(default_label, "default")
@@ -136,7 +137,7 @@ class AudioSettingsWidget(QWidget):
         gain_layout.addWidget(self.mic_gain_slider, 1)
         gain_layout.addWidget(self.mic_gain_label)
 
-        self.mic_denoise_combo = QComboBox()
+        self.mic_denoise_combo = HoverWheelComboBox()
         self.mic_denoise_combo.setCursor(Qt.CursorShape.PointingHandCursor)
         self.mic_denoise_combo.addItem(self.t.none_option, "None")
         if AudioProcessorWrapper.is_available():
@@ -159,7 +160,7 @@ class AudioSettingsWidget(QWidget):
             self.mic_denoise_combo.setCurrentIndex(idx)
         self.mic_denoise_combo.currentIndexChanged.connect(self._on_denoise_changed)
 
-        self.mic_preprocess_combo = QComboBox()
+        self.mic_preprocess_combo = HoverWheelComboBox()
         self.mic_preprocess_combo.setCursor(Qt.CursorShape.PointingHandCursor)
         none_opt = getattr(self.t, "none_option", "None")
         self.mic_preprocess_combo.addItem(f"{none_opt} (無効化)", "None")
@@ -296,6 +297,7 @@ class AudioSettingsWidget(QWidget):
                     found = True
                     break
             if not found:
+                self.mic_denoise_combo.hidePopup()
                 QMessageBox.warning(
                     self, self.t.nvidia_broadcast_not_found_title, self.t.nvidia_broadcast_not_found_msg
                 )

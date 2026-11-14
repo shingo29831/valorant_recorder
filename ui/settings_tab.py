@@ -144,6 +144,14 @@ class SettingsTab(QWidget):
             QLineEdit:hover, QComboBox:hover, QSpinBox:hover {
                 border-color: #556677;
             }
+            QComboBox QAbstractItemView {
+                background-color: #0F1923;
+                color: #ECE8E1;
+                border: 1px solid #556677;
+                selection-background-color: #FF4655;
+                selection-color: #FFFFFF;
+                outline: none;
+            }
         """)
         scroll.setWidget(content_widget)
         return scroll

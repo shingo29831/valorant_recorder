@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
 from recorder.ffmpeg_downloader import ensure_ffmpeg_downloaded
 from recorder.ffmpeg_recorder import get_available_encoders
 from ui.settings_audio import AudioSettingsWidget
+from ui.settings_utils import HoverWheelComboBox
 
 
 class RecordSettingsWidget(QWidget):
@@ -60,7 +61,7 @@ class RecordSettingsWidget(QWidget):
         self.spec_diag_btn.clicked.connect(self._open_spec_dialog)
         video_layout.addRow("", self.spec_diag_btn)
 
-        self.fps_input = QComboBox()
+        self.fps_input = HoverWheelComboBox()
         self.fps_input.setCursor(Qt.CursorShape.PointingHandCursor)
         fps_items = ["30", "60", "120", "144"]
         cur_fps = str(getattr(self.config, "RECORD_FPS", "60"))
@@ -75,7 +76,7 @@ class RecordSettingsWidget(QWidget):
         ffmpeg_path = ensure_ffmpeg_downloaded(app_data_dir)
         available_encoders, encoder_warning_keys = get_available_encoders(ffmpeg_path)
 
-        self.encoder_input = QComboBox()
+        self.encoder_input = HoverWheelComboBox()
         self.encoder_input.setCursor(Qt.CursorShape.PointingHandCursor)
         self.encoder_input.addItems(available_encoders)
         current_enc = self.config.RECORD_ENCODER
@@ -99,7 +100,7 @@ class RecordSettingsWidget(QWidget):
             warning_label.setStyleSheet("color: #FFB400; font-size: 13px; font-weight: bold; padding: 2px 0;")
             encoder_layout.addWidget(warning_label)
 
-        self.res_input = QComboBox()
+        self.res_input = HoverWheelComboBox()
         self.res_input.setCursor(Qt.CursorShape.PointingHandCursor)
         res_items = ["2560x1440", "1920x1080", "1600x900", "1280x720"]
         cur_res = str(getattr(self.config, "RECORD_RESOLUTION", "1920x1080"))
@@ -112,7 +113,7 @@ class RecordSettingsWidget(QWidget):
             self.res_input.setCurrentText("1920x1080")
         self.res_input.currentTextChanged.connect(self._save_settings)
 
-        self.video_format_input = QComboBox()
+        self.video_format_input = HoverWheelComboBox()
         self.video_format_input.setCursor(Qt.CursorShape.PointingHandCursor)
         self.video_format_input.addItem("ddagrab (GPU Direct)", "ddagrab")
         self.video_format_input.addItem("gdigrab (Compatibility)", "gdigrab")
