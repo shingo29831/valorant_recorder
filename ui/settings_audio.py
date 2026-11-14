@@ -33,9 +33,14 @@ class AudioSettingsWidget(QWidget):
 
         audio_group = QGroupBox(self.t.audio_settings)
         audio_layout = QFormLayout()
-        audio_layout.setSpacing(15)
+        audio_layout.setContentsMargins(16, 18, 16, 14)
+        audio_layout.setHorizontalSpacing(20)
+        audio_layout.setVerticalSpacing(14)
+        audio_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        audio_layout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
         self.sys_audio_input = QComboBox()
+        self.sys_audio_input.setCursor(Qt.CursorShape.PointingHandCursor)
         default_label = getattr(self.t, "default_device", "Default")
         self.sys_audio_input.addItem(default_label, "default")
         self.sys_audio_input.addItem(self.t.none_option, "None")
@@ -62,6 +67,7 @@ class AudioSettingsWidget(QWidget):
         self.sys_audio_input.currentIndexChanged.connect(self._on_sys_audio_changed)
 
         self.system_gain_slider = QSlider(Qt.Orientation.Horizontal)
+        self.system_gain_slider.setCursor(Qt.CursorShape.PointingHandCursor)
         self.system_gain_slider.setRange(0, 300)
         sys_gain_val = float(getattr(self.config, "RECORD_AUDIO_SYSTEM_GAIN", "1.0"))
         if sys_gain_val > 10.0:
@@ -70,15 +76,20 @@ class AudioSettingsWidget(QWidget):
         self.system_gain_slider.valueChanged.connect(self._on_system_gain_changed)
 
         self.system_gain_label = QLabel(f"{sys_gain_val:.2f}x")
-        self.system_gain_label.setFixedWidth(40)
+        self.system_gain_label.setMinimumWidth(56)
+        self.system_gain_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.system_gain_label.setStyleSheet("font-weight: bold; color: #FFFFFF;")
 
         sys_gain_layout = QHBoxLayout()
-        sys_gain_layout.addWidget(self.system_gain_slider)
+        sys_gain_layout.setSpacing(10)
+        sys_gain_layout.addWidget(self.system_gain_slider, 1)
         sys_gain_layout.addWidget(self.system_gain_label)
 
         self.system_volume_meter = VolumeMeter()
+        self.system_volume_meter.setMinimumHeight(20)
 
         self.mic_input = QComboBox()
+        self.mic_input.setCursor(Qt.CursorShape.PointingHandCursor)
         self.mic_input.addItem(self.t.none_option, "None")
         self.mic_input.addItem(default_label, "default")
         try:
@@ -107,6 +118,7 @@ class AudioSettingsWidget(QWidget):
         self.mic_input.currentIndexChanged.connect(self._on_mic_changed)
 
         self.mic_gain_slider = QSlider(Qt.Orientation.Horizontal)
+        self.mic_gain_slider.setCursor(Qt.CursorShape.PointingHandCursor)
         self.mic_gain_slider.setRange(0, 300)
         gain_val = float(getattr(self.config, "RECORD_AUDIO_MIC_GAIN", "1.0"))
         if gain_val > 10.0:
@@ -115,13 +127,17 @@ class AudioSettingsWidget(QWidget):
         self.mic_gain_slider.valueChanged.connect(self._on_gain_changed)
 
         self.mic_gain_label = QLabel(f"{gain_val:.2f}x")
-        self.mic_gain_label.setFixedWidth(40)
+        self.mic_gain_label.setMinimumWidth(56)
+        self.mic_gain_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.mic_gain_label.setStyleSheet("font-weight: bold; color: #FFFFFF;")
 
         gain_layout = QHBoxLayout()
-        gain_layout.addWidget(self.mic_gain_slider)
+        gain_layout.setSpacing(10)
+        gain_layout.addWidget(self.mic_gain_slider, 1)
         gain_layout.addWidget(self.mic_gain_label)
 
         self.mic_denoise_combo = QComboBox()
+        self.mic_denoise_combo.setCursor(Qt.CursorShape.PointingHandCursor)
         self.mic_denoise_combo.addItem(self.t.none_option, "None")
         if AudioProcessorWrapper.is_available():
             self.mic_denoise_combo.addItem("AI (DeepFilterNet)", "AI (DeepFilterNet)")
@@ -144,6 +160,7 @@ class AudioSettingsWidget(QWidget):
         self.mic_denoise_combo.currentIndexChanged.connect(self._on_denoise_changed)
 
         self.mic_preprocess_combo = QComboBox()
+        self.mic_preprocess_combo.setCursor(Qt.CursorShape.PointingHandCursor)
         none_opt = getattr(self.t, "none_option", "None")
         self.mic_preprocess_combo.addItem(f"{none_opt} (無効化)", "None")
         self.mic_preprocess_combo.addItem("SpeexDSP (HPF有効)", "SpeexDSP")
@@ -157,42 +174,52 @@ class AudioSettingsWidget(QWidget):
         self.mic_preprocess_combo.currentIndexChanged.connect(self._on_preprocess_changed)
 
         self.preprocess_warning_label = QLabel("※前処理が無効化されているため、低周波ノイズが入りやすくなります")
-        self.preprocess_warning_label.setStyleSheet("color: #FFaa00; font-size: 11px; font-weight: bold;")
+        self.preprocess_warning_label.setWordWrap(True)
+        self.preprocess_warning_label.setStyleSheet("color: #FFB400; font-size: 13px; font-weight: bold; padding: 2px 0;")
         self.preprocess_warning_label.setVisible(pre_val == "None")
 
         preprocess_layout = QVBoxLayout()
+        preprocess_layout.setContentsMargins(0, 0, 0, 0)
+        preprocess_layout.setSpacing(4)
         preprocess_layout.addWidget(self.mic_preprocess_combo)
         preprocess_layout.addWidget(self.preprocess_warning_label)
-        preprocess_layout.setSpacing(2)
 
         self.mic_gate_slider = QSlider(Qt.Orientation.Horizontal)
+        self.mic_gate_slider.setCursor(Qt.CursorShape.PointingHandCursor)
         self.mic_gate_slider.setRange(0, 100)
         gate_val = int(float(getattr(self.config, "RECORD_AUDIO_MIC_NOISE_GATE", "0")))
         self.mic_gate_slider.setValue(gate_val)
         self.mic_gate_slider.valueChanged.connect(self._on_gate_changed)
 
         self.mic_gate_label = QLabel(f"{gate_val}%")
-        self.mic_gate_label.setFixedWidth(40)
+        self.mic_gate_label.setMinimumWidth(56)
+        self.mic_gate_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.mic_gate_label.setStyleSheet("font-weight: bold; color: #FFFFFF;")
 
         gate_layout = QHBoxLayout()
-        gate_layout.addWidget(self.mic_gate_slider)
+        gate_layout.setSpacing(10)
+        gate_layout.addWidget(self.mic_gate_slider, 1)
         gate_layout.addWidget(self.mic_gate_label)
 
         self.volume_meter = VolumeMeter()
+        self.volume_meter.setMinimumHeight(20)
         self.volume_meter.set_gate_threshold(gate_val / 100.0)
 
         self.mic_monitor_cb = QCheckBox(self.t.listen_to_mic)
+        self.mic_monitor_cb.setCursor(Qt.CursorShape.PointingHandCursor)
         self.mic_monitor_cb.setChecked(False)
         self.mic_monitor_cb.stateChanged.connect(self._on_monitor_changed)
 
         self.monitor_warning_label = QLabel(self.t.monitor_warning)
-        self.monitor_warning_label.setStyleSheet("color: #AAAAAA; font-size: 11px; font-style: italic;")
+        self.monitor_warning_label.setWordWrap(True)
+        self.monitor_warning_label.setStyleSheet("color: #B8C4D0; font-size: 13px; padding-left: 26px;")
         self.monitor_warning_label.setVisible(denoise_val in ("AI (RNNoise)", "AI (DeepFilterNet)"))
 
         monitor_layout = QVBoxLayout()
+        monitor_layout.setContentsMargins(0, 0, 0, 0)
+        monitor_layout.setSpacing(4)
         monitor_layout.addWidget(self.mic_monitor_cb)
         monitor_layout.addWidget(self.monitor_warning_label)
-        monitor_layout.setSpacing(2)
 
         audio_layout.addRow(getattr(self.t, "system_audio_device", "System Audio:"), self.sys_audio_input)
         audio_layout.addRow(self.t.system_gain, sys_gain_layout)

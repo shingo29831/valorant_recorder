@@ -23,29 +23,35 @@ class RecordSettingsWidget(QWidget):
         self.t = t
 
         main_layout = QVBoxLayout()
-        main_layout.setSpacing(15)
+        main_layout.setContentsMargins(16, 12, 16, 16)
+        main_layout.setSpacing(18)
 
         video_group = QGroupBox(self.t.video_settings)
         video_layout = QFormLayout()
-        video_layout.setSpacing(15)
+        video_layout.setContentsMargins(16, 18, 16, 14)
+        video_layout.setHorizontalSpacing(20)
+        video_layout.setVerticalSpacing(14)
+        video_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        video_layout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
         self.spec_diag_btn = QPushButton("🔍 " + getattr(self.t, "run_spec_diag", "PCスペックに合わせてオススメ設定を診断"))
         self.spec_diag_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.spec_diag_btn.setStyleSheet("""
             QPushButton {
                 background-color: #102A43;
-                color: #38BEC9;
+                color: #48D1CC;
                 border: 1px solid #2680C2;
-                border-radius: 4px;
-                padding: 7px 14px;
+                border-radius: 5px;
+                padding: 8px 16px;
+                min-height: 24px;
                 font-weight: bold;
-                font-size: 12px;
+                font-size: 13px;
                 text-align: center;
             }
             QPushButton:hover {
                 background-color: #1A365D;
                 color: #FFFFFF;
-                border-color: #38BEC9;
+                border-color: #48D1CC;
             }
             QPushButton:pressed {
                 background-color: #0B1D33;
@@ -55,6 +61,7 @@ class RecordSettingsWidget(QWidget):
         video_layout.addRow("", self.spec_diag_btn)
 
         self.fps_input = QComboBox()
+        self.fps_input.setCursor(Qt.CursorShape.PointingHandCursor)
         fps_items = ["30", "60", "120", "144"]
         cur_fps = str(getattr(self.config, "RECORD_FPS", "60"))
         if cur_fps and cur_fps not in fps_items:
@@ -69,6 +76,7 @@ class RecordSettingsWidget(QWidget):
         available_encoders, encoder_warning_keys = get_available_encoders(ffmpeg_path)
 
         self.encoder_input = QComboBox()
+        self.encoder_input.setCursor(Qt.CursorShape.PointingHandCursor)
         self.encoder_input.addItems(available_encoders)
         current_enc = self.config.RECORD_ENCODER
         if current_enc in available_encoders:
@@ -81,15 +89,18 @@ class RecordSettingsWidget(QWidget):
         self.encoder_input.currentTextChanged.connect(self._save_settings)
 
         encoder_layout = QVBoxLayout()
+        encoder_layout.setContentsMargins(0, 0, 0, 0)
+        encoder_layout.setSpacing(6)
         encoder_layout.addWidget(self.encoder_input)
         if encoder_warning_keys:
             warning_texts = [getattr(self.t, key, key) for key in encoder_warning_keys]
             warning_label = QLabel("\n".join(warning_texts))
-            warning_label.setStyleSheet("color: #FFaa00; font-size: 11px; font-weight: bold;")
+            warning_label.setWordWrap(True)
+            warning_label.setStyleSheet("color: #FFB400; font-size: 13px; font-weight: bold; padding: 2px 0;")
             encoder_layout.addWidget(warning_label)
-        encoder_layout.setSpacing(2)
 
         self.res_input = QComboBox()
+        self.res_input.setCursor(Qt.CursorShape.PointingHandCursor)
         res_items = ["2560x1440", "1920x1080", "1600x900", "1280x720"]
         cur_res = str(getattr(self.config, "RECORD_RESOLUTION", "1920x1080"))
         if cur_res and "x" in cur_res.lower() and cur_res not in res_items:
@@ -102,6 +113,7 @@ class RecordSettingsWidget(QWidget):
         self.res_input.currentTextChanged.connect(self._save_settings)
 
         self.video_format_input = QComboBox()
+        self.video_format_input.setCursor(Qt.CursorShape.PointingHandCursor)
         self.video_format_input.addItem("ddagrab (GPU Direct)", "ddagrab")
         self.video_format_input.addItem("gdigrab (Compatibility)", "gdigrab")
         cur_vfmt = str(getattr(self.config, "RECORD_VIDEO_FORMAT", "ddagrab")).strip().lower()
@@ -118,6 +130,7 @@ class RecordSettingsWidget(QWidget):
         self.lightweight_mode_cb = QCheckBox(
             getattr(self.t, "lightweight_mode", "軽量モードを有効にする (低負荷録画・省メモリ動作)")
         )
+        self.lightweight_mode_cb.setCursor(Qt.CursorShape.PointingHandCursor)
         self.lightweight_mode_cb.setChecked(getattr(self.config, "LIGHTWEIGHT_MODE", False))
         self.lightweight_mode_cb.toggled.connect(self._on_lightweight_mode_toggled)
         self.lightweight_hint_label = QLabel(
@@ -125,10 +138,12 @@ class RecordSettingsWidget(QWidget):
             if getattr(self.config, "LANGUAGE", "ja") == "ja"
             else "* Optimizes encoder & audio load for low-spec PCs (individual settings remain customizable)."
         )
-        self.lightweight_hint_label.setStyleSheet("color: #AAAAAA; font-size: 11px;")
+        self.lightweight_hint_label.setWordWrap(True)
+        self.lightweight_hint_label.setStyleSheet("color: #B8C4D0; font-size: 13px; padding-left: 26px;")
         self.lightweight_hint_label.setVisible(self.lightweight_mode_cb.isChecked())
         lw_layout = QVBoxLayout()
-        lw_layout.setSpacing(2)
+        lw_layout.setContentsMargins(0, 0, 0, 0)
+        lw_layout.setSpacing(4)
         lw_layout.addWidget(self.lightweight_mode_cb)
         lw_layout.addWidget(self.lightweight_hint_label)
         video_layout.addRow("", lw_layout)
@@ -136,6 +151,7 @@ class RecordSettingsWidget(QWidget):
         self.perf_control_cb = QCheckBox(
             getattr(self.t, "auto_perf_control", "自動負荷コントロールを有効にする (ゲームのFPS低下を防ぐ)")
         )
+        self.perf_control_cb.setCursor(Qt.CursorShape.PointingHandCursor)
         self.perf_control_cb.setChecked(getattr(self.config, "AUTO_PERFORMANCE_CONTROL", True))
         self.perf_control_cb.toggled.connect(self._save_settings)
         video_layout.addRow("", self.perf_control_cb)
@@ -145,6 +161,7 @@ class RecordSettingsWidget(QWidget):
 
         self.audio_widget = AudioSettingsWidget(self.config, self.t, self)
         main_layout.addWidget(self.audio_widget)
+        main_layout.addStretch()
 
         self.setLayout(main_layout)
 

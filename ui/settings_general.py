@@ -42,69 +42,121 @@ class GeneralSettingsWidget(QWidget):
         self.config = config
         self.t = t
         self.parent_tab = parent
-        
+
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtWidgets import QGroupBox
+
+        outer_layout = QVBoxLayout()
+        outer_layout.setContentsMargins(16, 12, 16, 16)
+        outer_layout.setSpacing(16)
+
+        general_group = QGroupBox(self.t.tab_general)
         layout = QFormLayout()
-        layout.setSpacing(15)
-        
+        layout.setContentsMargins(16, 18, 16, 14)
+        layout.setHorizontalSpacing(20)
+        layout.setVerticalSpacing(16)
+        layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        layout.setLabelAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+
         self.language_input = QComboBox()
+        self.language_input.setMinimumWidth(200)
+        self.language_input.setCursor(Qt.CursorShape.PointingHandCursor)
         self.language_input.addItem("English", "en")
         self.language_input.addItem("日本語", "ja")
-        
+
         index = self.language_input.findData(self.config.LANGUAGE)
         if index >= 0:
             self.language_input.setCurrentIndex(index)
-            
+
         self.language_input.currentIndexChanged.connect(self._on_language_changed)
-        
+
         self.save_dir_input = QLineEdit(self.config.SAVE_DIR)
         self.save_dir_input.setReadOnly(True)
+        self.save_dir_input.setToolTip(self.config.SAVE_DIR)
         self.save_dir_btn = QPushButton(self.t.browse)
+        self.save_dir_btn.setMinimumWidth(100)
+        self.save_dir_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.save_dir_btn.clicked.connect(self._browse_save_dir)
-        
+
         save_dir_layout = QHBoxLayout()
-        save_dir_layout.addWidget(self.save_dir_input)
+        save_dir_layout.setSpacing(10)
+        save_dir_layout.addWidget(self.save_dir_input, 1)
         save_dir_layout.addWidget(self.save_dir_btn)
 
         self.clip_dir_input = QLineEdit(self.config.CLIP_SAVE_DIR)
         self.clip_dir_input.setReadOnly(True)
+        self.clip_dir_input.setToolTip(self.config.CLIP_SAVE_DIR)
         self.clip_dir_btn = QPushButton(self.t.browse)
+        self.clip_dir_btn.setMinimumWidth(100)
+        self.clip_dir_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.clip_dir_btn.clicked.connect(self._browse_clip_dir)
-        
+
         clip_dir_layout = QHBoxLayout()
-        clip_dir_layout.addWidget(self.clip_dir_input)
+        clip_dir_layout.setSpacing(10)
+        clip_dir_layout.addWidget(self.clip_dir_input, 1)
         clip_dir_layout.addWidget(self.clip_dir_btn)
 
         self.auto_delete_spin = QSpinBox()
         self.auto_delete_spin.setRange(0, 3650)
         self.auto_delete_spin.setValue(self.config.AUTO_DELETE_DAYS)
         self.auto_delete_spin.setSpecialValueText(self.t.never)
-        
+        self.auto_delete_spin.setMinimumWidth(140)
+
         self.auto_delete_btn = QPushButton(self.t.apply)
+        self.auto_delete_btn.setMinimumWidth(100)
+        self.auto_delete_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.auto_delete_btn.clicked.connect(self._apply_auto_delete)
-        
+
         auto_delete_layout = QHBoxLayout()
-        auto_delete_layout.addWidget(self.auto_delete_spin)
+        auto_delete_layout.setSpacing(10)
+        auto_delete_layout.addWidget(self.auto_delete_spin, 1)
         auto_delete_layout.addWidget(self.auto_delete_btn)
-        
+
         self.auto_start_checkbox = QCheckBox(self.t.enable)
+        self.auto_start_checkbox.setCursor(Qt.CursorShape.PointingHandCursor)
         self.auto_start_checkbox.setChecked(self.config.AUTO_START)
         self.auto_start_checkbox.toggled.connect(self._on_auto_start_toggled)
-        
-        self.check_update_btn = QPushButton(self.t.check_update)
-        self.check_update_btn.clicked.connect(self._check_update)
-        
+
         self.run_test_btn = QPushButton(getattr(self.t, 'run_env_test', "Run Environment Test"))
+        self.run_test_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.run_test_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #1F2E3D;
+                color: #ECE8E1;
+                border: 1px solid #3A506B;
+                border-radius: 4px;
+                padding: 8px 18px;
+                min-height: 24px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #2B4055;
+                border-color: #5BC0BE;
+                color: #FFFFFF;
+            }
+        """)
         self.run_test_btn.clicked.connect(self._run_env_test)
+
+        self.check_update_btn = QPushButton(self.t.check_update)
+        self.check_update_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.check_update_btn.clicked.connect(self._check_update)
+
+        action_btn_layout = QHBoxLayout()
+        action_btn_layout.setSpacing(12)
+        action_btn_layout.addWidget(self.run_test_btn)
+        action_btn_layout.addWidget(self.check_update_btn)
 
         layout.addRow(self.t.language, self.language_input)
         layout.addRow(self.t.save_directory, save_dir_layout)
         layout.addRow(self.t.clip_save_directory, clip_dir_layout)
         layout.addRow(self.t.auto_delete_after_days, auto_delete_layout)
         layout.addRow(self.t.auto_start, self.auto_start_checkbox)
-        layout.addRow("", self.run_test_btn)
-        layout.addRow("", self.check_update_btn)
-        
-        self.setLayout(layout)
+        layout.addRow("", action_btn_layout)
+
+        general_group.setLayout(layout)
+        outer_layout.addWidget(general_group)
+        outer_layout.addStretch()
+        self.setLayout(outer_layout)
 
     def _run_env_test(self):
         from ui.env_test_dialog import EnvTestDialog
@@ -222,7 +274,9 @@ class GeneralSettingsWidget(QWidget):
 
     def refresh_from_config(self):
         self.save_dir_input.setText(self.config.SAVE_DIR)
+        self.save_dir_input.setToolTip(self.config.SAVE_DIR)
         self.clip_dir_input.setText(self.config.CLIP_SAVE_DIR)
+        self.clip_dir_input.setToolTip(self.config.CLIP_SAVE_DIR)
 
         self.auto_delete_spin.blockSignals(True)
         self.auto_delete_spin.setValue(self.config.AUTO_DELETE_DAYS)
