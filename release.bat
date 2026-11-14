@@ -54,7 +54,7 @@ echo New version is: %NEW_VERSION%
 
 echo.
 echo [2/6] Building main.exe and Installer...
-call build_installer.bat
+call build_installer.bat --no-pause
 if errorlevel 1 (
     echo [Error] build_installer.bat failed.
     exit /b 1
@@ -133,7 +133,6 @@ echo.
 echo ===================================================
 echo Release complete! Version: %NEW_VERSION%
 echo ===================================================
-pause
 exit /b 0
 
 :ask_yn
