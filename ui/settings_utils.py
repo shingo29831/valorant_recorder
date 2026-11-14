@@ -1,8 +1,7 @@
-"""Module: @role: 設定画面の共通UIコンポーネント（ホバー展開・ホイール切替コンボボックス）および保存先変更処理を提供するユーティリティ"""
+"""Module: @role: 設定画面の共通UIコンポーネント（ホイール切替・矢印描画コンボボックス）および保存先変更処理を提供するユーティリティ"""
 import logging
 import os
 import shutil
-import time
 import traceback
 from typing import Optional
 from PyQt6.QtWidgets import (
@@ -13,27 +12,19 @@ from PyQt6.QtWidgets import (
     QProgressDialog,
     QWidget,
 )
-from PyQt6.QtCore import QEvent, QItemSelectionModel, QPoint, QRect, Qt, QTimer
-from PyQt6.QtGui import QCursor, QWheelEvent
+from PyQt6.QtCore import QEvent, QItemSelectionModel, QPointF, Qt
+from PyQt6.QtGui import QColor, QPainter, QPen, QPolygonF, QWheelEvent
 
 
 class HoverWheelComboBox(QComboBox):
-    """ホバー時にメニューを自動展開し、ホイール操作で選択項目を切り替えられるコンボボックス"""
+    """クリック展開およびホイール操作で選択項目を切り替えられるコンボボックス"""
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
         self._popup_open: bool = False
-        self._hover_latched: bool = False
-        self._popup_opened_at: float = 0.0
         self._wheel_remainder: int = 0
-        self._initial_cursor_pos: QPoint = QPoint()
-        self._cursor_entered_rect: bool = False
-
-        self._hover_timer = QTimer(self)
-        self._hover_timer.setInterval(40)
-        self._hover_timer.timeout.connect(self._check_hover_state)
 
         self._install_popup_filters()
 
@@ -47,41 +38,6 @@ class HoverWheelComboBox(QComboBox):
             popup_win = view.window()
             if popup_win is not None and popup_win is not self and popup_win is not self.window():
                 popup_win.installEventFilter(self)
-
-    def _get_combo_global_rect(self, margin: int = 4) -> QRect:
-        top_left = self.mapToGlobal(QPoint(0, 0))
-        return QRect(top_left, self.size()).adjusted(-margin, -margin, margin, margin)
-
-    def _get_popup_global_rect(self, margin: int = 6) -> Optional[QRect]:
-        view = self.view()
-        if view is None:
-            return None
-        popup_win = view.window()
-        if popup_win is None or not popup_win.isVisible():
-            return None
-        return popup_win.frameGeometry().adjusted(-margin, -margin, margin, margin)
-
-    def _is_pos_in_combo_or_popup(self, global_pos: QPoint) -> bool:
-        combo_rect = self._get_combo_global_rect(margin=4)
-        if combo_rect.contains(global_pos):
-            return True
-        popup_rect = self._get_popup_global_rect(margin=6)
-        if popup_rect is not None:
-            if popup_rect.contains(global_pos):
-                return True
-            # 本体とポップアップ間の隙間移動でメニューが閉じないよう外接矩形で判定
-            bridge_left = min(combo_rect.left(), popup_rect.left())
-            bridge_right = max(combo_rect.right(), popup_rect.right())
-            bridge_top = min(combo_rect.top(), popup_rect.top())
-            bridge_bottom = max(combo_rect.bottom(), popup_rect.bottom())
-            if QRect(
-                bridge_left,
-                bridge_top,
-                bridge_right - bridge_left,
-                bridge_bottom - bridge_top,
-            ).contains(global_pos):
-                return True
-        return False
 
     def _sync_popup_selection(self, index: int) -> None:
         view = self.view()
@@ -108,73 +64,51 @@ class HoverWheelComboBox(QComboBox):
             return
         self._install_popup_filters()
         self._popup_open = True
-        self._popup_opened_at = time.monotonic()
         super().showPopup()
         self._sync_popup_selection(self.currentIndex())
-        if not self._hover_timer.isActive():
-            self._hover_timer.start()
+        self.update()
 
     def hidePopup(self) -> None:
         self._popup_open = False
         super().hidePopup()
+        self.update()
 
-    def enterEvent(self, event) -> None:
-        super().enterEvent(event)
-        if not self.isEnabled() or self.count() <= 0:
-            return
-        if QApplication.activeModalWidget() is not None:
-            return
-        if not self._hover_latched and not self._popup_open:
-            self._hover_latched = True
-            self._initial_cursor_pos = QCursor.pos()
-            self._cursor_entered_rect = self._is_pos_in_combo_or_popup(self._initial_cursor_pos)
-            self.showPopup()
-        if not self._hover_timer.isActive():
-            self._hover_timer.start()
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        # QSS適用時に標準矢印が消失するため右端ドロップダウン領域へ明示描画
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-    def leaveEvent(self, event) -> None:
-        super().leaveEvent(event)
-        if not self._popup_open:
-            if not self._get_combo_global_rect(margin=2).contains(QCursor.pos()):
-                self._hover_latched = False
+        drop_width = 28.0
+        cx = self.width() - (drop_width / 2.0)
+        cy = self.height() / 2.0
 
-    def _check_hover_state(self) -> None:
-        if not self.isVisible() or not self.isEnabled() or QApplication.activeModalWidget() is not None:
-            if self._popup_open:
-                self.hidePopup()
-            self._hover_latched = False
-            self._hover_timer.stop()
-            return
+        if not self.isEnabled():
+            arrow_color = QColor("#66707A")
+        elif self._popup_open or self.underMouse():
+            arrow_color = QColor("#FFFFFF")
+        else:
+            arrow_color = QColor("#ECE8E1")
 
-        cursor_pos = QCursor.pos()
-        if self._is_pos_in_combo_or_popup(cursor_pos):
-            self._cursor_entered_rect = True
-            return
+        pen = QPen(arrow_color, 2.0)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
 
-        if not self._cursor_entered_rect and cursor_pos == self._initial_cursor_pos:
-            return
-
-        was_open = self._popup_open
         if self._popup_open:
-            self.hidePopup()
-        self._hover_latched = False
-        self._hover_timer.stop()
-
-        if was_open:
-            QTimer.singleShot(0, self._trigger_hovered_sibling_combo)
-
-    def _trigger_hovered_sibling_combo(self) -> None:
-        cursor_pos = QCursor.pos()
-        widget = QApplication.widgetAt(cursor_pos)
-        while widget is not None:
-            if isinstance(widget, HoverWheelComboBox) and widget is not self:
-                if widget.isEnabled() and widget.isVisible():
-                    widget._hover_latched = True
-                    widget._initial_cursor_pos = cursor_pos
-                    widget._cursor_entered_rect = True
-                    widget.showPopup()
-                break
-            widget = widget.parentWidget()
+            points = QPolygonF([
+                QPointF(cx - 4.5, cy + 2.0),
+                QPointF(cx, cy - 2.5),
+                QPointF(cx + 4.5, cy + 2.0),
+            ])
+        else:
+            points = QPolygonF([
+                QPointF(cx - 4.5, cy - 2.0),
+                QPointF(cx, cy + 2.5),
+                QPointF(cx + 4.5, cy - 2.0),
+            ])
+        painter.drawPolyline(points)
+        painter.end()
 
     def wheelEvent(self, event: QWheelEvent) -> None:
         self._handle_wheel_event(event)
@@ -182,12 +116,6 @@ class HoverWheelComboBox(QComboBox):
     def _handle_wheel_event(self, event: QWheelEvent) -> bool:
         if not self.isEnabled() or self.count() <= 0:
             return False
-
-        if not self._popup_open and self.isVisible() and QApplication.activeModalWidget() is None:
-            self._hover_latched = True
-            self._initial_cursor_pos = QCursor.pos()
-            self._cursor_entered_rect = self._is_pos_in_combo_or_popup(self._initial_cursor_pos)
-            self.showPopup()
 
         delta = event.angleDelta().y()
         if delta == 0:
@@ -212,8 +140,9 @@ class HoverWheelComboBox(QComboBox):
         new_index = max(0, min(self.count() - 1, self.currentIndex() + steps))
         if new_index != self.currentIndex():
             self.setCurrentIndex(new_index)
-            self._sync_popup_selection(new_index)
-        else:
+            if self._popup_open:
+                self._sync_popup_selection(new_index)
+        elif self._popup_open:
             self._sync_popup_selection(self.currentIndex())
 
         event.accept()
@@ -228,12 +157,7 @@ class HoverWheelComboBox(QComboBox):
             view = self.view()
             if view is not None and obj in (view, view.window()):
                 self._popup_open = False
-        elif ev_type == QEvent.Type.MouseButtonPress:
-            # ホバー展開直後の反射的なコンボボックス本体クリックで閉じるのを防ぐ
-            if self._popup_open and (time.monotonic() - self._popup_opened_at) < 0.35:
-                global_pos = event.globalPosition().toPoint() if hasattr(event, "globalPosition") else QCursor.pos()
-                if self._get_combo_global_rect(margin=0).contains(global_pos):
-                    return True
+                self.update()
         return super().eventFilter(obj, event)
 
 

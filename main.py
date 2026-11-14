@@ -168,11 +168,19 @@ QLineEdit, QComboBox, QSpinBox, QListWidget {
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus {
     border: 1px solid #FF4655;
 }
+QComboBox {
+    padding-right: 34px;
+}
 QComboBox::drop-down {
     subcontrol-origin: padding;
     subcontrol-position: top right;
     width: 28px;
     border-left: 1px solid #3A444E;
+}
+QComboBox::down-arrow {
+    image: none;
+    width: 0px;
+    height: 0px;
 }
 QComboBox QAbstractItemView {
     background-color: #1F2326;

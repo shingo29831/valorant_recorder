@@ -141,8 +141,28 @@ class SettingsTab(QWidget):
                 font-size: 14px;
                 color: #ECE8E1;
             }
+            QComboBox {
+                padding-right: 34px;
+            }
             QLineEdit:hover, QComboBox:hover, QSpinBox:hover {
                 border-color: #556677;
+            }
+            QComboBox::drop-down {
+                subcontrol-origin: padding;
+                subcontrol-position: top right;
+                width: 28px;
+                border-left: 1px solid #3A4652;
+                background-color: #182430;
+                border-top-right-radius: 3px;
+                border-bottom-right-radius: 3px;
+            }
+            QComboBox::drop-down:hover {
+                background-color: #223242;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                width: 0px;
+                height: 0px;
             }
             QComboBox QAbstractItemView {
                 background-color: #0F1923;
