@@ -214,6 +214,10 @@ class Translations:
     refetching_log: str = "Refetching match log..."
     refetch_log_success: str = "Successfully refetched match log."
     refetch_log_failed: str = "Failed to refetch match log: {error}"
+    batch_refetch_btn: str = "Retry Missing Logs"
+    batch_refetch_btn_count: str = "Retry Missing Logs ({count})"
+    batch_refetching_btn: str = "Fetching Logs..."
+    batch_refetch_none: str = "No records with missing logs found."
 
 EN = Translations(**EN_DICT)
 JA = Translations(**JA_DICT)

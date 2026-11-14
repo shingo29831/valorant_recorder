@@ -210,4 +210,8 @@ JA_DICT: dict[str, str] = dict(
     refetching_log="🔄 ログを再取得しています...",
     refetch_log_success="✅ 試合ログを再取得しました",
     refetch_log_failed="⚠️ ログの再取得に失敗しました: {error}",
+    batch_refetch_btn="ログ一括再取得",
+    batch_refetch_btn_count="未取得ログを一括取得 ({count})",
+    batch_refetching_btn="ログ一括取得中...",
+    batch_refetch_none="未取得のログはありません",
 )

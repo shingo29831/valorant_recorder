@@ -101,6 +101,35 @@ class HenrikAPI:
                     raise RuntimeError(f"API Request failed: {e}")
             if attempt < retries - 1:
                 time.sleep(delay)
+        return 0
+
+    def fetch_mmr_history_map(self, retries: int = 2, delay: int = 3) -> dict[str, int]:
+        url = f"https://valoreco-api.meld-task.com/valorant/v1/mmr-history/{self.region}/{self.name}/{self.tag}"
+
+        for attempt in range(retries):
+            req = urllib.request.Request(url, headers=self._get_headers())
+            try:
+                with urllib.request.urlopen(req, timeout=15) as response:
+                    data = json.loads(response.read().decode("utf-8"))
+                    if data.get("status") == 200 and isinstance(data.get("data"), list):
+                        return {
+                            str(item.get("match_id")): int(item.get("mmr_change_to_last_game") or 0)
+                            for item in data["data"]
+                            if item.get("match_id")
+                        }
+                    return {}
+            except urllib.error.HTTPError as e:
+                if e.code == 429 and attempt < retries - 1:
+                    time.sleep(delay)
+                    continue
+                error_body = e.read().decode("utf-8") if e.fp else ""
+                raise RuntimeError(f"HTTP {e.code}: {e.reason} - {error_body}")
+            except Exception as e:
+                if attempt == retries - 1:
+                    raise RuntimeError(f"API Request failed: {e}")
+            if attempt < retries - 1:
+                time.sleep(delay)
+        return {}
         raise RuntimeError("Failed to fetch match history after retries.")
 
     def fetch_mmr_change(self, match_id: str, retries: int = 3, delay: int = 10) -> int:

@@ -210,4 +210,8 @@ EN_DICT: dict[str, str] = dict(
     refetching_log="🔄 Refetching match log...",
     refetch_log_success="✅ Successfully refetched match log.",
     refetch_log_failed="⚠️ Failed to refetch match log: {error}",
+    batch_refetch_btn="Retry Missing Logs",
+    batch_refetch_btn_count="Retry Missing Logs ({count})",
+    batch_refetching_btn="Fetching Logs...",
+    batch_refetch_none="No records with missing logs found.",
 )

@@ -18,15 +18,23 @@ from ui.in_app_notification import InAppNotification
 from ui.player_list_header import PlayerListHeader
 from ui.player_list_renderer import PlayerListRenderer
 from ui.player_list_actions import (
-    LogRefetchThread,
     delete_single_record_files,
     prompt_and_rename_record,
     reveal_record_in_explorer,
-    set_record_fetching_state,
     show_record_filter_menu,
     show_record_sort_menu,
     toggle_favorite_status,
 )
+from ui.record_log_refetcher import (
+    BatchLogRefetchThread,
+    LogRefetchThread,
+    set_multiple_records_fetching_state,
+    set_record_fetching_state,
+)
+
+REFRESH_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white">
+  <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
+</svg>"""
 
 FILTER_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white">
   <path d="M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z"/>
@@ -70,6 +78,7 @@ class PlayerListPage(QWidget):
         self._needs_refresh = False
         self._refresh_scheduled = False
         self._refetch_threads: dict[str, LogRefetchThread] = {}
+        self._batch_refetch_thread: BatchLogRefetchThread = None
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 16, 20, 16)
@@ -120,6 +129,15 @@ class PlayerListPage(QWidget):
         toolbar_layout.addWidget(self.active_filter_chip)
 
         toolbar_layout.addStretch()
+
+        # 未取得ログ一括再取得ボタン
+        self.batch_refetch_btn = QPushButton()
+        self.batch_refetch_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.batch_refetch_btn.setFixedHeight(30)
+        self.batch_refetch_btn.setIcon(_make_svg_icon(REFRESH_SVG, 16))
+        self.batch_refetch_btn.setIconSize(QSize(16, 16))
+        self.batch_refetch_btn.clicked.connect(self.batch_refetch_logs)
+        toolbar_layout.addWidget(self.batch_refetch_btn)
 
         # フィルターボタン
         self.filter_btn = QPushButton(" フィルター" if self._is_ja else " Filter")
@@ -305,6 +323,42 @@ class PlayerListPage(QWidget):
         self.filter_btn.setStyleSheet(active_style if self.current_filter else base_style)
         self.sort_btn.setStyleSheet(base_style)
         self.sort_btn.setText(f" {self._get_sort_display_text()} ▾")
+
+        missing_count = sum(
+            1
+            for r in getattr(self, "all_loaded_records", [])
+            if r.get("needs_log_refetch") and not r.get("is_fetching_api")
+        )
+        is_batch_running = (
+            self._batch_refetch_thread is not None and self._batch_refetch_thread.isRunning()
+        )
+        if is_batch_running:
+            fetching_lbl = getattr(
+                self.t,
+                "batch_refetching_btn",
+                "ログ一括取得中..." if self._is_ja else "Fetching Logs...",
+            )
+            self.batch_refetch_btn.setText(f" {fetching_lbl}")
+            self.batch_refetch_btn.setEnabled(False)
+            self.batch_refetch_btn.setStyleSheet(base_style)
+        elif missing_count > 0:
+            cnt_tpl = getattr(
+                self.t,
+                "batch_refetch_btn_count",
+                "未取得ログを一括取得 ({count})" if self._is_ja else "Retry Missing Logs ({count})",
+            )
+            self.batch_refetch_btn.setText(f" {cnt_tpl.format(count=missing_count)}")
+            self.batch_refetch_btn.setEnabled(True)
+            self.batch_refetch_btn.setStyleSheet(active_style)
+        else:
+            default_lbl = getattr(
+                self.t,
+                "batch_refetch_btn",
+                "ログ一括再取得" if self._is_ja else "Retry Missing Logs",
+            )
+            self.batch_refetch_btn.setText(f" {default_lbl}")
+            self.batch_refetch_btn.setEnabled(True)
+            self.batch_refetch_btn.setStyleSheet(base_style)
 
         if self.current_filter:
             f_type, f_val = self.current_filter
@@ -587,6 +641,60 @@ class PlayerListPage(QWidget):
         self.refresh_list()
         self.listRefreshed.emit()
         self.notification.show_message(message, duration=4000 if success else 5000)
+
+    def batch_refetch_logs(self) -> None:
+        if self._batch_refetch_thread is not None and self._batch_refetch_thread.isRunning():
+            return
+
+        target_files = [
+            r["filename"]
+            for r in getattr(self.renderer, "filtered_records", [])
+            if r.get("needs_log_refetch")
+            and not r.get("is_fetching_api")
+            and r.get("filename") not in self._refetch_threads
+        ]
+        if not target_files:
+            target_files = [
+                r["filename"]
+                for r in getattr(self, "all_loaded_records", [])
+                if r.get("needs_log_refetch")
+                and not r.get("is_fetching_api")
+                and r.get("filename") not in self._refetch_threads
+            ]
+
+        if not target_files:
+            none_msg = getattr(
+                self.t,
+                "batch_refetch_none",
+                "未取得のログはありません" if self._is_ja else "No records with missing logs found.",
+            )
+            self.notification.show_message(none_msg, duration=3000)
+            return
+
+        set_multiple_records_fetching_state(self.config.SAVE_DIR, target_files, True)
+        self._batch_refetch_thread = BatchLogRefetchThread(
+            self.config, target_files, is_ja=self._is_ja, parent=self
+        )
+        self._batch_refetch_thread.finishedBatchRefetch.connect(self._on_batch_refetch_finished)
+        self._batch_refetch_thread.start()
+
+        self.refresh_list()
+        start_msg = (
+            f"🔄 {len(target_files)} 件の未取得ログを一括取得しています..."
+            if self._is_ja
+            else f"🔄 Fetching logs for {len(target_files)} record(s)..."
+        )
+        self.notification.show_message(start_msg, duration=3500)
+
+    def _on_batch_refetch_finished(
+        self, success_count: int, _total_count: int, message: str
+    ) -> None:
+        if self._batch_refetch_thread is not None:
+            self._batch_refetch_thread.deleteLater()
+            self._batch_refetch_thread = None
+        self.refresh_list()
+        self.listRefreshed.emit()
+        self.notification.show_message(message, duration=4500 if success_count > 0 else 5000)
 
     def show_filter_menu(self):
         show_record_filter_menu(
