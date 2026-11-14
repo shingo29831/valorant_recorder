@@ -206,4 +206,8 @@ EN_DICT: dict[str, str] = dict(
     close_confirm_msg="Do you want to completely exit the application, including background monitoring?\n\n* If you exit completely, VALORANT matches will not be recorded automatically.\n* Select 'Keep in Background' to minimize to the system tray and keep auto-recording active.",
     close_btn_quit="Exit Completely",
     close_btn_minimize="Keep in Background",
+    refetch_log="🔄  Refetch Log",
+    refetching_log="🔄 Refetching match log...",
+    refetch_log_success="✅ Successfully refetched match log.",
+    refetch_log_failed="⚠️ Failed to refetch match log: {error}",
 )

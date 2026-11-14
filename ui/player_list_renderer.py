@@ -26,6 +26,7 @@ class PlayerListRenderer:
         on_delete_requested: Callable[[str], None],
         on_favorite_toggled: Optional[Callable[[str], None]] = None,
         on_reveal_requested: Optional[Callable[[str], None]] = None,
+        on_refetch_log_requested: Optional[Callable[[str], None]] = None,
         on_selection_changed: Optional[Callable[[], None]] = None,
         on_reset_filters: Optional[Callable[[], None]] = None,
     ) -> None:
@@ -38,6 +39,7 @@ class PlayerListRenderer:
         self.on_delete_requested = on_delete_requested
         self.on_favorite_toggled = on_favorite_toggled
         self.on_reveal_requested = on_reveal_requested
+        self.on_refetch_log_requested = on_refetch_log_requested
         self.on_selection_changed = on_selection_changed
         self.on_reset_filters = on_reset_filters
 
@@ -279,6 +281,8 @@ class PlayerListRenderer:
                 item_widget.favoriteToggled.connect(self.on_favorite_toggled)
             if self.on_reveal_requested:
                 item_widget.revealRequested.connect(self.on_reveal_requested)
+            if self.on_refetch_log_requested:
+                item_widget.refetchLogRequested.connect(self.on_refetch_log_requested)
             if self.on_selection_changed:
                 item_widget.selectionToggled.connect(self.on_selection_changed)
             item_widget.set_selection_mode(

@@ -92,7 +92,15 @@ class RecordDataLoader:
                     match_info = data.get("match_info", data)
                     custom_name = data.get("custom_name")
                     is_favorite = data.get("is_favorite", False)
-                    is_fetching_api = data.get("is_fetching_api", False)
+                    raw_is_fetching = bool(
+                        data.get("is_fetching_api", False) or match_info.get("is_fetching_api", False)
+                    )
+                    try:
+                        is_stale_fetching = (time.time() - os.path.getmtime(json_path)) > 300
+                    except OSError:
+                        is_stale_fetching = True
+                    # 取得開始から5分以上経過している場合は中断されたとみなし再取得を許可する
+                    is_fetching_api = raw_is_fetching and not is_stale_fetching
                     
                     game_start = match_info.get("metadata", {}).get("game_start")
                     if game_start:
@@ -183,6 +191,19 @@ class RecordDataLoader:
                         
                     mmr_change = data.get("mmr_change", 0)
                     party_members = match_info.get("party_members", [])
+                    match_id_str = str(match_info.get("metadata", {}).get("matchid") or "")
+                    all_players = match_info.get("players", {}).get("all_players") or []
+                    needs_log_refetch = bool(
+                        not match_id_str
+                        or match_id_str.startswith(("custom_", "pending_", "recovered_"))
+                        or not all_players
+                        or not kills_data
+                        or map_name in ("Unknown", "Custom / Unknown", "Fetching...", "")
+                        or mode in ("Unknown", "Custom", "")
+                        or agent_name in ("Unknown Agent", "Unknown", "")
+                        or result == "unknown"
+                        or (raw_is_fetching and is_stale_fetching)
+                    )
 
                     records_by_date[date_key].append({
                         'filename': f,
@@ -202,6 +223,7 @@ class RecordDataLoader:
                         'mmr_change': mmr_change,
                         'party_members': party_members,
                         'is_fetching_api': is_fetching_api,
+                        'needs_log_refetch': needs_log_refetch,
                         'mode': mode,
                         'timestamp': dt.timestamp()
                     })

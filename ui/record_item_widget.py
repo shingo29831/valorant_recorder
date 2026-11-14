@@ -68,6 +68,7 @@ class RecordItemWidget(QWidget):
     deleteRequested = pyqtSignal(str)
     favoriteToggled = pyqtSignal(str)
     revealRequested = pyqtSignal(str)
+    refetchLogRequested = pyqtSignal(str)
     selectionToggled = pyqtSignal()
 
     CARD_WIDTH = 268
@@ -558,6 +559,19 @@ class RecordItemWidget(QWidget):
     def contextMenuEvent(self, event) -> None:
         self._open_context_menu(event.globalPos())
 
+    def _needs_log_refetch(self) -> bool:
+        if "needs_log_refetch" in self.record_data:
+            return bool(self.record_data["needs_log_refetch"])
+        map_name = self.record_data.get("map_name", "")
+        agent_name = self.record_data.get("agent_name", "")
+        return bool(
+            self.result == "unknown"
+            or self.game_mode in ("Unknown", "Custom", "")
+            or map_name in ("Unknown", "Custom / Unknown", "Fetching...", "")
+            or agent_name in ("Unknown Agent", "Unknown", "")
+            or not self.record_data.get("kda")
+        )
+
     def _open_context_menu(self, global_pos: QPoint) -> None:
         menu = QMenu(self)
         menu.setStyleSheet("""
@@ -587,6 +601,13 @@ class RecordItemWidget(QWidget):
         fav_action = menu.addAction(fav_label)
         rename_action = menu.addAction("✎  名前を変更 (Rename)")
         reveal_action = menu.addAction("📁  保存先フォルダで表示")
+        refetch_action = None
+        if self._needs_log_refetch() or self.is_fetching_api:
+            if self.is_fetching_api:
+                refetch_action = menu.addAction("🔄  ログを取得中...")
+                refetch_action.setEnabled(False)
+            else:
+                refetch_action = menu.addAction("🔄  ログを再取得 (Refetch Log)")
         menu.addSeparator()
         delete_action = menu.addAction("🗑  削除 (Delete)")
 
@@ -600,5 +621,7 @@ class RecordItemWidget(QWidget):
             self.renameRequested.emit(self.json_filename, current)
         elif action == reveal_action:
             self.revealRequested.emit(self.json_filename)
+        elif refetch_action is not None and action == refetch_action:
+            self.refetchLogRequested.emit(self.json_filename)
         elif action == delete_action:
             self.deleteRequested.emit(self.json_filename)

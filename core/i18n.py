@@ -210,6 +210,10 @@ class Translations:
     close_confirm_msg: str = "Do you want to completely exit the application, including background monitoring?\n\n* If you exit completely, VALORANT matches will not be recorded automatically.\n* Select 'Keep in Background' to minimize to the system tray and keep recording active."
     close_btn_quit: str = "Exit Completely"
     close_btn_minimize: str = "Keep in Background"
+    refetch_log: str = "🔄  Refetch Log"
+    refetching_log: str = "Refetching match log..."
+    refetch_log_success: str = "Successfully refetched match log."
+    refetch_log_failed: str = "Failed to refetch match log: {error}"
 
 EN = Translations(**EN_DICT)
 JA = Translations(**JA_DICT)

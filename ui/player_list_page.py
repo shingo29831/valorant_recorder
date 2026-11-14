@@ -14,12 +14,15 @@ from PyQt6.QtSvg import QSvgRenderer
 from core.config import Config
 from core.i18n import get_trans
 from ui.record_data_loader import RecordDataLoader
+from ui.in_app_notification import InAppNotification
 from ui.player_list_header import PlayerListHeader
 from ui.player_list_renderer import PlayerListRenderer
 from ui.player_list_actions import (
+    LogRefetchThread,
     delete_single_record_files,
     prompt_and_rename_record,
     reveal_record_in_explorer,
+    set_record_fetching_state,
     show_record_filter_menu,
     show_record_sort_menu,
     toggle_favorite_status,
@@ -66,6 +69,7 @@ class PlayerListPage(QWidget):
         self.all_loaded_records = []
         self._needs_refresh = False
         self._refresh_scheduled = False
+        self._refetch_threads: dict[str, LogRefetchThread] = {}
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(20, 16, 20, 16)
@@ -250,10 +254,12 @@ class PlayerListPage(QWidget):
             on_delete_requested=self.delete_record,
             on_favorite_toggled=self._on_single_favorite_toggled,
             on_reveal_requested=self._on_reveal_requested,
+            on_refetch_log_requested=self.refetch_record_log,
             on_selection_changed=self._update_batch_bar_state,
             on_reset_filters=self._reset_all_filters,
         )
 
+        self.notification = InAppNotification(self)
         self.refresh_list()
 
     def _get_sort_display_text(self) -> str:
@@ -464,6 +470,8 @@ class PlayerListPage(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
+        if hasattr(self, "notification") and self.notification.isVisible():
+            self.notification.move((self.width() - self.notification.width()) // 2, 20)
         if hasattr(self, "renderer"):
             QTimer.singleShot(0, self.renderer.check_need_more_items)
 
@@ -552,6 +560,33 @@ class PlayerListPage(QWidget):
 
     def _on_reveal_requested(self, json_filename: str) -> None:
         reveal_record_in_explorer(self.config.SAVE_DIR, json_filename)
+
+    def refetch_record_log(self, json_filename: str) -> None:
+        if json_filename in self._refetch_threads:
+            return
+        set_record_fetching_state(self.config.SAVE_DIR, json_filename, True)
+        self.refresh_list()
+        start_msg = getattr(
+            self.t,
+            "refetching_log",
+            "🔄 ログを再取得しています..." if self._is_ja else "🔄 Refetching match log...",
+        )
+        self.notification.show_message(start_msg, duration=3000)
+
+        thread = LogRefetchThread(self.config, json_filename, is_ja=self._is_ja, parent=self)
+        self._refetch_threads[json_filename] = thread
+        thread.finishedRefetch.connect(self._on_refetch_log_finished)
+        thread.start()
+
+    def _on_refetch_log_finished(
+        self, orig_filename: str, success: bool, _new_filename: str, message: str
+    ) -> None:
+        thread = self._refetch_threads.pop(orig_filename, None)
+        if thread is not None:
+            thread.deleteLater()
+        self.refresh_list()
+        self.listRefreshed.emit()
+        self.notification.show_message(message, duration=4000 if success else 5000)
 
     def show_filter_menu(self):
         show_record_filter_menu(

@@ -206,4 +206,8 @@ JA_DICT: dict[str, str] = dict(
     close_confirm_msg="バックグラウンド監視を含めてアプリを完全に終了しますか？\n\n※完全に終了するとVALORANTの自動録画は行われません。\n「バックグラウンドで継続」を選ぶとタスクトレイに最小化され、自動録画を継続します。",
     close_btn_quit="完全に終了 (自動録画停止)",
     close_btn_minimize="バックグラウンドで継続",
+    refetch_log="🔄  ログを再取得 (Refetch Log)",
+    refetching_log="🔄 ログを再取得しています...",
+    refetch_log_success="✅ 試合ログを再取得しました",
+    refetch_log_failed="⚠️ ログの再取得に失敗しました: {error}",
 )
