@@ -6,7 +6,7 @@ import time
 import threading
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
-from ui.player_utils import find_video_for_json, get_agent_name, get_match_result
+from ui.player_utils import find_video_for_json, get_agent_name, get_match_result, get_match_summary_stats
 
 # バックグラウンドでサムネイルを生成するためのスレッドプール（同時実行数1でPCへの負荷を防ぐ）
 _thumb_executor = ThreadPoolExecutor(max_workers=1)
@@ -111,6 +111,7 @@ class RecordDataLoader:
                     
                     # 内部コードネームを実際のマップ表示名に変換
                     map_codenames = {
+                        "ascent": "Ascent",
                         "bonsai": "Split",
                         "triad": "Haven",
                         "duality": "Bind",
@@ -121,13 +122,19 @@ class RecordDataLoader:
                         "jam": "Lotus",
                         "juliett": "Sunset",
                         "infinity": "Abyss",
-                        "init": "Abyss"
+                        "init": "Abyss",
+                        "kasbah": "Kasbah",
+                        "district": "District",
+                        "piazza": "Piazza",
+                        "drift": "Drift",
+                        "glitch": "Glitch",
                     }
                     if map_name.lower() in map_codenames:
                         map_name = map_codenames[map_name.lower()]
                         
                     agent_name = get_agent_name(riot_id, tag_line, match_info, kills_data)
                     result = get_match_result(riot_id, tag_line, match_info, kills_data)
+                    summary_stats = get_match_summary_stats(riot_id, tag_line, match_info, kills_data)
                     
                     available_agents.add(agent_name)
                     available_maps.add(map_name)
@@ -174,6 +181,15 @@ class RecordDataLoader:
                     records_by_date[date_key].append({
                         'filename': f,
                         'display_name': display_name,
+                        'custom_name': custom_name or '',
+                        'map_name': map_name,
+                        'agent_name': agent_name,
+                        'date_str': date_key,
+                        'time_str': time_str,
+                        'kda': summary_stats.get('kda', ''),
+                        'score': summary_stats.get('score', ''),
+                        'duration_str': summary_stats.get('duration_str', ''),
+                        'video_path': video_path or '',
                         'thumb_path': thumb_path,
                         'result': result,
                         'is_favorite': is_favorite,

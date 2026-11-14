@@ -7,16 +7,40 @@ from PyQt6.QtWidgets import QInputDialog, QMenu, QPushButton, QWidget
 from ui.player_utils import find_video_for_json
 
 
-def toggle_favorite_status(save_dir: str, json_filename: str) -> None:
+def toggle_favorite_status(save_dir: str, json_filename: str) -> bool:
     json_path = os.path.join(save_dir, json_filename)
     try:
         with open(json_path, "r", encoding="utf-8") as f:
             data = json.load(f)
-        data["is_favorite"] = not data.get("is_favorite", False)
+        new_state = not data.get("is_favorite", False)
+        data["is_favorite"] = new_state
         with open(json_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=4)
+        return new_state
     except Exception as e:
         print(f"[PlayerListActions] Error updating favorite status: {e}")
+        return False
+
+
+def reveal_record_in_explorer(save_dir: str, json_filename: str) -> None:
+    import subprocess
+    json_path = os.path.join(save_dir, json_filename)
+    target_path = json_path
+    try:
+        if os.path.exists(json_path):
+            with open(json_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            video_path = find_video_for_json(save_dir, json_filename, data)
+            if video_path and os.path.exists(video_path):
+                target_path = video_path
+    except Exception:
+        pass
+
+    norm_target = os.path.normpath(target_path)
+    if os.name == "nt" and os.path.exists(norm_target):
+        subprocess.Popen(["explorer", "/select,", norm_target])
+    elif os.path.exists(save_dir) and os.name == "nt":
+        os.startfile(os.path.normpath(save_dir))
 
 
 def delete_single_record_files(save_dir: str, json_filename: str) -> None:

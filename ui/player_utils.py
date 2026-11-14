@@ -182,3 +182,68 @@ def get_match_result(riot_id: str, tag_line: str, match_info: dict, kills_data: 
             return "loss"
             
     return "unknown"
+
+
+def _find_target_player(riot_id: str, tag_line: str, match_info: dict, kills_data: list) -> dict:
+    clean_riot_id = (riot_id or "").strip().lower()
+    clean_tag_line = (tag_line or "").strip().lower()
+    players = match_info.get("players", {}).get("all_players") or []
+
+    if clean_riot_id and clean_tag_line:
+        for p in players:
+            p_name = str(p.get("name") or "").strip().lower()
+            p_tag = str(p.get("tag") or "").strip().lower()
+            if p_name == clean_riot_id and p_tag == clean_tag_line:
+                return p
+
+    target_display_name = guess_player_name(kills_data)
+    if target_display_name:
+        for p in players:
+            if p.get("name") == target_display_name:
+                return p
+
+    return {}
+
+
+def get_match_summary_stats(riot_id: str, tag_line: str, match_info: dict, kills_data: list) -> dict:
+    player = _find_target_player(riot_id, tag_line, match_info, kills_data)
+    stats = player.get("stats") or {}
+    kills = stats.get("kills")
+    deaths = stats.get("deaths")
+    assists = stats.get("assists")
+
+    kda_str = ""
+    if kills is not None and deaths is not None and assists is not None:
+        kda_str = f"{kills} / {deaths} / {assists}"
+
+    score_str = ""
+    mode = str(match_info.get("metadata", {}).get("mode") or "").lower()
+    if mode == "deathmatch":
+        if kills is not None:
+            score_str = f"{kills} K"
+    else:
+        target_team = str(player.get("team") or "").lower()
+        teams = match_info.get("teams") or {}
+        if isinstance(teams, dict) and target_team in ("red", "blue"):
+            other_team = "blue" if target_team == "red" else "red"
+            my_info = teams.get(target_team) or {}
+            other_info = teams.get(other_team) or {}
+            my_won = my_info.get("rounds_won")
+            other_won = other_info.get("rounds_won")
+            if my_won is not None and other_won is not None:
+                score_str = f"{my_won} - {other_won}"
+
+    duration_str = ""
+    game_length = match_info.get("metadata", {}).get("game_length")
+    if isinstance(game_length, (int, float)) and game_length > 0:
+        # HenrikAPIのバージョン差異によるミリ秒/秒表現の両方に対応
+        total_sec = int(game_length / 1000) if game_length > 10800 else int(game_length)
+        if total_sec > 0:
+            mins, secs = divmod(total_sec, 60)
+            duration_str = f"{mins}:{secs:02d}"
+
+    return {
+        "kda": kda_str,
+        "score": score_str,
+        "duration_str": duration_str,
+    }
