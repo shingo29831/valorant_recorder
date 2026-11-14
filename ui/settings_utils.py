@@ -1,8 +1,8 @@
 """Module: @role: 設定画面の共通UIコンポーネント（ホバー展開・ホイール切替コンボボックス）および保存先変更処理を提供するユーティリティ"""
+import logging
 import os
 import shutil
 import time
-import datetime
 import traceback
 from typing import Optional
 from PyQt6.QtWidgets import (
@@ -237,40 +237,62 @@ class HoverWheelComboBox(QComboBox):
         return super().eventFilter(obj, event)
 
 
+def _should_append_suffix(selected_dir: str, suffix: str) -> bool:
+    """選択されたフォルダに専用サブフォルダ名を付加すべきか判定する"""
+    if not suffix:
+        return False
+    clean_suffix = suffix.strip("/\\").lower()
+    base_name = os.path.basename(os.path.normpath(selected_dir)).lower()
+    if base_name in (clean_suffix, "valoreco", "valorant_records", "valorant_clips", "clips"):
+        return False
+    if os.path.exists(selected_dir):
+        try:
+            entries = os.listdir(selected_dir)
+            # ユーザーが新規作成した空フォルダや既に録画データが存在するフォルダはそのまま利用
+            if not entries:
+                return False
+            if any(
+                f.startswith("match_") and f.endswith((".mp4", ".json", ".jpg"))
+                for f in entries
+            ):
+                return False
+        except OSError:
+            pass
+    return True
+
+
 def change_save_directory(parent_widget, current_dir, t, suffix="/valorant_records"):
     """
     保存先ディレクトリの変更と、既存ファイルの移行処理を行うユーティリティ関数。
     成功した場合は新しいディレクトリパスを返し、キャンセルされた場合はNoneを返す。
     """
-    log_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "dialog_debug.log")
-    
-    def write_log(msg):
-        with open(log_path, "a", encoding="utf-8") as f:
-            f.write(f"[{datetime.datetime.now()}] {msg}\n")
+    def write_log(msg: str) -> None:
+        logging.info(f"[ChangeSaveDir] {msg}")
 
     write_log("--- Starting change_save_directory ---")
     try:
+        initial_dir = current_dir if current_dir and os.path.exists(current_dir) else os.path.expanduser("~")
         selected_dir = QFileDialog.getExistingDirectory(
-            parent_widget, 
+            parent_widget,
             t.select_directory,
-            current_dir
+            initial_dir,
         )
         write_log(f"QFileDialog closed. Selected: {selected_dir}")
 
         if not selected_dir:
             write_log("No directory selected. Aborting.")
             return None
-        
-        selected_dir = selected_dir.replace('\\', '/')
-        if suffix and not selected_dir.endswith(suffix):
-            new_save_dir = f"{selected_dir}{suffix}"
-        else:
-            new_save_dir = selected_dir
 
-        old_save_dir = current_dir.replace('\\', '/')
+        selected_norm = os.path.normpath(selected_dir)
+        if _should_append_suffix(selected_norm, suffix):
+            new_save_dir = os.path.normpath(os.path.join(selected_norm, suffix.strip("/\\")))
+        else:
+            new_save_dir = selected_norm
+
+        old_save_dir = os.path.normpath(current_dir) if current_dir else ""
         write_log(f"Old dir: {old_save_dir}, New dir: {new_save_dir}")
 
-        if new_save_dir == old_save_dir:
+        if old_save_dir and os.path.normcase(new_save_dir) == os.path.normcase(old_save_dir):
             write_log("New directory is the same as old directory. Aborting.")
             return None
 

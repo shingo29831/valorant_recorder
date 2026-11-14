@@ -220,28 +220,49 @@ class GeneralSettingsWidget(QWidget):
     def _browse_save_dir(self):
         if self.parent_tab and hasattr(self.parent_tab, 'record_widget'):
             self.parent_tab.record_widget.stop_monitors()
-            
-        new_dir = change_save_directory(self, self.config.SAVE_DIR, self.t, suffix="/valorant_records")
-        
+
+        old_save_dir = self.config.SAVE_DIR
+        new_dir = change_save_directory(self, old_save_dir, self.t, suffix="/valorant_records")
+
         if new_dir:
-            self.save_dir_input.setText(new_dir)
-            self.config.SAVE_DIR = new_dir
+            norm_new_dir = os.path.normpath(new_dir)
+            self.config.SAVE_DIR = norm_new_dir
+            self.save_dir_input.setText(norm_new_dir)
+            self.save_dir_input.setToolTip(norm_new_dir)
+
+            # クリップ保存先が旧保存先直下のデフォルト(clips)だった場合は新保存先へ連動更新
+            old_default_clip = os.path.normcase(os.path.normpath(os.path.join(old_save_dir, "clips")))
+            cur_clip = os.path.normcase(os.path.normpath(self.config.CLIP_SAVE_DIR))
+            if cur_clip == old_default_clip:
+                new_clip_dir = os.path.normpath(os.path.join(norm_new_dir, "clips"))
+                self.config.CLIP_SAVE_DIR = new_clip_dir
+                self.clip_dir_input.setText(new_clip_dir)
+                self.clip_dir_input.setToolTip(new_clip_dir)
+
             self.config.save()
-            
+
+            main_win = self.window()
+            if hasattr(main_win, 'update_storage_gauge'):
+                main_win.update_storage_gauge()
+            if hasattr(main_win, 'player_tab') and hasattr(main_win.player_tab, 'refresh_list'):
+                main_win.player_tab.refresh_list()
+
         if self.parent_tab and hasattr(self.parent_tab, '_on_subtab_changed'):
             self.parent_tab._on_subtab_changed(self.parent_tab.tab_widget.currentIndex())
 
     def _browse_clip_dir(self):
         if self.parent_tab and hasattr(self.parent_tab, 'record_widget'):
             self.parent_tab.record_widget.stop_monitors()
-            
+
         new_dir = change_save_directory(self, self.config.CLIP_SAVE_DIR, self.t, suffix="/valorant_clips")
-        
+
         if new_dir:
-            self.clip_dir_input.setText(new_dir)
-            self.config.CLIP_SAVE_DIR = new_dir
+            norm_new_dir = os.path.normpath(new_dir)
+            self.config.CLIP_SAVE_DIR = norm_new_dir
+            self.clip_dir_input.setText(norm_new_dir)
+            self.clip_dir_input.setToolTip(norm_new_dir)
             self.config.save()
-            
+
         if self.parent_tab and hasattr(self.parent_tab, '_on_subtab_changed'):
             self.parent_tab._on_subtab_changed(self.parent_tab.tab_widget.currentIndex())
 

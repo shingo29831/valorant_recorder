@@ -20,12 +20,13 @@ def set_autostart(enable: bool):
         )
         
         if enable:
-            if getattr(sys, 'frozen', False):
-                # PyInstaller等でビルドされたexeの場合
-                app_path = f'"{sys.executable}" --tray'
+            from core.config import get_real_executable_path, is_compiled_binary
+            if is_compiled_binary():
+                # PyInstallerやNuitka等でビルドされたexeの場合(一時展開先ではなく実体パスを登録)
+                app_path = f'"{get_real_executable_path()}" --tray'
             else:
                 # Pythonスクリプトとして実行されている場合
-                app_path = f'"{sys.executable}" "{os.path.abspath(sys.argv[0])}" --tray'
+                app_path = f'"{sys.executable}" "{get_real_executable_path()}" --tray'
                 
             winreg.SetValueEx(key, APP_NAME, 0, winreg.REG_SZ, app_path)
         else:

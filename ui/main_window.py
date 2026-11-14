@@ -27,7 +27,7 @@ class MainWindow(QMainWindow):
 
     fatalErrorOccurred = pyqtSignal(str)
 
-    def __init__(self) -> None:
+    def __init__(self, config: Optional[Config] = None) -> None:
         super().__init__()
         self.setWindowTitle(f"ValoReco ヴァロレコ v{APP_VERSION}")
         self.setWindowIcon(QIcon(get_resource_path("assets/icon.ico")))
@@ -37,7 +37,7 @@ class MainWindow(QMainWindow):
         self._tutorial_checked = False
         self._is_quitting = False
 
-        self.config = Config()
+        self.config = config if config is not None else Config()
         self.t = get_trans(self.config.LANGUAGE)
 
         self.stacked_widget = QStackedWidget()

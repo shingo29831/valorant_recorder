@@ -262,9 +262,10 @@ QStatusBar {
 SERVER_NAME = "ValorantRecorderSingleInstance"
 
 def main():
-    # レジストリ自動起動時はCWDがSystem32になるため実行ファイル配置先へ移動
-    app_dir = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.path.dirname(os.path.abspath(__file__))
-    if os.path.isdir(app_dir):
+    # レジストリ自動起動時やNuitka onefile起動時でも一時フォルダではなく本来の配置先へ移動
+    from core.config import get_app_base_dir
+    app_dir = get_app_base_dir()
+    if app_dir and os.path.isdir(app_dir):
         os.chdir(app_dir)
 
     # Windowsのタスクバーアイコンを正しく表示させるためのAppUserModelID設定
@@ -304,7 +305,7 @@ def main():
     config = Config()
     if config.AUTO_START:
         set_autostart(True)
-    window = MainWindow()
+    window = MainWindow(config)
     
     def handle_connection():
         client = server.nextPendingConnection()
