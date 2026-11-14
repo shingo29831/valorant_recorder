@@ -11,6 +11,8 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+import re
+from recorder.ffmpeg_command_builder import get_monitors, resolve_target_monitor
 from recorder.ffmpeg_downloader import ensure_ffmpeg_downloaded
 from recorder.ffmpeg_recorder import get_available_encoders
 from ui.settings_audio import AudioSettingsWidget
@@ -60,6 +62,11 @@ class RecordSettingsWidget(QWidget):
         """)
         self.spec_diag_btn.clicked.connect(self._open_spec_dialog)
         video_layout.addRow("", self.spec_diag_btn)
+
+        self.monitor_input = HoverWheelComboBox()
+        self.monitor_input.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._populate_monitor_options()
+        self.monitor_input.currentIndexChanged.connect(self._save_settings)
 
         self.fps_input = HoverWheelComboBox()
         self.fps_input.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -123,6 +130,7 @@ class RecordSettingsWidget(QWidget):
             self.video_format_input.setCurrentIndex(vfmt_idx)
         self.video_format_input.currentIndexChanged.connect(self._save_settings)
 
+        video_layout.addRow(getattr(self.t, "recording_monitor", "Recording Monitor:"), self.monitor_input)
         video_layout.addRow(self.t.recording_fps, self.fps_input)
         video_layout.addRow(self.t.encoder, encoder_layout)
         video_layout.addRow(self.t.resolution, self.res_input)
@@ -199,7 +207,49 @@ class RecordSettingsWidget(QWidget):
     def stop_monitors(self) -> None:
         self.audio_widget.stop_monitors()
 
+    def _populate_monitor_options(self) -> None:
+        self.monitor_input.blockSignals(True)
+        self.monitor_input.clear()
+
+        monitors = get_monitors()
+        primary_mon = next((m for m in monitors if m.is_primary), monitors[0])
+        is_ja = getattr(self.config, "LANGUAGE", "ja") == "ja"
+        primary_label = getattr(self.t, "primary_monitor", "メインモニター" if is_ja else "Primary Monitor")
+
+        self.monitor_input.addItem(
+            f"{primary_label} ({primary_mon.width}x{primary_mon.height})",
+            "primary",
+        )
+
+        generic_names = {"generic pnp monitor", "汎用 pnp モニター", "default monitor"}
+        for idx, mon in enumerate(monitors, start=1):
+            m_num = re.search(r"(\d+)$", mon.device_name)
+            disp_num = m_num.group(1) if m_num else str(idx)
+            disp_prefix = f"ディスプレイ {disp_num}" if is_ja else f"Display {disp_num}"
+            friendly = mon.friendly_name.strip()
+            if friendly and friendly.lower() not in generic_names and friendly.lower() != disp_prefix.lower():
+                label = f"{disp_prefix}: {friendly} ({mon.width}x{mon.height})"
+            else:
+                label = f"{disp_prefix} ({mon.width}x{mon.height})"
+            if mon.is_primary:
+                label += f" [{primary_label}]"
+            self.monitor_input.addItem(label, mon.device_name)
+
+        raw_src = str(getattr(self.config, "RECORD_INPUT_SOURCE", "primary") or "primary").strip()
+        if raw_src.lower() in ("", "primary", "desktop", "default"):
+            self.monitor_input.setCurrentIndex(0)
+        else:
+            found_idx = self.monitor_input.findData(raw_src)
+            if found_idx < 0:
+                resolved = resolve_target_monitor(self.config)
+                found_idx = self.monitor_input.findData(resolved.device_name)
+            self.monitor_input.setCurrentIndex(found_idx if found_idx >= 0 else 0)
+
+        self.monitor_input.blockSignals(False)
+
     def refresh_from_config(self) -> None:
+        self._populate_monitor_options()
+
         cur_fps = str(getattr(self.config, "RECORD_FPS", "60"))
         self.fps_input.blockSignals(True)
         if self.fps_input.findText(cur_fps) < 0:
@@ -256,6 +306,7 @@ class RecordSettingsWidget(QWidget):
         self.refresh_from_config()
 
     def _save_settings(self) -> None:
+        self.config.RECORD_INPUT_SOURCE = self.monitor_input.currentData() or "primary"
         self.config.RECORD_FPS = self.fps_input.currentText()
         self.config.RECORD_ENCODER = self.encoder_input.currentText()
         self.config.RECORD_RESOLUTION = self.res_input.currentText()

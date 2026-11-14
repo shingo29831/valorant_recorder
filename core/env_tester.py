@@ -34,7 +34,7 @@ def generate_diagnostic_report(config, test_errors: list = None) -> str:
     dir_writable = os.access(save_dir, os.W_OK) if dir_exists else False
     lines.append(f"- Save Dir: {save_dir} (Exists: {dir_exists}, Writable: {dir_writable})")
     lines.append(f"- Encoder: {getattr(config, 'RECORD_ENCODER', 'unknown')}")
-    lines.append(f"- Video Format: {getattr(config, 'RECORD_VIDEO_FORMAT', 'unknown')}")
+    lines.append(f"- Video Format: {getattr(config, 'RECORD_VIDEO_FORMAT', 'unknown')} (Monitor: {getattr(config, 'RECORD_INPUT_SOURCE', 'primary')})")
     lines.append(f"- Res / FPS: {getattr(config, 'RECORD_RESOLUTION', 'unknown')} / {getattr(config, 'RECORD_FPS', 'unknown')}fps")
     lines.append(f"- Lightweight: {getattr(config, 'LIGHTWEIGHT_MODE', False)}")
     lines.append(f"- Audio System: {getattr(config, 'RECORD_AUDIO_SYSTEM', 'default')}")

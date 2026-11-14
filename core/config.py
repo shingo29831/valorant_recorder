@@ -1,4 +1,5 @@
 """Module: @role: アプリケーション設定の永続化(.env)および環境変数の読み書きを担うモジュール"""
+import ctypes
 import logging
 import os
 import re
@@ -6,6 +7,7 @@ import shutil
 import sys
 import tempfile
 import threading
+from typing import Optional
 from dotenv import load_dotenv
 
 _INITIAL_ARGV0 = os.path.abspath(sys.argv[0]) if sys.argv and sys.argv[0] else ""
@@ -21,11 +23,34 @@ _CONTROL_CHAR_RECOVERY_MAP = {
 }
 
 
+def _get_nuitka_onefile_parent_exe() -> Optional[str]:
+    """Nuitka onefile実行時に親ブートストラッププロセスの実体.exeパスを取得する"""
+    parent_pid_str = os.environ.get("NUITKA_ONEFILE_PARENT", "").strip()
+    if not parent_pid_str or sys.platform != "win32":
+        return None
+    try:
+        parent_pid = int(parent_pid_str)
+        process_query_limited_information = 0x1000
+        handle = ctypes.windll.kernel32.OpenProcess(process_query_limited_information, False, parent_pid)
+        if not handle:
+            return None
+        try:
+            buf_len = ctypes.c_ulong(4096)
+            buf = ctypes.create_unicode_buffer(4096)
+            if ctypes.windll.kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(buf_len)):
+                return os.path.abspath(buf.value)
+        finally:
+            ctypes.windll.kernel32.CloseHandle(handle)
+    except Exception:
+        pass
+    return None
+
+
 def is_compiled_binary() -> bool:
     """PyInstallerやNuitka等でコンパイルされた実行環境かを判定する"""
     if getattr(sys, "frozen", False):
         return True
-    if "__compiled__" in globals():
+    if "__compiled__" in globals() or os.environ.get("NUITKA_ONEFILE_PARENT"):
         return True
     main_mod = sys.modules.get("__main__")
     if main_mod is not None and hasattr(main_mod, "__compiled__"):
@@ -49,6 +74,9 @@ def is_temp_extraction_dir(path: str) -> bool:
 
 def get_real_executable_path() -> str:
     """一時展開ディレクトリではなく実際の実行ファイル(.exe)またはスクリプトのパスを返す"""
+    parent_exe = _get_nuitka_onefile_parent_exe()
+    if parent_exe and os.path.exists(parent_exe) and not is_temp_extraction_dir(parent_exe):
+        return parent_exe
     if _INITIAL_ARGV0 and os.path.exists(_INITIAL_ARGV0) and not is_temp_extraction_dir(_INITIAL_ARGV0):
         return _INITIAL_ARGV0
     exe_path = os.path.abspath(sys.executable)
@@ -143,7 +171,9 @@ class Config:
             self.SAVE_DIR = os.path.normpath(os.path.abspath(default_save_dir))
 
         self.RECORD_VIDEO_FORMAT = os.environ.get("RECORD_VIDEO_FORMAT", "ddagrab")
-        self.RECORD_INPUT_SOURCE = os.environ.get("RECORD_INPUT_SOURCE", "desktop")
+        raw_input_source = (os.environ.get("RECORD_INPUT_SOURCE", "primary") or "").strip()
+        # 既存の "desktop" 設定も単一のメインモニター("primary")として扱う
+        self.RECORD_INPUT_SOURCE = "primary" if raw_input_source in ("", "desktop") else raw_input_source
         self.RECORD_AUDIO_SYSTEM = os.environ.get("RECORD_AUDIO_SYSTEM", "default")
         self.RECORD_AUDIO_SYSTEM_GAIN = os.environ.get("RECORD_AUDIO_SYSTEM_GAIN", "1.0")
         self.RECORD_AUDIO_MIC = os.environ.get("RECORD_AUDIO_MIC", "")
@@ -185,8 +215,11 @@ class Config:
 
     @staticmethod
     def _format_env_value(val: str) -> str:
-        escaped = val.replace("'", "\\'")
-        return f"'{escaped}'"
+        # シングルクォートを含まない場合はエスケープ不要な単一引用符、含む場合は二重引用符で安全に囲む
+        if "'" not in val:
+            return f"'{val}'"
+        escaped = val.replace("\\", "\\\\").replace('"', '\\"')
+        return f'"{escaped}"'
 
     def save(self):
         with self._SAVE_LOCK:
@@ -203,7 +236,7 @@ class Config:
                 "TAG_LINE": str(self.TAG_LINE or ""),
                 "RECORD_SAVE_DIR": self.SAVE_DIR.replace("\\", "/"),
                 "RECORD_VIDEO_FORMAT": str(self.RECORD_VIDEO_FORMAT or "ddagrab"),
-                "RECORD_INPUT_SOURCE": str(self.RECORD_INPUT_SOURCE or "desktop"),
+                "RECORD_INPUT_SOURCE": str(self.RECORD_INPUT_SOURCE or "primary"),
                 "RECORD_AUDIO_SYSTEM": str(self.RECORD_AUDIO_SYSTEM or "default"),
                 "RECORD_AUDIO_SYSTEM_GAIN": str(self.RECORD_AUDIO_SYSTEM_GAIN),
                 "RECORD_AUDIO_MIC": str(self.RECORD_AUDIO_MIC or ""),

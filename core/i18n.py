@@ -164,6 +164,8 @@ class Translations:
     env_test_mixed_msg: str
     lightweight_mode: str
     auto_perf_control: str
+    recording_monitor: str = "Recording Monitor:"
+    primary_monitor: str = "Primary Monitor"
     video_format: str = "Capture Mode:"
     system_audio_device: str = "System Audio:"
     default_device: str = "Default"
