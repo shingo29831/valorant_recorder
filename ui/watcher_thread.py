@@ -278,6 +278,12 @@ class WatcherThread(QThread):
         events = list(self.local_round_events)
         ability_events = list(self.local_ability_events)
         start_time_ms = getattr(self, 'local_recording_start_time_ms', None)
+        # C++側が計測した映像・音声パイプラインの実開始時刻を優先して起動遅延ズレを防ぐ
+        if hasattr(self.recorder, 'get_actual_start_time_ms'):
+            native_start_ms = self.recorder.get_actual_start_time_ms()
+            if native_start_ms:
+                start_time_ms = native_start_ms
+                start_time = native_start_ms / 1000.0
         real_match_end_time_ms = getattr(self, 'real_match_end_time_ms', None)
         match_riot_id = getattr(self, '_match_riot_id', None) or self.current_riot_id
         match_tag_line = getattr(self, '_match_tag_line', None) or self.current_tag_line

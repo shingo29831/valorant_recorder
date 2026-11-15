@@ -114,6 +114,12 @@ def load_native_recorder_dll() -> ctypes.CDLL:
     if hasattr(native_lib, "Recorder_SetLowPriority"):
         native_lib.Recorder_SetLowPriority.argtypes = [ctypes.c_bool]
         native_lib.Recorder_SetLowPriority.restype = None
+    if hasattr(native_lib, "Recorder_GetActualStartTimeMs"):
+        native_lib.Recorder_GetActualStartTimeMs.argtypes = []
+        native_lib.Recorder_GetActualStartTimeMs.restype = ctypes.c_int64
+    if hasattr(native_lib, "Recorder_GetActualEndTimeMs"):
+        native_lib.Recorder_GetActualEndTimeMs.argtypes = []
+        native_lib.Recorder_GetActualEndTimeMs.restype = ctypes.c_int64
 
     return native_lib
 

@@ -218,6 +218,16 @@ class Translations:
     batch_refetch_btn_count: str = "Retry Missing Logs ({count})"
     batch_refetching_btn: str = "Fetching Logs..."
     batch_refetch_none: str = "No records with missing logs found."
+    sync_timeline_tooltip: str = "Adjust Timeline Sync"
+    sync_offset_label: str = "Sync Offset:"
+    sync_align_here: str = "Align to Current Time"
+    sync_auto_btn: str = "Auto-Sync from Video"
+    sync_auto_running: str = "Analyzing..."
+    sync_reset: str = "Reset"
+    sync_source_auto: str = "Auto"
+    sync_source_manual: str = "Manual"
+    sync_auto_applied: str = "Timeline synced with video ({offset})."
+    sync_auto_not_confident: str = "Could not detect sync automatically. Use manual adjustment or Align to Current Time."
 
 EN = Translations(**EN_DICT)
 JA = Translations(**JA_DICT)

@@ -15,6 +15,7 @@ from watcher.log_parser import (
     TIME_PATTERN,
     VALID_GAME_STATES,
     WORLD_MAP_PATTERN,
+    estimate_log_tz_offset,
     is_menu_transition_line,
     parse_log_timestamp,
     parse_map_update_from_line,
@@ -46,6 +47,7 @@ class LogWatcher:
         self._stop_requested = False
         self._pending_match_start: Optional[Tuple[float, bool, float]] = None
         self._range_skip_notified = False
+        self._tz_offset: Optional[float] = None
 
         self.map_name_pattern = MAP_NAME_PATTERN
         self.world_map_pattern = WORLD_MAP_PATTERN
@@ -78,7 +80,7 @@ class LogWatcher:
         self.is_range = next_range
         return updated_real_map
 
-    def _scan_recent_log_state(self, f) -> None:
+    def _scan_recent_log_state(self, f, log_path: Optional[str] = None) -> None:
         # 監視開始時に既存ログの末尾を走査し、既に射撃場にいる場合の誤録画を防ぐ
         try:
             f.seek(0, os.SEEK_END)
@@ -86,6 +88,19 @@ class LogWatcher:
             read_size = min(size, 512 * 1024)
             f.seek(max(0, size - read_size), os.SEEK_SET)
             lines = f.read().splitlines()
+            ref_epoch = time.time()
+            if log_path and os.path.exists(log_path):
+                try:
+                    ref_epoch = os.path.getmtime(log_path)
+                except OSError:
+                    pass
+            for rev_line in reversed(lines[-200:]):
+                if self.time_pattern.match(rev_line):
+                    raw_ts = parse_log_timestamp(rev_line)
+                    estimated = estimate_log_tz_offset(raw_ts, ref_epoch)
+                    if estimated is not None:
+                        self._tz_offset = estimated
+                    break
             for raw_line in lines:
                 line = raw_line.strip()
                 if not line:
@@ -116,7 +131,12 @@ class LogWatcher:
             self.on_match_start(False, log_time, is_recovery)
 
     def _parse_log_time(self, line: str) -> float:
-        return parse_log_timestamp(line)
+        if self._tz_offset is None and self.time_pattern.match(line):
+            raw_ts = parse_log_timestamp(line)
+            estimated = estimate_log_tz_offset(raw_ts, time.time())
+            if estimated is not None:
+                self._tz_offset = estimated
+        return parse_log_timestamp(line, tz_offset=self._tz_offset)
 
     def _queue_or_trigger_match_start(self, log_time: float, is_recovery: bool) -> None:
         if self.is_range_detected():
@@ -240,7 +260,7 @@ class LogWatcher:
 
         try:
             f = open(log_path, "r", encoding="utf-8", errors="replace")
-            self._scan_recent_log_state(f)
+            self._scan_recent_log_state(f, log_path=log_path)
 
             try:
                 while not self._stop_requested:
@@ -257,6 +277,7 @@ class LogWatcher:
                                 f.seek(0, os.SEEK_END)
                                 self.is_in_match = False
                                 self.has_entered_in_progress = False
+                                self._tz_offset = None
                                 self._reset_map_and_pending_state()
                                 continue
                         except OSError:

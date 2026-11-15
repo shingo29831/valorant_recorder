@@ -1,5 +1,5 @@
 """Module: @role: VALORANTログ行の正規表現定義とマップ・状態遷移パース処理を担うモジュール"""
-from datetime import datetime
+from datetime import datetime, timezone
 import re
 import time
 from typing import Optional, Tuple
@@ -163,13 +163,28 @@ NON_GAME_MAPS: set[str] = {
 }
 
 
-def parse_log_timestamp(line: str) -> float:
+def estimate_log_tz_offset(raw_local_ts: float, reference_epoch: float) -> Optional[float]:
+    """UEログのタイムスタンプ(通常UTC)とOS実時刻の時差を30分単位で推定する"""
+    diff = reference_epoch - raw_local_ts
+    # 範囲外の過去ログ等で0.0に固定しないようNoneを返し、後続の新規行で再推定可能にする
+    if abs(diff) > 54000.0:
+        return None
+    return round(diff / 1800.0) * 1800.0
+
+
+def parse_log_timestamp(line: str, tz_offset: Optional[float] = None, assume_utc: bool = False) -> float:
     m = TIME_PATTERN.match(line)
     if m:
         try:
             year, month, day, hour, minute, second, ms = map(int, m.groups())
+            if assume_utc:
+                dt = datetime(year, month, day, hour, minute, second, ms * 1000, tzinfo=timezone.utc)
+                return dt.timestamp()
             dt = datetime(year, month, day, hour, minute, second, ms * 1000)
-            return dt.timestamp()
+            ts = dt.timestamp()
+            if tz_offset is not None:
+                ts += tz_offset
+            return ts
         except Exception:
             pass
     return time.time()

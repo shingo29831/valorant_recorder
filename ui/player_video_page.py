@@ -21,12 +21,14 @@ from ui.event_toggle_widget import EventToggleWidget
 from ui.clip_generator_thread import ClipGeneratorThread
 from PyQt6.QtWidgets import QGraphicsOpacityEffect
 from PyQt6.QtCore import QPropertyAnimation
-from ui.timeline_builder import build_timeline_data
+from ui.timeline_builder import build_timeline_data, extract_player_sync_events
 from ui.video_playback_controls import PlaybackControlsWidget
 from ui.clip_edit_panel import ClipEditPanel
 from ui.in_app_notification import InAppNotification
 from ui.player_clip_controller import PlayerClipController
 from ui.player_navigation_controller import PlayerNavigationController
+from ui.timeline_auto_sync import AutoSyncResult, TimelineAutoSyncThread
+from ui.timeline_sync_panel import TimelineSyncPanel
 from ui.video_top_switcher import VideoTopSwitcher, SwitcherState
 
 BACK_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white">
@@ -57,6 +59,10 @@ TRASH_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill
   <path d="M16 9v10H8V9h8m-1.5-6h-5l-1 1H5v2h14V4h-3.5l-1-1zM18 7H6v12c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7z"/>
 </svg>"""
 
+SYNC_SVG = b"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="white">
+  <path d="M12,4V1L8,5l4,4V6c3.31,0,6,2.69,6,6c0,1.01-0.25,1.97-0.7,2.8l1.46,1.46C19.54,15.03,20,13.57,20,12 C20,7.58,16.42,4,12,4z M12,18c-3.31,0-6-2.69-6-6c0-1.01,0.25-1.97,0.7-2.8L5.24,7.74C4.46,8.97,4,10.43,4,12c0,4.42,3.58,8,8,8v3l4-4 l-4-4V18z"/>
+</svg>"""
+
 class PlayerVideoPage(QWidget):
     backRequested = pyqtSignal()
 
@@ -68,7 +74,11 @@ class PlayerVideoPage(QWidget):
         self.current_match_data = None
         self.current_json_filename: Optional[str] = None
         self._pending_video_path: Optional[str] = None
+        self._current_video_path: Optional[str] = None
         self._load_sequence: int = 0
+        self._auto_sync_thread: Optional[TimelineAutoSyncThread] = None
+        self._active_sync_threads: set[TimelineAutoSyncThread] = set()
+        self._auto_sync_attempted_seqs: set[int] = set()
         self._switcher_refresh_timer = QTimer(self)
         self._switcher_refresh_timer.setSingleShot(True)
         self._switcher_refresh_timer.setInterval(150)
@@ -174,9 +184,17 @@ class PlayerVideoPage(QWidget):
         self.player_container = PlayerContainer(self.video_widget)
         self.player_container.setMouseTracking(True)
         
-        # クリップ編集パネル
+        # クリップ編集パネルと同期調整パネル
         self.edit_panel = ClipEditPanel(self.t)
         self.edit_panel.setVisible(False)
+
+        self.sync_panel = TimelineSyncPanel(self.t)
+        self.sync_panel.setVisible(False)
+        self.sync_panel.offsetDeltaRequested.connect(self._on_sync_offset_delta)
+        self.sync_panel.alignEventRequested.connect(self._on_sync_align_event)
+        self.sync_panel.autoSyncRequested.connect(self._on_manual_auto_sync_requested)
+        self.sync_panel.resetRequested.connect(self._on_sync_reset)
+        self.sync_panel.closeRequested.connect(self.toggle_sync_panel)
 
         right_container = QWidget()
         right_container.setFixedWidth(50)
@@ -216,11 +234,24 @@ class PlayerVideoPage(QWidget):
         self.delete_btn.setIconSize(QSize(22, 22))
         self.delete_btn.setToolTip(getattr(self.t, 'confirm_deletion_title', "削除"))
         self.delete_btn.clicked.connect(self.delete_recording)
+
+        self.sync_btn = QPushButton()
+        self.sync_btn.setFixedSize(40, 40)
+        self.sync_btn.setStyleSheet("""
+            QPushButton { border-radius: 20px; background-color: #333333; }
+            QPushButton:hover { background-color: #444444; }
+        """)
+        self.sync_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.sync_btn.setIcon(self._create_icon(SYNC_SVG, 22))
+        self.sync_btn.setIconSize(QSize(22, 22))
+        self.sync_btn.setToolTip(getattr(self.t, 'sync_timeline_tooltip', "タイムライン同期の微調整"))
+        self.sync_btn.clicked.connect(self.toggle_sync_panel)
         
         self.event_toggle_widget = EventToggleWidget()
         self.event_toggle_widget.filterChanged.connect(self.timeline_overlay.set_filters)
         
         right_layout.addWidget(self.edit_mode_btn, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        right_layout.addWidget(self.sync_btn, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
         right_layout.addWidget(self.fav_btn, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
         right_layout.addWidget(self.delete_btn, alignment=Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
         right_layout.addStretch()
@@ -238,6 +269,7 @@ class PlayerVideoPage(QWidget):
         
         page_layout.addWidget(self.playback_controls)
         page_layout.addWidget(self.edit_panel)
+        page_layout.addWidget(self.sync_panel)
         
         self.speed_osd_label = QLabel("1.0x", self.player_container)
         self.speed_osd_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -411,9 +443,25 @@ class PlayerVideoPage(QWidget):
     def _schedule_switcher_refresh(self) -> None:
         self._switcher_refresh_timer.start()
 
+    def _on_sync_thread_finished(self, thread: TimelineAutoSyncThread) -> None:
+        self._active_sync_threads.discard(thread)
+        if self._auto_sync_thread is thread:
+            self._auto_sync_thread = None
+        thread.deleteLater()
+
+    def _stop_auto_sync(self) -> None:
+        # UIスレッドをwait()でブロックせず、killとfinishedシグナル経由で安全に破棄する
+        for thread in list(getattr(self, '_active_sync_threads', ())):
+            thread.cancel()
+        self._auto_sync_thread = None
+        if hasattr(self, 'sync_panel'):
+            self.sync_panel.set_auto_sync_busy(False)
+
     def cleanup_media(self):
         self._load_sequence += 1
         self._pending_video_path = None
+        self._current_video_path = None
+        self._stop_auto_sync()
         if hasattr(self, '_switcher_refresh_timer'):
             self._switcher_refresh_timer.stop()
         if hasattr(self, '_layout_sync_timer'):
@@ -434,6 +482,14 @@ class PlayerVideoPage(QWidget):
     def prepare_recording(self, json_filename: str) -> None:
         self._load_sequence += 1
         self._pending_video_path = None
+        self._current_video_path = None
+        self._stop_auto_sync()
+        if hasattr(self, 'sync_panel'):
+            self.sync_panel.setVisible(False)
+            self.sync_btn.setStyleSheet("""
+                QPushButton { border-radius: 20px; background-color: #333333; }
+                QPushButton:hover { background-color: #444444; }
+            """)
         self.player_core.stop()
         self.current_json_filename = json_filename
         json_path = os.path.join(self.config.SAVE_DIR, json_filename)
@@ -463,6 +519,7 @@ class PlayerVideoPage(QWidget):
         self.player_container._update_video_geometry()
         video_path = self._pending_video_path
         self._pending_video_path = None
+        self._current_video_path = video_path
 
         if video_path and os.path.exists(video_path):
             self.player_core.load_source(video_path)
@@ -493,6 +550,178 @@ class PlayerVideoPage(QWidget):
         self.current_rounds = rounds
         self.nav_controller.set_current_rounds(rounds)
         self.timeline_overlay.set_data(rounds, events)
+        self._refresh_sync_panel(duration_ms)
+
+    def _refresh_sync_panel(self, duration_ms: int) -> None:
+        if not hasattr(self, 'sync_panel') or not self.current_match_data:
+            return
+        match_info = self.current_match_data.get("match_info", self.current_match_data)
+        cur_offset = int(match_info.get("timeline_sync_offset_ms") or 0)
+        cur_source = str(match_info.get("timeline_sync_source") or "")
+        self.sync_panel.update_offset_display(cur_offset, cur_source)
+
+        riot_id = getattr(self.config, "RIOT_ID", "")
+        tag_line = getattr(self.config, "TAG_LINE", "")
+        known_accounts = list(getattr(self.config, "KNOWN_ACCOUNTS", []) or [])
+        base_events = extract_player_sync_events(
+            match_info, duration_ms, riot_id, tag_line, known_accounts=known_accounts
+        )
+
+        combo_events = []
+        type_icon = {"kill": "💥", "death": "💀", "assist": "🤝"}
+        for idx, ev in enumerate(base_events, start=1):
+            ev_type = ev.get("type", "")
+            t_actual = int(ev.get("base_time_ms", 0)) + cur_offset
+            t_disp = f"-{self.format_time(-t_actual)}" if t_actual < 0 else self.format_time(t_actual)
+            combo_events.append({
+                "base_time_ms": int(ev.get("base_time_ms", 0)),
+                "label": f"#{idx} {t_disp} {type_icon.get(ev_type, '')} {ev_type.capitalize()}",
+            })
+        self.sync_panel.set_events(combo_events, self.format_time)
+
+    def _save_timeline_sync(self, offset_ms: int, source: str) -> None:
+        if not self.current_match_data or not self.current_json_filename:
+            return
+        match_info = self.current_match_data.get("match_info", self.current_match_data)
+        match_info["timeline_sync_offset_ms"] = int(offset_ms)
+        match_info["timeline_sync_source"] = source
+        json_path = os.path.join(self.config.SAVE_DIR, self.current_json_filename)
+        try:
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(self.current_match_data, f, ensure_ascii=False, indent=4)
+        except OSError:
+            pass
+        self._update_timeline_data(self.player_core.duration())
+
+    def toggle_sync_panel(self) -> None:
+        if not hasattr(self, 'sync_panel'):
+            return
+        show = not self.sync_panel.isVisible()
+        if show and self.edit_panel.isVisible():
+            self.clip_controller.toggle_edit_mode()
+        self.sync_panel.setVisible(show)
+        bg = "#0078D4" if show else "#333333"
+        hover = "#1084E0" if show else "#444444"
+        self.sync_btn.setStyleSheet(
+            f"QPushButton {{ border-radius: 20px; background-color: {bg}; }}"
+            f"QPushButton:hover {{ background-color: {hover}; }}"
+        )
+
+    def _on_sync_offset_delta(self, delta_ms: int) -> None:
+        if not self.current_match_data:
+            return
+        match_info = self.current_match_data.get("match_info", self.current_match_data)
+        cur = int(match_info.get("timeline_sync_offset_ms") or 0)
+        self._save_timeline_sync(cur + delta_ms, "manual")
+
+    def _on_sync_align_event(self, base_time_ms: int) -> None:
+        if not self.current_match_data:
+            return
+        cur_pos_ms = int(self.player_core.position())
+        new_offset_ms = cur_pos_ms - int(base_time_ms)
+        self._save_timeline_sync(new_offset_ms, "manual")
+
+    def _on_sync_reset(self) -> None:
+        if not self.current_match_data or not self.current_json_filename:
+            return
+        match_info = self.current_match_data.get("match_info", self.current_match_data)
+        match_info.pop("timeline_sync_offset_ms", None)
+        match_info.pop("timeline_sync_source", None)
+        json_path = os.path.join(self.config.SAVE_DIR, self.current_json_filename)
+        try:
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(self.current_match_data, f, ensure_ascii=False, indent=4)
+        except OSError:
+            pass
+        self._update_timeline_data(self.player_core.duration())
+
+    def _has_valid_local_round_events(self, match_info: dict, duration_ms: int) -> bool:
+        raw_events = match_info.get("local_round_events") or []
+        if not raw_events:
+            return False
+        rec_start = match_info.get("local_recording_start_time_ms")
+        if not rec_start:
+            rec_start = int(float(match_info.get("local_match_start_time") or 0) * 1000)
+        max_span = max(duration_ms, 3600000)
+        for ev in raw_events:
+            if ev.get("phase") != "InProgress":
+                continue
+            t = ev.get("time_ms", 0)
+            if t < 1000000000000:
+                t += rec_start
+            if (rec_start - 300000) <= t <= (rec_start + max_span + 300000):
+                return True
+        return False
+
+    def _maybe_start_auto_sync(self, duration_ms: int) -> None:
+        if not self.current_match_data or not self._current_video_path or duration_ms <= 0:
+            return
+        if self._load_sequence in self._auto_sync_attempted_seqs:
+            return
+        match_info = self.current_match_data.get("match_info", self.current_match_data)
+        if match_info.get("timeline_sync_source") in ("manual", "auto"):
+            return
+        if self._has_valid_local_round_events(match_info, duration_ms):
+            return
+        if not (match_info.get("kills") or []):
+            return
+
+        self._auto_sync_attempted_seqs.add(self._load_sequence)
+        self._start_auto_sync_thread(duration_ms, wide_search=False, notify_on_fail=False)
+
+    def _on_manual_auto_sync_requested(self) -> None:
+        duration_ms = self.player_core.duration()
+        if not self.current_match_data or not self._current_video_path or duration_ms <= 0:
+            return
+        self._start_auto_sync_thread(duration_ms, wide_search=True, notify_on_fail=True)
+
+    def _start_auto_sync_thread(self, duration_ms: int, wide_search: bool, notify_on_fail: bool) -> None:
+        self._stop_auto_sync()
+        match_info = self.current_match_data.get("match_info", self.current_match_data)
+        riot_id = getattr(self.config, "RIOT_ID", "")
+        tag_line = getattr(self.config, "TAG_LINE", "")
+        known_accounts = list(getattr(self.config, "KNOWN_ACCOUNTS", []) or [])
+
+        self.sync_panel.set_auto_sync_busy(True)
+        thread = TimelineAutoSyncThread(
+            load_sequence=self._load_sequence,
+            video_path=self._current_video_path,
+            match_info=dict(match_info),
+            duration_ms=duration_ms,
+            riot_id=riot_id,
+            tag_line=tag_line,
+            known_accounts=known_accounts,
+            wide_search=wide_search,
+            parent=None,
+        )
+        thread.syncCompleted.connect(
+            lambda seq, res, nf=notify_on_fail: self._on_auto_sync_completed(seq, res, nf)
+        )
+        thread.finished.connect(lambda t=thread: self._on_sync_thread_finished(t))
+        self._active_sync_threads.add(thread)
+        self._auto_sync_thread = thread
+        thread.start()
+
+    def _on_auto_sync_completed(self, seq: int, result: AutoSyncResult, notify_on_fail: bool) -> None:
+        if seq != self._load_sequence:
+            return
+        if hasattr(self, 'sync_panel'):
+            self.sync_panel.set_auto_sync_busy(False)
+        if result.applied:
+            self._save_timeline_sync(result.sync_offset_ms, "auto")
+            sec = result.sync_offset_ms / 1000.0
+            sign = "+" if sec >= 0 else ""
+            msg = getattr(self.t, "sync_auto_applied", "✅ 映像とログを自動同期しました ({offset})").format(
+                offset=f"{sign}{sec:.1f}s"
+            )
+            self.notification.show_message(msg, duration=4000)
+        elif notify_on_fail:
+            msg = getattr(
+                self.t,
+                "sync_auto_not_confident",
+                "⚠️ 自動同期の確信度が不足しています。手動ボタンまたはイベント基準合わせをご利用ください。",
+            )
+            self.notification.show_message(msg, duration=5000)
 
     def handle_media_error(self, error, error_string):
         print(f"[PlayerVideoPage] Playback Error: {error_string} (Code: {error})")
@@ -525,6 +754,7 @@ class PlayerVideoPage(QWidget):
         
         if duration > 0:
             self._update_timeline_data(duration)
+            self._maybe_start_auto_sync(duration)
 
     def showEvent(self, event):
         super().showEvent(event)

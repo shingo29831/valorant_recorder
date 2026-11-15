@@ -312,6 +312,18 @@ def _collect_account_candidates(
     return candidates
 
 
+def _are_events_near_window(events: list, start_time: float, end_time: float) -> bool:
+    if not events:
+        return False
+    win_lo = (start_time - 3600.0) * 1000.0
+    win_hi = (max(start_time + 3600.0, end_time) + 3600.0) * 1000.0
+    for ev in events:
+        t = ev.get("time_ms", 0)
+        if t < 1000000000000 or (win_lo <= t <= win_hi):
+            return True
+    return False
+
+
 def _apply_matched_data_to_record(
     config: Config,
     json_path: str,
@@ -329,10 +341,18 @@ def _apply_matched_data_to_record(
 ) -> tuple[bool, str, bool]:
     custom_name = data.get("custom_name")
     is_favorite = data.get("is_favorite", False)
+    sync_offset_ms = match_info.get("timeline_sync_offset_ms")
+    sync_source = match_info.get("timeline_sync_source")
     local_round_events = list(match_info.get("local_round_events") or [])
     local_ability_events = list(match_info.get("local_ability_events") or [])
     start_time_ms = match_info.get("local_recording_start_time_ms")
     real_match_end_time_ms = match_info.get("local_real_match_end_time_ms")
+
+    # 過去バージョンのUTC時差バグ等で動画時刻から大きく逸脱した壊れたローカルイベントを排除
+    if local_round_events and not _are_events_near_window(local_round_events, start_time, end_time):
+        local_round_events = []
+    if local_ability_events and not _are_events_near_window(local_ability_events, start_time, end_time):
+        local_ability_events = []
 
     log_extracted = _extract_events_from_local_logs(start_time, end_time)
     if not local_round_events and log_extracted["round_events"]:
@@ -359,6 +379,9 @@ def _apply_matched_data_to_record(
             api_copy["local_recording_start_time_ms"] = start_time_ms
         if real_match_end_time_ms is not None:
             api_copy["local_real_match_end_time_ms"] = real_match_end_time_ms
+        if sync_offset_ms is not None and sync_source == "manual":
+            api_copy["timeline_sync_offset_ms"] = sync_offset_ms
+            api_copy["timeline_sync_source"] = sync_source
 
         store = MetadataStore(config)
         new_filepath = store.save_match_metadata(api_copy, mmr_change)

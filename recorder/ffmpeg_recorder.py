@@ -244,6 +244,15 @@ class FFmpegRecorder:
         except Exception:
             return ""
 
+    def get_actual_start_time_ms(self) -> Optional[int]:
+        if hasattr(self.native_lib, "Recorder_GetActualStartTimeMs"):
+            try:
+                val = int(self.native_lib.Recorder_GetActualStartTimeMs())
+                return val if val > 0 else None
+            except Exception:
+                pass
+        return None
+
     def cancel_recording(self):
         """Remuxを行わずに録画プロセスを即座に停止し、一時ファイルと出力ファイルを破棄する"""
         logging.info("[FFmpegRecorder] Cancelling NativeRecorder...")
