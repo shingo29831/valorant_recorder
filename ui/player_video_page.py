@@ -695,15 +695,23 @@ class PlayerVideoPage(QWidget):
             parent=None,
         )
         thread.syncCompleted.connect(
-            lambda seq, res, nf=notify_on_fail: self._on_auto_sync_completed(seq, res, nf)
+            lambda seq, res, nf=notify_on_fail, t=thread: self._on_auto_sync_completed(seq, res, nf, t)
         )
         thread.finished.connect(lambda t=thread: self._on_sync_thread_finished(t))
         self._active_sync_threads.add(thread)
         self._auto_sync_thread = thread
         thread.start()
 
-    def _on_auto_sync_completed(self, seq: int, result: AutoSyncResult, notify_on_fail: bool) -> None:
+    def _on_auto_sync_completed(
+        self,
+        seq: int,
+        result: AutoSyncResult,
+        notify_on_fail: bool,
+        thread: Optional[TimelineAutoSyncThread] = None,
+    ) -> None:
         if seq != self._load_sequence:
+            return
+        if thread is not None and thread is not self._auto_sync_thread:
             return
         if hasattr(self, 'sync_panel'):
             self.sync_panel.set_auto_sync_busy(False)

@@ -17,6 +17,7 @@ from watcher.log_parser import (
     IGNORED_MODULE_PATTERN,
     RELEVANT_LOG_KEYWORDS,
     TIME_PATTERN,
+    estimate_log_tz_offset,
     normalize_map_name,
     parse_game_mode_from_line,
     parse_log_timestamp,
@@ -149,12 +150,12 @@ def _extract_events_from_local_logs(start_time: float, end_time: float) -> dict:
         if not lines:
             continue
 
-        # UEのUTCログ出力時刻とOSローカルエポック秒の時差をファイル末尾時刻から自動補正
-        tz_offset = 0.0
-        for rev_line in reversed(lines[-200:]):
+        # mtimeが極端にズレた古いコピー等では誤シフトを避けUTC解釈へフォールバック
+        tz_offset: Optional[float] = None
+        for rev_line in reversed(lines):
             if TIME_PATTERN.match(rev_line):
                 last_raw_ts = parse_log_timestamp(rev_line)
-                tz_offset = round((file_mtime - last_raw_ts) / 1800.0) * 1800.0
+                tz_offset = estimate_log_tz_offset(last_raw_ts, file_mtime)
                 break
 
         cur_map = "Unknown"
@@ -163,7 +164,7 @@ def _extract_events_from_local_logs(start_time: float, end_time: float) -> dict:
             line = raw_line.strip()
             if not line or not TIME_PATTERN.match(line):
                 continue
-            ts = parse_log_timestamp(line) + tz_offset
+            ts = parse_log_timestamp(line, tz_offset=tz_offset, assume_utc=(tz_offset is None))
             if ts < win_start or ts > win_end:
                 continue
 
