@@ -146,6 +146,33 @@ if %ERRORLEVEL% EQU 0 (
     echo And upload 'update.zip' and 'Output\ValoReco_Setup.exe' to it.
 )
 
+REM 他の作業中ファイルを巻き込まず version.py の変更時のみ本体リポジトリへ反映
+set "VER_CHANGED="
+for /f "delims=" %%I in ('git status --porcelain -- core/version.py 2^>nul') do set "VER_CHANGED=1"
+if defined VER_CHANGED (
+    echo.
+    echo Committing and pushing core/version.py ^(v%NEW_VERSION%^)...
+    git add core/version.py
+    if errorlevel 1 (
+        echo [Error] git add core/version.py failed.
+        exit /b 1
+    )
+    git diff --cached --quiet -- core/version.py
+    if errorlevel 1 (
+        git commit -m "chore: bump version to %NEW_VERSION%" -- core/version.py
+        if errorlevel 1 (
+            echo [Error] git commit core/version.py failed.
+            exit /b 1
+        )
+        git push
+        if errorlevel 1 (
+            echo [Error] git push failed.
+            exit /b 1
+        )
+        echo Pushed core/version.py update to source repository.
+    )
+)
+
 echo.
 echo ===================================================
 echo Release complete! Version: %NEW_VERSION%
