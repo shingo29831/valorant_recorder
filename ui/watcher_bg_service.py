@@ -163,16 +163,38 @@ class MatchMetadataService:
         for attempt in range(3):
             time.sleep(20)
             try:
-                api_match_data = api.fetch_latest_match()
-                game_start = api_match_data.get("metadata", {}).get("game_start", 0)
+                matches = api.fetch_matches(size=5, retries=2, delay=3)
+                if not matches:
+                    continue
                 duration = max(0.0, end_time - start_time) if end_time else 0.0
-                # 短時間録画(テスト・手動等)で過去マッチを誤誤認しないよう、録画時間に応じた時間窓で検証
-                if duration > 300:
-                    is_time_match = (start_time - 1800) <= game_start <= (end_time + 600)
-                else:
-                    is_time_match = abs(game_start - start_time) <= 600
-                if is_time_match:
-                    match_data = api_match_data
+                best_candidate = None
+                best_diff = float("inf")
+                for api_match_data in matches:
+                    if not self.is_player_in_match(api_match_data, riot_id, tag_line):
+                        continue
+                    meta = api_match_data.get("metadata") or {}
+                    game_start = float(meta.get("game_start") or 0)
+                    if game_start <= 0:
+                        continue
+                    raw_len = float(meta.get("game_length") or 0)
+                    game_len_sec = raw_len / 1000.0 if raw_len > 10800 else raw_len
+                    game_end = game_start + max(game_len_sec, 60.0)
+                    # 録画開始前に終了していた別試合を誤マッチさせない
+                    if game_end < (start_time - 120.0):
+                        continue
+                    # 短時間録画(テスト・手動等)で過去マッチを誤認しないよう、録画時間に応じた時間窓で検証
+                    if duration > 300:
+                        is_time_match = (start_time - 1800) <= game_start <= (end_time + 600)
+                    else:
+                        is_time_match = abs(game_start - start_time) <= 600
+                    if is_time_match:
+                        diff = abs(game_start - start_time)
+                        if diff < best_diff:
+                            best_diff = diff
+                            best_candidate = api_match_data
+
+                if best_candidate is not None:
+                    match_data = best_candidate
                     match_id = match_data["metadata"]["matchid"]
                     mode = match_data.get("metadata", {}).get("mode", "")
                     mmr_change = 0
@@ -188,6 +210,13 @@ class MatchMetadataService:
 
         if match_data:
             try:
+                recorded_player = self.build_recorded_player_info(match_data, riot_id, tag_line, region)
+                if recorded_player:
+                    match_data["recorded_player"] = recorded_player
+                if hasattr(self.config, "register_known_account"):
+                    if self.config.register_known_account(riot_id, tag_line):
+                        self.config.save()
+
                 party_members = self._extract_party_members(match_data, riot_id, tag_line)
                 match_data["party_members"] = party_members
                 match_data["local_video_path"] = video_path
@@ -216,6 +245,48 @@ class MatchMetadataService:
             self.create_dummy_metadata(
                 video_path, start_time, map_name, end_time, events, temp_filepath, start_time_ms, real_match_end_time_ms
             )
+
+    @staticmethod
+    def is_player_in_match(match_data: dict, riot_id: str, tag_line: str) -> bool:
+        clean_id = (riot_id or "").strip().lower()
+        clean_tag = (tag_line or "").strip().lower()
+        if not clean_id or not clean_tag:
+            return False
+        players = match_data.get("players", {}).get("all_players") or []
+        if not players:
+            return True
+        for p in players:
+            p_name = str(p.get("name") or "").strip().lower()
+            p_tag = str(p.get("tag") or "").strip().lower()
+            if p_name == clean_id and p_tag == clean_tag:
+                return True
+        return False
+
+    @staticmethod
+    def build_recorded_player_info(
+        match_data: dict, riot_id: str, tag_line: str, region: str = ""
+    ) -> Optional[dict]:
+        clean_id = (riot_id or "").strip().lower()
+        clean_tag = (tag_line or "").strip().lower()
+        if not clean_id or not clean_tag:
+            return None
+        players = match_data.get("players", {}).get("all_players") or []
+        for p in players:
+            p_name = str(p.get("name") or "").strip().lower()
+            p_tag = str(p.get("tag") or "").strip().lower()
+            if p_name == clean_id and p_tag == clean_tag:
+                return {
+                    "name": str(p.get("name") or riot_id).strip(),
+                    "tag": str(p.get("tag") or tag_line).strip(),
+                    "puuid": str(p.get("puuid") or "").strip(),
+                    "region": str(region or "").strip().lower(),
+                }
+        return {
+            "name": (riot_id or "").strip(),
+            "tag": (tag_line or "").strip(),
+            "puuid": "",
+            "region": str(region or "").strip().lower(),
+        }
 
     @staticmethod
     def _extract_party_members(match_data: dict, riot_id: str, tag_line: str) -> list[str]:

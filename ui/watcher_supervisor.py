@@ -4,6 +4,7 @@ import threading
 import time
 from typing import TYPE_CHECKING
 from api.henrik_api import HenrikAPI
+from ui.watcher_bg_service import NON_MMR_MODES, MatchMetadataService
 
 if TYPE_CHECKING:
     from ui.watcher_thread import WatcherThread
@@ -95,47 +96,58 @@ class WatcherSupervisor:
                 self.wt.log_signal.emit(self.wt.t.log_bg_pending_videos.format(count=len(pending_videos)))
 
                 try:
-                    if not self.wt.current_riot_id or not self.wt.current_tag_line:
-                        from scripts.get_local_api_info import get_client_region, get_current_player
+                    # アカウント切替に追従するため毎回ローカルクライアントの現在アカウントを確認する
+                    from scripts.get_local_api_info import get_client_region, get_current_player
 
-                        name, tag = get_current_player()
-                        region = get_client_region()
-                        if name and tag:
-                            self.wt.current_riot_id = name
-                            self.wt.current_tag_line = tag
-                            self.wt.current_region = region if region else self.wt.config.REGION
+                    det_name, det_tag = get_current_player()
+                    det_region = get_client_region()
+                    if det_name and det_tag:
+                        resolved_region = det_region if det_region else (self.wt.config.REGION or "ap")
+                        account_changed = (
+                            self.wt.current_riot_id != det_name
+                            or self.wt.current_tag_line != det_tag
+                            or self.wt.current_region != resolved_region
+                        )
+                        self.wt.current_riot_id = det_name
+                        self.wt.current_tag_line = det_tag
+                        self.wt.current_region = resolved_region
 
-                            if (
-                                self.wt.config.RIOT_ID != name
-                                or self.wt.config.TAG_LINE != tag
-                                or self.wt.config.REGION != self.wt.current_region
-                            ):
-                                self.wt.config.RIOT_ID = name
-                                self.wt.config.TAG_LINE = tag
-                                self.wt.config.REGION = self.wt.current_region
-                                self.wt.config.save()
-
+                        cfg_changed = False
+                        if hasattr(self.wt.config, "register_known_account") and self.wt.config.register_known_account(det_name, det_tag):
+                            cfg_changed = True
+                        if (
+                            self.wt.config.RIOT_ID != det_name
+                            or self.wt.config.TAG_LINE != det_tag
+                            or self.wt.config.REGION != resolved_region
+                        ):
+                            self.wt.config.RIOT_ID = det_name
+                            self.wt.config.TAG_LINE = det_tag
+                            self.wt.config.REGION = resolved_region
+                            cfg_changed = True
+                        if cfg_changed:
+                            self.wt.config.save()
+                        if account_changed:
                             self.wt.log_signal.emit(
                                 self.wt.t.log_bg_player_detected.format(
-                                    name=name, tag=tag, region=self.wt.current_region
+                                    name=det_name, tag=det_tag, region=resolved_region
                                 )
                             )
-                        elif self.wt.config.RIOT_ID and self.wt.config.TAG_LINE:
-                            self.wt.current_riot_id = self.wt.config.RIOT_ID
-                            self.wt.current_tag_line = self.wt.config.TAG_LINE
-                            self.wt.current_region = self.wt.config.REGION
-                        else:
-                            for video_path, vid_time in pending_videos:
-                                vid_mtime = (
-                                    os.path.getmtime(video_path)
-                                    if os.path.exists(video_path)
-                                    else vid_time
+                    elif self.wt.config.RIOT_ID and self.wt.config.TAG_LINE:
+                        self.wt.current_riot_id = self.wt.config.RIOT_ID.strip()
+                        self.wt.current_tag_line = self.wt.config.TAG_LINE.strip()
+                        self.wt.current_region = det_region or self.wt.config.REGION or "ap"
+                    else:
+                        for video_path, vid_time in pending_videos:
+                            vid_mtime = (
+                                os.path.getmtime(video_path)
+                                if os.path.exists(video_path)
+                                else vid_time
+                            )
+                            if time.time() - vid_mtime > 3600:
+                                self.wt.metadata_service.create_dummy_metadata(
+                                    video_path, vid_time, end_time=vid_mtime
                                 )
-                                if time.time() - vid_mtime > 3600:
-                                    self.wt.metadata_service.create_dummy_metadata(
-                                        video_path, vid_time, end_time=vid_mtime
-                                    )
-                            continue
+                        continue
 
                     self.wt.log_signal.emit(
                         self.wt.t.log_bg_fetching.format(
@@ -149,12 +161,12 @@ class WatcherSupervisor:
                     )
 
                     try:
-                        api_match_data = api.fetch_latest_match(retries=1, delay=2)
+                        matches = api.fetch_matches(size=10, retries=1, delay=2)
                     except Exception as e:
                         self.wt.log_signal.emit(self.wt.t.log_bg_api_error.format(error=e))
-                        api_match_data = None
+                        matches = []
 
-                    if not api_match_data:
+                    if not matches:
                         for video_path, vid_time in pending_videos:
                             vid_mtime = (
                                 os.path.getmtime(video_path)
@@ -172,43 +184,72 @@ class WatcherSupervisor:
                                 )
                         continue
 
-                    game_start = api_match_data.get("metadata", {}).get("game_start", 0)
+                    latest_game_start = max(
+                        (float(m.get("metadata", {}).get("game_start") or 0) for m in matches),
+                        default=0.0,
+                    )
 
                     for video_path, vid_time in pending_videos:
                         vid_mtime = (
                             os.path.getmtime(video_path) if os.path.exists(video_path) else vid_time
                         )
-                        is_time_match = (
-                            abs(game_start - vid_time) < 7200
-                            or ((vid_time - 1800) <= game_start <= (vid_mtime + 600))
-                        )
+                        best_match = None
+                        best_diff = float("inf")
+                        for m in matches:
+                            if not MatchMetadataService.is_player_in_match(
+                                m, self.wt.current_riot_id, self.wt.current_tag_line
+                            ):
+                                continue
+                            meta = m.get("metadata") or {}
+                            game_start = float(meta.get("game_start") or 0)
+                            if game_start <= 0:
+                                continue
+                            raw_len = float(meta.get("game_length") or 0)
+                            game_len_sec = raw_len / 1000.0 if raw_len > 10800 else raw_len
+                            game_end = game_start + max(game_len_sec, 60.0)
+                            if game_end < (vid_time - 120.0):
+                                continue
+                            diff = abs(game_start - vid_time)
+                            overlaps = (vid_time - 900.0) <= game_end and (vid_mtime + 600.0) >= game_start
+                            if (diff <= 2400.0 or (overlaps and diff <= 5400.0)) and diff < best_diff:
+                                best_diff = diff
+                                best_match = m
 
-                        if is_time_match:
+                        if best_match is not None:
                             self.wt.log_signal.emit(
                                 self.wt.t.log_bg_match_found.format(file=os.path.basename(video_path))
                             )
-                            match_id = api_match_data["metadata"]["matchid"]
-                            mode = api_match_data.get("metadata", {}).get("mode", "")
+                            match_copy = dict(best_match)
+                            match_id = match_copy["metadata"]["matchid"]
+                            mode = match_copy.get("metadata", {}).get("mode", "")
                             mmr_change = 0
 
-                            if mode.lower() not in [
-                                "deathmatch",
-                                "custom game",
-                                "escalation",
-                                "snowball fight",
-                                "replication",
-                            ]:
+                            if mode.lower() not in NON_MMR_MODES:
                                 try:
                                     mmr_change = api.fetch_mmr_change(match_id, retries=1, delay=2)
                                 except Exception as e:
                                     self.wt.log_signal.emit(self.wt.t.log_bg_mmr_skipped.format(error=e))
 
-                            api_match_data["local_video_path"] = video_path
-                            filepath = self.wt.store.save_match_metadata(api_match_data, mmr_change)
+                            rec_player = MatchMetadataService.build_recorded_player_info(
+                                match_copy,
+                                self.wt.current_riot_id,
+                                self.wt.current_tag_line,
+                                self.wt.current_region,
+                            )
+                            if rec_player:
+                                match_copy["recorded_player"] = rec_player
+                            match_copy["party_members"] = MatchMetadataService._extract_party_members(
+                                match_copy, self.wt.current_riot_id, self.wt.current_tag_line
+                            )
+                            match_copy["local_video_path"] = video_path
+                            match_copy["local_match_start_time"] = vid_time
+                            match_copy["local_match_end_time"] = vid_mtime
+                            match_copy["is_fetching_api"] = False
+                            filepath = self.wt.store.save_match_metadata(match_copy, mmr_change)
                             self.wt.log_signal.emit(self.wt.t.log_bg_saved.format(path=filepath))
                             self.wt.match_saved_signal.emit()
 
-                        elif game_start > vid_mtime + 3600 or time.time() - vid_mtime > 3600:
+                        elif latest_game_start > vid_mtime + 3600 or time.time() - vid_mtime > 3600:
                             self.wt.log_signal.emit(
                                 self.wt.t.log_bg_custom_or_unavailable.format(
                                     file=os.path.basename(video_path)

@@ -101,7 +101,7 @@ class HenrikAPI:
                     raise RuntimeError(f"API Request failed: {e}")
             if attempt < retries - 1:
                 time.sleep(delay)
-        return 0
+        return []
 
     def fetch_mmr_history_map(self, retries: int = 2, delay: int = 3) -> dict[str, int]:
         url = f"https://valoreco-api.meld-task.com/valorant/v1/mmr-history/{self.region}/{self.name}/{self.tag}"

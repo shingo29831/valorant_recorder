@@ -49,13 +49,17 @@ class WatcherThread(QThread):
         self.current_riot_id = self.config.RIOT_ID.strip() if self.config.RIOT_ID and self.config.RIOT_ID.strip() else None
         self.current_tag_line = self.config.TAG_LINE.strip() if self.config.TAG_LINE and self.config.TAG_LINE.strip() else None
         self.current_region = (self.config.REGION or "ap").strip() or "ap"
+        self._match_riot_id = None
+        self._match_tag_line = None
+        self._match_region = None
+        self._match_player_verified = False
         self._stop_timer = None
         self._is_manual_action = False
         self._is_manual_recording = False
         self._processing_video_paths = set()
         self.supervisor = WatcherSupervisor(self)
 
-    def _update_current_player(self):
+    def _update_current_player(self) -> bool:
         from scripts.get_local_api_info import get_current_player, get_client_region
         name, tag = get_current_player()
         region = get_client_region()
@@ -63,15 +67,22 @@ class WatcherThread(QThread):
             self.current_riot_id = name
             self.current_tag_line = tag
             self.current_region = region if region else (self.config.REGION or "ap")
-            
+
+            changed = False
+            if hasattr(self.config, "register_known_account") and self.config.register_known_account(name, tag):
+                changed = True
+
             # UI側が自分を特定できるようにConfigを更新して保存する
             if self.config.RIOT_ID != name or self.config.TAG_LINE != tag or self.config.REGION != self.current_region:
                 self.config.RIOT_ID = name
                 self.config.TAG_LINE = tag
                 self.config.REGION = self.current_region
+                changed = True
+            if changed:
                 self.config.save()
-                
+
             self.log_signal.emit(self.t.log_player_detected.format(name=name, tag=tag, region=self.current_region))
+            return True
         else:
             if region and self.config.REGION != region:
                 self.current_region = region
@@ -82,6 +93,7 @@ class WatcherThread(QThread):
                 self.current_tag_line = self.config.TAG_LINE.strip()
                 self.current_region = self.config.REGION or "ap"
             self.log_signal.emit(self.t.log_player_detect_failed)
+            return False
 
     def _cancel_stop_timer(self):
         if self._stop_timer is not None:
@@ -101,7 +113,11 @@ class WatcherThread(QThread):
         self.real_match_end_time_ms = None
         self.local_round_events = []
         self.local_ability_events = []
-        self._update_current_player()
+        verified = self._update_current_player()
+        self._match_riot_id = self.current_riot_id
+        self._match_tag_line = self.current_tag_line
+        self._match_region = self.current_region
+        self._match_player_verified = verified
         self.log_signal.emit(self.t.log_manual_starting)
         self._is_manual_recording = True
         try:
@@ -175,7 +191,11 @@ class WatcherThread(QThread):
         self.local_round_events = []
         self.local_ability_events = []
         self._is_manual_recording = False
-        self._update_current_player()
+        verified = self._update_current_player()
+        self._match_riot_id = self.current_riot_id
+        self._match_tag_line = self.current_tag_line
+        self._match_region = self.current_region
+        self._match_player_verified = verified
         
         if is_recovery:
             self.log_signal.emit(self.t.log_recovery_mode)
@@ -259,6 +279,10 @@ class WatcherThread(QThread):
         ability_events = list(self.local_ability_events)
         start_time_ms = getattr(self, 'local_recording_start_time_ms', None)
         real_match_end_time_ms = getattr(self, 'real_match_end_time_ms', None)
+        match_riot_id = getattr(self, '_match_riot_id', None) or self.current_riot_id
+        match_tag_line = getattr(self, '_match_tag_line', None) or self.current_tag_line
+        match_region = getattr(self, '_match_region', None) or self.current_region
+        match_player_verified = bool(getattr(self, '_match_player_verified', False))
         
         # UIフリーズを防ぐため、状態を即座にリセット
         if video_path:
@@ -267,6 +291,10 @@ class WatcherThread(QThread):
         self._is_manual_recording = False
         self.local_recording_start_time_ms = None
         self.real_match_end_time_ms = None
+        self._match_riot_id = None
+        self._match_tag_line = None
+        self._match_region = None
+        self._match_player_verified = False
         self.local_round_events = []
         self.local_ability_events = []
         self.recording_state_changed.emit(False)
@@ -274,19 +302,52 @@ class WatcherThread(QThread):
         # 録画停止処理（FFmpegの終了待ちなど）を別スレッドで実行
         threading.Thread(
             target=self._async_stop_and_process,
-            args=(video_path, start_time, end_time, events, ability_events, start_time_ms, real_match_end_time_ms),
+            args=(
+                video_path,
+                start_time,
+                end_time,
+                events,
+                ability_events,
+                start_time_ms,
+                real_match_end_time_ms,
+                match_riot_id,
+                match_tag_line,
+                match_region,
+                match_player_verified,
+            ),
             daemon=True
         ).start()
 
-    def _async_stop_and_process(self, video_path, start_time, end_time, events, ability_events, start_time_ms, real_match_end_time_ms=None):
+    def _async_stop_and_process(
+        self,
+        video_path,
+        start_time,
+        end_time,
+        events,
+        ability_events,
+        start_time_ms,
+        real_match_end_time_ms=None,
+        match_riot_id=None,
+        match_tag_line=None,
+        match_region=None,
+        match_player_verified=False,
+    ):
         try:
             try:
                 self.recorder.stop_recording(target_filepath=video_path)
             except Exception as e:
                 self.log_signal.emit(self.t.log_stop_failed.format(error=e))
 
-            if not self.current_riot_id or not self.current_tag_line:
-                self._update_current_player()
+            # 録画開始時に未検証だった場合は終了時点の最新ログインアカウントを再取得する
+            if not match_player_verified or not match_riot_id or not match_tag_line:
+                if self._update_current_player():
+                    match_riot_id = self.current_riot_id
+                    match_tag_line = self.current_tag_line
+                    match_region = self.current_region
+                elif not match_riot_id or not match_tag_line:
+                    match_riot_id = self.current_riot_id
+                    match_tag_line = self.current_tag_line
+                    match_region = self.current_region
 
             raw_map = getattr(self.watcher, 'current_map_name', 'Unknown')
             temp_filepath = self.metadata_service.save_temp_metadata(
@@ -304,9 +365,9 @@ class WatcherThread(QThread):
                 start_time=start_time,
                 end_time=end_time,
                 events=events,
-                riot_id=self.current_riot_id,
-                tag_line=self.current_tag_line,
-                region=self.current_region,
+                riot_id=match_riot_id,
+                tag_line=match_tag_line,
+                region=match_region or self.current_region,
                 map_name="Custom / Unknown" if raw_map == "Unknown" else raw_map,
                 ability_events=ability_events,
                 temp_filepath=temp_filepath,

@@ -56,6 +56,7 @@ class RecordDataLoader:
         records_by_date = {}
         riot_id = getattr(self.config, "RIOT_ID", "")
         tag_line = getattr(self.config, "TAG_LINE", "")
+        known_accounts = list(getattr(self.config, "KNOWN_ACCOUNTS", []) or [])
         
         available_agents = set()
         available_maps = set()
@@ -146,9 +147,9 @@ class RecordDataLoader:
                     if map_name.lower() in map_codenames:
                         map_name = map_codenames[map_name.lower()]
                         
-                    agent_name = get_agent_name(riot_id, tag_line, match_info, kills_data)
-                    result = get_match_result(riot_id, tag_line, match_info, kills_data)
-                    summary_stats = get_match_summary_stats(riot_id, tag_line, match_info, kills_data)
+                    agent_name = get_agent_name(riot_id, tag_line, match_info, kills_data, known_accounts=known_accounts)
+                    result = get_match_result(riot_id, tag_line, match_info, kills_data, known_accounts=known_accounts)
+                    summary_stats = get_match_summary_stats(riot_id, tag_line, match_info, kills_data, known_accounts=known_accounts)
                     
                     available_agents.add(agent_name)
                     available_maps.add(map_name)

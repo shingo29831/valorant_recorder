@@ -14,7 +14,7 @@ from core.i18n import get_trans
 from ui.player_components import ClickableVideoWidget, PlayerContainer
 from ui.volume_widgets import VolumeWidget, MicVolumeWidget
 from ui.timeline_overlay import TimelineOverlay
-from ui.player_utils import find_video_for_json, guess_player_name
+from ui.player_utils import find_video_for_json
 from ui.player_list_actions import toggle_favorite_status, delete_single_record_files
 from ui.event_toggle_widget import EventToggleWidget
 from ui.clip_generator_thread import ClipGeneratorThread
@@ -395,10 +395,13 @@ class PlayerVideoPage(QWidget):
             return
             
         match_info = self.current_match_data.get("match_info", self.current_match_data)
-        riot_id = getattr(self.config, "RIOT_ID", "").lower()
-        tag_line = getattr(self.config, "TAG_LINE", "").lower()
+        riot_id = getattr(self.config, "RIOT_ID", "")
+        tag_line = getattr(self.config, "TAG_LINE", "")
+        known_accounts = list(getattr(self.config, "KNOWN_ACCOUNTS", []) or [])
         
-        rounds, events = build_timeline_data(match_info, duration_ms, riot_id, tag_line)
+        rounds, events = build_timeline_data(
+            match_info, duration_ms, riot_id, tag_line, known_accounts=known_accounts
+        )
         
         self.current_rounds = rounds
         self.nav_controller.set_current_rounds(rounds)

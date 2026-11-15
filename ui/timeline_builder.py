@@ -1,7 +1,8 @@
 import os
 import re
 from datetime import datetime
-from ui.player_utils import guess_player_name
+from typing import Optional
+from ui.player_utils import resolve_match_player
 
 def is_headshot_kill(kill: dict, match_info: dict) -> bool:
     """キルがヘッドショットによるものかを判定する"""
@@ -45,7 +46,13 @@ def is_headshot_kill(kill: dict, match_info: dict) -> bool:
                             return True
     return False
 
-def build_timeline_data(match_info: dict, duration_ms: int, riot_id: str, tag_line: str) -> tuple[list, list]:
+def build_timeline_data(
+    match_info: dict,
+    duration_ms: int,
+    riot_id: str,
+    tag_line: str,
+    known_accounts: Optional[list[str]] = None,
+) -> tuple[list, list]:
     # 1. 録画開始のUNIXタイムスタンプ(ms)を取得
     recording_start_ms = match_info.get("local_recording_start_time_ms")
     if not recording_start_ms:
@@ -119,30 +126,11 @@ def build_timeline_data(match_info: dict, duration_ms: int, riot_id: str, tag_li
     events = []
     rounds = []
     
-    target_puuid = None
-    target_display_name = None
-    clean_riot_id = (riot_id or "").strip().lower()
-    clean_tag_line = (tag_line or "").strip().lower()
-    
     players = match_info.get("players", {}).get("all_players") or []
-    # 未設定時("")に空文字の名前・タグを持つ要素と誤一致するのを防止
-    if clean_riot_id and clean_tag_line:
-        for p in players:
-            p_name = str(p.get("name") or "").strip().lower()
-            p_tag = str(p.get("tag") or "").strip().lower()
-            if p_name == clean_riot_id and p_tag == clean_tag_line:
-                target_puuid = p.get("puuid")
-                target_display_name = p.get("name")
-                break
-    
-    if not target_puuid and kills_data:
-        target_display_name = guess_player_name(kills_data)
-        if target_display_name:
-            for p in players:
-                if p.get("name") == target_display_name:
-                    target_puuid = p.get("puuid")
-                    break
-        
+    resolved_player = resolve_match_player(match_info, riot_id, tag_line, known_accounts)
+    target_puuid = resolved_player.get("puuid") if resolved_player else None
+    target_display_name = resolved_player.get("name") if resolved_player else None
+
     for kill in kills_data:
         t_api = kill.get("kill_time_in_match", 0)
         t_local = t_api + api_to_local_offset
@@ -188,7 +176,7 @@ def build_timeline_data(match_info: dict, duration_ms: int, riot_id: str, tag_li
                 events.append({"time": time_in_video, "type": "death"})
             elif target_display_name and any(target_display_name in ast for ast in assistant_names):
                 events.append({"time": time_in_video, "type": "assist"})
-            elif not target_display_name:
+            elif not players and not target_display_name:
                 is_hs = is_headshot_kill(kill, match_info)
                 events.append({"time": time_in_video, "type": "kill", "headshot": is_hs})
 

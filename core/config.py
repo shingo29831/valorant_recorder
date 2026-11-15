@@ -1,5 +1,6 @@
 """Module: @role: アプリケーション設定の永続化(.env)および環境変数の読み書きを担うモジュール"""
 import ctypes
+import json
 import logging
 import os
 import re
@@ -160,6 +161,9 @@ class Config:
         self.AUTO_PERFORMANCE_CONTROL = os.environ.get("AUTO_PERFORMANCE_CONTROL", "True").lower() == "true"
         self.RIOT_ID = os.environ.get("RIOT_ID") or ""
         self.TAG_LINE = os.environ.get("TAG_LINE") or ""
+        self.KNOWN_ACCOUNTS = self._parse_known_accounts(os.environ.get("KNOWN_ACCOUNTS", ""))
+        if self.RIOT_ID and self.TAG_LINE:
+            self.register_known_account(self.RIOT_ID, self.TAG_LINE)
 
         default_save_dir = os.path.join(os.path.expanduser("~"), "Videos", "ValoReco")
         raw_save_dir = _sanitize_path_value(os.environ.get("RECORD_SAVE_DIR", ""))
@@ -204,6 +208,50 @@ class Config:
         self.TUTORIAL_COMPLETED = os.environ.get("TUTORIAL_COMPLETED", "False").lower() == "true"
         self.INITIAL_SETUP_COMPLETED = os.environ.get("INITIAL_SETUP_COMPLETED", "False").lower() == "true"
 
+    @staticmethod
+    def _parse_known_accounts(raw_val: str) -> list[str]:
+        if not raw_val:
+            return []
+        candidates = []
+        try:
+            parsed = json.loads(raw_val)
+            if isinstance(parsed, list):
+                candidates = [str(item).strip() for item in parsed]
+        except (json.JSONDecodeError, TypeError, ValueError):
+            candidates = [part.strip() for part in raw_val.split(",")]
+
+        seen = set()
+        accounts = []
+        for entry in candidates:
+            if "#" not in entry:
+                continue
+            name, tag = entry.rsplit("#", 1)
+            clean_name, clean_tag = name.strip(), tag.strip()
+            if not clean_name or not clean_tag:
+                continue
+            key = f"{clean_name.lower()}#{clean_tag.lower()}"
+            if key not in seen:
+                seen.add(key)
+                accounts.append(f"{clean_name}#{clean_tag}")
+        return accounts
+
+    def register_known_account(self, riot_id: str, tag_line: str) -> bool:
+        clean_id = str(riot_id or "").strip()
+        clean_tag = str(tag_line or "").strip()
+        if not clean_id or not clean_tag:
+            return False
+        new_entry = f"{clean_id}#{clean_tag}"
+        new_key = new_entry.lower()
+        with self._SAVE_LOCK:
+            for idx, existing in enumerate(self.KNOWN_ACCOUNTS):
+                if existing.lower() == new_key:
+                    if existing != new_entry:
+                        self.KNOWN_ACCOUNTS[idx] = new_entry
+                        return True
+                    return False
+            self.KNOWN_ACCOUNTS.append(new_entry)
+            return True
+
     def _parse_volume(self, val_str, default=1.0):
         try:
             val = float(val_str)
@@ -235,6 +283,7 @@ class Config:
                 "AUTO_PERFORMANCE_CONTROL": str(self.AUTO_PERFORMANCE_CONTROL),
                 "RIOT_ID": str(self.RIOT_ID or ""),
                 "TAG_LINE": str(self.TAG_LINE or ""),
+                "KNOWN_ACCOUNTS": json.dumps(self.KNOWN_ACCOUNTS, ensure_ascii=False),
                 "RECORD_SAVE_DIR": self.SAVE_DIR.replace("\\", "/"),
                 "RECORD_VIDEO_FORMAT": str(self.RECORD_VIDEO_FORMAT or "ddagrab"),
                 "RECORD_INPUT_SOURCE": str(self.RECORD_INPUT_SOURCE or "primary"),

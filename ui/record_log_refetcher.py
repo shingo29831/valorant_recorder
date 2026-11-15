@@ -210,16 +210,24 @@ def _compute_match_time_diff(
 
 
 def _find_best_matching_api_match(
-    matches: list[dict], start_time: float, end_time: float, existing_match_id: str
+    matches: list[dict],
+    start_time: float,
+    end_time: float,
+    existing_match_id: str,
+    riot_id: str = "",
+    tag_line: str = "",
 ) -> Optional[dict]:
     if existing_match_id and not existing_match_id.startswith(("custom_", "pending_", "recovered_")):
         for m in matches:
             if str(m.get("metadata", {}).get("matchid") or "") == existing_match_id:
-                return m
+                if not riot_id or not tag_line or MatchMetadataService.is_player_in_match(m, riot_id, tag_line):
+                    return m
 
     best_match = None
     best_diff = float("inf")
     for m in matches:
+        if riot_id and tag_line and not MatchMetadataService.is_player_in_match(m, riot_id, tag_line):
+            continue
         diff = _compute_match_time_diff(m, start_time, end_time)
         if diff is not None and diff < best_diff:
             best_diff = diff
@@ -232,24 +240,76 @@ def _resolve_player_identity(config: Config) -> tuple[str, str, str]:
     tag_line = (getattr(config, "TAG_LINE", "") or "").strip()
     region = (getattr(config, "REGION", "ap") or "ap").strip() or "ap"
 
-    if not riot_id or not tag_line:
-        try:
-            from scripts.get_local_api_info import get_client_region, get_current_player
+    try:
+        from scripts.get_local_api_info import get_client_region, get_current_player
 
-            det_name, det_tag = get_current_player()
-            det_region = get_client_region()
-            if det_name and det_tag:
-                riot_id = det_name
-                tag_line = det_tag
-                region = det_region or region
+        det_name, det_tag = get_current_player()
+        det_region = get_client_region()
+        if det_name and det_tag:
+            riot_id = det_name
+            tag_line = det_tag
+            region = det_region or region
+            changed = False
+            if hasattr(config, "register_known_account") and config.register_known_account(riot_id, tag_line):
+                changed = True
+            if config.RIOT_ID != riot_id or config.TAG_LINE != tag_line or config.REGION != region:
                 config.RIOT_ID = riot_id
                 config.TAG_LINE = tag_line
                 config.REGION = region
+                changed = True
+            if changed:
                 config.save()
-        except Exception:
-            pass
+        elif det_region and config.REGION != det_region:
+            region = det_region
+            config.REGION = region
+            config.save()
+    except Exception:
+        pass
 
     return riot_id, tag_line, region
+
+
+def _collect_account_candidates(
+    config: Config,
+    primary_riot_id: str,
+    primary_tag_line: str,
+    primary_region: str,
+    match_info: Optional[dict] = None,
+) -> list[tuple[str, str, str]]:
+    candidates: list[tuple[str, str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    def _add(name: str, tag: str, reg: str) -> None:
+        c_name = (name or "").strip()
+        c_tag = (tag or "").strip()
+        if not c_name or not c_tag:
+            return
+        key = (c_name.lower(), c_tag.lower())
+        if key not in seen:
+            seen.add(key)
+            candidates.append((c_name, c_tag, (reg or primary_region or "ap").strip() or "ap"))
+
+    if isinstance(match_info, dict):
+        rec_p = match_info.get("recorded_player")
+        if isinstance(rec_p, dict):
+            _add(
+                str(rec_p.get("name") or ""),
+                str(rec_p.get("tag") or ""),
+                str(rec_p.get("region") or primary_region),
+            )
+        party_members = [m for m in (match_info.get("party_members") or []) if isinstance(m, str) and "#" in m]
+        if len(party_members) == 1:
+            p_name, p_tag = party_members[0].rsplit("#", 1)
+            _add(p_name, p_tag, primary_region)
+
+    _add(primary_riot_id, primary_tag_line, primary_region)
+
+    for entry in getattr(config, "KNOWN_ACCOUNTS", []) or []:
+        if isinstance(entry, str) and "#" in entry:
+            k_name, k_tag = entry.rsplit("#", 1)
+            _add(k_name, k_tag, primary_region)
+
+    return candidates
 
 
 def _apply_matched_data_to_record(
@@ -265,6 +325,7 @@ def _apply_matched_data_to_record(
     video_path: str,
     start_time: float,
     end_time: float,
+    region: str = "",
 ) -> tuple[bool, str, bool]:
     custom_name = data.get("custom_name")
     is_favorite = data.get("is_favorite", False)
@@ -283,6 +344,9 @@ def _apply_matched_data_to_record(
 
     if matched_data is not None:
         api_copy = dict(matched_data)
+        rec_player = MatchMetadataService.build_recorded_player_info(api_copy, riot_id, tag_line, region)
+        if rec_player:
+            api_copy["recorded_player"] = rec_player
         party_members = MatchMetadataService._extract_party_members(api_copy, riot_id, tag_line)
         api_copy["party_members"] = party_members
         api_copy["local_video_path"] = video_path
@@ -390,21 +454,30 @@ def refetch_record_log(config: Config, json_filename: str, is_ja: bool = True) -
     api_error_str = ""
     matched_data = None
     mmr_change = int(data.get("mmr_change") or 0)
+    used_riot_id, used_tag_line, used_region = riot_id, tag_line, region
 
-    try:
-        api = HenrikAPI(region, riot_id, tag_line)
-        matches = api.fetch_matches(size=10, retries=2, delay=2)
-        matched_data = _find_best_matching_api_match(matches, start_time, end_time, existing_match_id)
-        if matched_data:
-            match_id = matched_data["metadata"]["matchid"]
-            mode = str(matched_data.get("metadata", {}).get("mode") or "")
-            if mode.lower() not in NON_MMR_MODES:
-                try:
-                    mmr_change = api.fetch_mmr_change(match_id, retries=2, delay=2)
-                except Exception:
-                    pass
-    except Exception as e:
-        api_error_str = str(e)
+    account_candidates = _collect_account_candidates(config, riot_id, tag_line, region, match_info)
+    for cand_id, cand_tag, cand_region in account_candidates:
+        try:
+            api = HenrikAPI(cand_region, cand_id, cand_tag)
+            matches = api.fetch_matches(size=10, retries=2, delay=2)
+            cand_match = _find_best_matching_api_match(
+                matches, start_time, end_time, existing_match_id, cand_id, cand_tag
+            )
+            if cand_match:
+                matched_data = cand_match
+                used_riot_id, used_tag_line, used_region = cand_id, cand_tag, cand_region
+                match_id = matched_data["metadata"]["matchid"]
+                mode = str(matched_data.get("metadata", {}).get("mode") or "")
+                if mode.lower() not in NON_MMR_MODES:
+                    try:
+                        mmr_change = api.fetch_mmr_change(match_id, retries=2, delay=2)
+                    except Exception:
+                        pass
+                break
+        except Exception as e:
+            if not api_error_str:
+                api_error_str = str(e)
 
     updated, new_filename, is_api_matched = _apply_matched_data_to_record(
         config,
@@ -414,11 +487,12 @@ def refetch_record_log(config: Config, json_filename: str, is_ja: bool = True) -
         match_info,
         matched_data,
         mmr_change,
-        riot_id,
-        tag_line,
+        used_riot_id,
+        used_tag_line,
         video_path,
         start_time,
         end_time,
+        region=used_region,
     )
 
     if is_api_matched:
@@ -491,37 +565,49 @@ def batch_refetch_record_logs(
         msg = "対象のメタデータファイルが見つかりません" if is_ja else "Metadata files not found."
         return 0, total, msg
 
-    matches: list[dict] = []
-    mmr_map: dict[str, int] = {}
     api_error_str = ""
-    api: Optional[HenrikAPI] = None
-
-    try:
-        api = HenrikAPI(region, riot_id, tag_line)
-        matches = api.fetch_matches(size=10, retries=2, delay=2)
-    except Exception as e:
-        api_error_str = str(e)
-
-    # 時刻差が最小のペアから優先的に1対1割当を行い、複数動画間での誤割当を防ぐ
-    assigned_matches: dict[int, dict] = {}
+    assigned_matches: dict[int, tuple[dict, str, str, str]] = {}
     used_match_ids: set[str] = set()
+    mmr_maps_by_account: dict[tuple[str, str], dict[str, int]] = {}
 
-    if matches:
+    account_candidates = _collect_account_candidates(config, riot_id, tag_line, region)
+    for cand_id, cand_tag, cand_region in account_candidates:
+        if len(assigned_matches) >= len(records_ctx):
+            break
+        try:
+            api = HenrikAPI(cand_region, cand_id, cand_tag)
+            matches = api.fetch_matches(size=10, retries=2, delay=2)
+        except Exception as e:
+            if not api_error_str:
+                api_error_str = str(e)
+            continue
+
+        if not matches:
+            continue
+
+        valid_matches = [m for m in matches if MatchMetadataService.is_player_in_match(m, cand_id, cand_tag)]
+        if not valid_matches:
+            continue
+
+        newly_assigned = []
         for idx, rctx in enumerate(records_ctx):
+            if idx in assigned_matches:
+                continue
             ex_id = rctx["existing_match_id"]
             if ex_id and not ex_id.startswith(("custom_", "pending_", "recovered_")):
-                for m in matches:
+                for m in valid_matches:
                     mid = str(m.get("metadata", {}).get("matchid") or "")
                     if mid == ex_id:
-                        assigned_matches[idx] = m
+                        assigned_matches[idx] = (m, cand_id, cand_tag, cand_region)
                         used_match_ids.add(mid)
+                        newly_assigned.append(m)
                         break
 
         candidate_pairs = []
         for idx, rctx in enumerate(records_ctx):
             if idx in assigned_matches:
                 continue
-            for m_idx, m in enumerate(matches):
+            for m_idx, m in enumerate(valid_matches):
                 diff = _compute_match_time_diff(m, rctx["start_time"], rctx["end_time"])
                 if diff is not None:
                     candidate_pairs.append((diff, idx, m_idx))
@@ -530,36 +616,47 @@ def batch_refetch_record_logs(
         for _diff, idx, m_idx in candidate_pairs:
             if idx in assigned_matches:
                 continue
-            m = matches[m_idx]
+            m = valid_matches[m_idx]
             mid = str(m.get("metadata", {}).get("matchid") or "")
             if mid and mid not in used_match_ids:
-                assigned_matches[idx] = m
+                assigned_matches[idx] = (m, cand_id, cand_tag, cand_region)
                 used_match_ids.add(mid)
+                newly_assigned.append(m)
 
         # 分割録画等で同一試合に複数動画が対応する場合のフォールバック割当
         for _diff, idx, m_idx in candidate_pairs:
             if idx not in assigned_matches:
-                assigned_matches[idx] = matches[m_idx]
+                m = valid_matches[m_idx]
+                assigned_matches[idx] = (m, cand_id, cand_tag, cand_region)
+                newly_assigned.append(m)
 
         need_mmr = any(
             str(m.get("metadata", {}).get("mode") or "").lower() not in NON_MMR_MODES
-            for m in assigned_matches.values()
+            for m in newly_assigned
         )
-        if need_mmr and api is not None:
+        if need_mmr:
             try:
-                mmr_map = api.fetch_mmr_history_map(retries=2, delay=2)
+                mmr_maps_by_account[(cand_id.lower(), cand_tag.lower())] = api.fetch_mmr_history_map(
+                    retries=2, delay=2
+                )
             except Exception:
-                mmr_map = {}
+                mmr_maps_by_account[(cand_id.lower(), cand_tag.lower())] = {}
 
     success_count = 0
     for idx, rctx in enumerate(records_ctx):
-        matched_data = assigned_matches.get(idx)
+        assigned = assigned_matches.get(idx)
+        matched_data = assigned[0] if assigned else None
+        used_id = assigned[1] if assigned else riot_id
+        used_tag = assigned[2] if assigned else tag_line
+        used_reg = assigned[3] if assigned else region
+
         mmr_change = int(rctx["data"].get("mmr_change") or 0)
         if matched_data is not None:
             mid = str(matched_data.get("metadata", {}).get("matchid") or "")
             mode = str(matched_data.get("metadata", {}).get("mode") or "")
-            if mode.lower() not in NON_MMR_MODES and mid in mmr_map:
-                mmr_change = mmr_map[mid]
+            acc_mmr_map = mmr_maps_by_account.get((used_id.lower(), used_tag.lower()), {})
+            if mode.lower() not in NON_MMR_MODES and mid in acc_mmr_map:
+                mmr_change = acc_mmr_map[mid]
 
         updated, _new_fname, _is_api = _apply_matched_data_to_record(
             config,
@@ -569,11 +666,12 @@ def batch_refetch_record_logs(
             rctx["match_info"],
             matched_data,
             mmr_change,
-            riot_id,
-            tag_line,
+            used_id,
+            used_tag,
             rctx["video_path"],
             rctx["start_time"],
             rctx["end_time"],
+            region=used_reg,
         )
         if updated:
             success_count += 1
