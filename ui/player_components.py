@@ -1,10 +1,19 @@
 from PyQt6.QtWidgets import QWidget
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QPalette
 from PyQt6.QtMultimediaWidgets import QVideoWidget
 
 class ClickableVideoWidget(QVideoWidget):
     clicked = pyqtSignal()
-    
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # 映像出力未接続時も黒背景のプレイヤー領域として即座に描画させる
+        self.setAutoFillBackground(True)
+        palette = self.palette()
+        palette.setColor(QPalette.ColorRole.Window, QColor("#000000"))
+        self.setPalette(palette)
+
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit()

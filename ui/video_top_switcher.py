@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import (
     Qt, QPoint, QSize, QByteArray, QPropertyAnimation, QVariantAnimation,
-    QEasingCurve, QTimer, pyqtSignal, pyqtProperty
+    QEasingCurve, QTimer, QThread, pyqtSignal, pyqtProperty
 )
 from PyQt6.QtGui import QPixmap, QPixmapCache, QFontMetrics, QWheelEvent, QCursor, QIcon, QPainter
 from PyQt6.QtSvg import QSvgRenderer
@@ -38,6 +38,37 @@ def _create_svg_icon(svg_bytes: bytes, size: int = 20) -> QIcon:
 class SwitcherState(Enum):
     HIDDEN = auto()
     EXPANDED = auto()
+
+
+class _SwitcherRecordsWorker(QThread):
+    loaded = pyqtSignal(int, list)
+
+    def __init__(
+        self,
+        config: Config,
+        current_filename: Optional[str],
+        generation: int,
+        parent: Optional[QWidget] = None,
+    ) -> None:
+        super().__init__(parent)
+        self.config = config
+        self.current_filename = current_filename
+        self.generation = generation
+
+    def run(self) -> None:
+        try:
+            loader = RecordDataLoader(self.config)
+            records_by_date, _, _ = loader.load_records()
+            flat_records = []
+            for records in records_by_date.values():
+                flat_records.extend(records)
+            # 左から右にかけて時間順に降順（最新→過去）で並べる
+            flat_records.sort(key=lambda r: float(r.get("timestamp") or 0), reverse=True)
+            filtered = [r for r in flat_records if r.get("filename") != self.current_filename]
+        except Exception as e:
+            print(f"[VideoTopSwitcher] Background record load failed: {e}")
+            filtered = []
+        self.loaded.emit(self.generation, filtered)
 
 
 class SwitcherItemCard(QWidget):
@@ -169,6 +200,8 @@ class VideoTopSwitcher(QWidget):
         self.state = SwitcherState.HIDDEN
         self.current_filename: Optional[str] = None
         self._all_records: List[Dict[str, Any]] = []
+        self._load_generation: int = 0
+        self._active_workers: List[_SwitcherRecordsWorker] = []
 
         self.setFixedHeight(self.BAR_HEIGHT)
         self.setMouseTracking(True)
@@ -454,6 +487,7 @@ class VideoTopSwitcher(QWidget):
             self.poll_timer.start()
 
     def deactivate(self) -> None:
+        self._load_generation += 1
         self.poll_timer.stop()
         self.hide_timer.stop()
         self.anim.stop()
@@ -464,33 +498,49 @@ class VideoTopSwitcher(QWidget):
 
     def refresh_records(self, current_filename: Optional[str]) -> None:
         self.current_filename = current_filename
-        loader = RecordDataLoader(self.config)
-        records_by_date, _, _ = loader.load_records()
+        self._load_generation += 1
+        generation = self._load_generation
 
-        flat_records = []
-        for records in records_by_date.values():
-            flat_records.extend(records)
-        # 左から右にかけて時間順に降順（最新→過去）で並べる
-        flat_records.sort(key=lambda r: float(r.get("timestamp") or 0), reverse=True)
+        # ファイル走査によるUI描画ブロックを防ぐため別スレッドで一覧を取得
+        worker = _SwitcherRecordsWorker(self.config, current_filename, generation, self)
+        self._active_workers.append(worker)
+        worker.loaded.connect(self._on_records_loaded)
+        worker.finished.connect(lambda w=worker: self._cleanup_worker(w))
+        worker.start()
 
-        self._all_records = [r for r in flat_records if r.get("filename") != self.current_filename]
+    def _cleanup_worker(self, worker: _SwitcherRecordsWorker) -> None:
+        if worker in self._active_workers:
+            self._active_workers.remove(worker)
+        worker.deleteLater()
 
-        self._clear_cards()
+    def _on_records_loaded(self, generation: int, records: List[Dict[str, Any]]) -> None:
+        if generation != self._load_generation:
+            return
+        parent = self.parentWidget()
+        if parent is not None and not parent.isVisible():
+            return
 
-        if not self._all_records:
-            empty = QLabel("他の録画がありません")
-            empty.setStyleSheet("color: #888888; font-size: 12px; background: transparent;")
-            self.cards_layout.addWidget(empty)
-            self.handle_bar.setText("▼ ほかの録画はありません ▼")
-        else:
-            for rec in self._all_records:
-                card = SwitcherItemCard(rec, self.cards_container)
-                card.clicked.connect(self._on_card_clicked)
-                self.cards_layout.addWidget(card)
-            self.handle_bar.setText(f"▼ ほかの録画 ({len(self._all_records)}件) ▼")
+        self._all_records = records
+        self.cards_container.setUpdatesEnabled(False)
+        try:
+            self._clear_cards()
 
-        self.cards_layout.addStretch()
-        self.scroll_area.horizontalScrollBar().setValue(0)
+            if not self._all_records:
+                empty = QLabel("他の録画がありません")
+                empty.setStyleSheet("color: #888888; font-size: 12px; background: transparent;")
+                self.cards_layout.addWidget(empty)
+                self.handle_bar.setText("▼ ほかの録画はありません ▼")
+            else:
+                for rec in self._all_records:
+                    card = SwitcherItemCard(rec, self.cards_container)
+                    card.clicked.connect(self._on_card_clicked)
+                    self.cards_layout.addWidget(card)
+                self.handle_bar.setText(f"▼ ほかの録画 ({len(self._all_records)}件) ▼")
+
+            self.cards_layout.addStretch()
+            self.scroll_area.horizontalScrollBar().setValue(0)
+        finally:
+            self.cards_container.setUpdatesEnabled(True)
         QTimer.singleShot(0, self._update_arrow_buttons)
 
     def _on_card_clicked(self, filename: str) -> None:

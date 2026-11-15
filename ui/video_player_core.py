@@ -21,7 +21,7 @@ class VideoPlayerCore(QObject):
         self.audio_output = QAudioOutput(self)
         self.audio_output.setVolume(self.current_sys_volume)
         self.media_player.setAudioOutput(self.audio_output)
-        self.media_player.setVideoOutput(self.video_widget)
+        # 画面遷移完了後のload_source時に接続し、未表示のネイティブサーフェス先行描画を防止
         
         self.mic_player = QMediaPlayer(self)
         self.mic_audio_output = QAudioOutput(self)

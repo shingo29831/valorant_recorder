@@ -117,16 +117,12 @@ class MainWindow(QMainWindow):
         if status_bar.isHidden() == (not visible):
             return
         status_bar.setVisible(visible)
-        if self.layout() is not None:
-            self.layout().invalidate()
-            self.layout().activate()
+        self._sync_central_layout()
         # 最大化中のQStatusBar表示切替でレイアウト領域の再計算が漏れる現象を防止
         if self.isVisible() and self.isMaximized():
             QTimer.singleShot(0, self._refresh_maximized_geometry)
 
-    def _refresh_maximized_geometry(self) -> None:
-        if not self.isVisible() or not self.isMaximized():
-            return
+    def _sync_central_layout(self) -> None:
         layout = self.layout()
         if layout is not None:
             layout.invalidate()
@@ -139,6 +135,12 @@ class MainWindow(QMainWindow):
                 central.layout().activate()
         if hasattr(self, 'player_tab') and hasattr(self.player_tab, 'video_page'):
             self.player_tab.video_page.update_safe_area()
+            self.player_tab.video_page.player_container._update_video_geometry()
+
+    def _refresh_maximized_geometry(self) -> None:
+        if not self.isVisible() or not self.isMaximized():
+            return
+        self._sync_central_layout()
         self.updateGeometry()
         self.update()
 

@@ -3,6 +3,7 @@ import json
 import re
 import subprocess
 from datetime import datetime
+from typing import Optional
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QMessageBox
 from PyQt6.QtCore import Qt, QUrl, QSize, pyqtSignal, QByteArray, QTimer, QThread, QEvent
 from PyQt6.QtGui import QIcon, QPixmap, QPainter
@@ -61,9 +62,17 @@ class PlayerVideoPage(QWidget):
 
     def __init__(self, config: Config, parent=None):
         super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         self.config = config
         self.t = get_trans(self.config.LANGUAGE)
         self.current_match_data = None
+        self.current_json_filename: Optional[str] = None
+        self._pending_video_path: Optional[str] = None
+        self._load_sequence: int = 0
+        self._switcher_refresh_timer = QTimer(self)
+        self._switcher_refresh_timer.setSingleShot(True)
+        self._switcher_refresh_timer.setInterval(150)
+        self._switcher_refresh_timer.timeout.connect(self._refresh_switcher_safe)
         
         self.page_layout = QVBoxLayout(self)
         page_layout = self.page_layout
@@ -258,6 +267,7 @@ class PlayerVideoPage(QWidget):
         self.top_switcher = VideoTopSwitcher(self.config, self)
         self.top_switcher.recordSelected.connect(self._on_switch_recording)
         self.top_switcher.offsetChanged.connect(self._on_switcher_offset_changed)
+        self.top_switcher.deactivate()
 
     def update_safe_area(self) -> None:
         # 下部コントロールの不要な余白を排除し均等マージンを維持
@@ -348,7 +358,17 @@ class PlayerVideoPage(QWidget):
         super().hideEvent(event)
         self.cleanup_media()
 
+    def current_load_sequence(self) -> int:
+        return self._load_sequence
+
+    def _schedule_switcher_refresh(self) -> None:
+        self._switcher_refresh_timer.start()
+
     def cleanup_media(self):
+        self._load_sequence += 1
+        self._pending_video_path = None
+        if hasattr(self, '_switcher_refresh_timer'):
+            self._switcher_refresh_timer.stop()
         if hasattr(self, 'nav_controller') and self.nav_controller:
             self.nav_controller.speed_osd_timer.stop()
         if hasattr(self, 'top_switcher') and self.top_switcher:
@@ -364,31 +384,51 @@ class PlayerVideoPage(QWidget):
         if getattr(self, 'current_json_filename', None) and self.player_core.media_player.source().isEmpty():
             self.load_recording(self.current_json_filename)
 
-    def load_recording(self, json_filename):
+    def prepare_recording(self, json_filename: str) -> None:
+        self._load_sequence += 1
+        self._pending_video_path = None
         self.player_core.stop()
         self.current_json_filename = json_filename
         json_path = os.path.join(self.config.SAVE_DIR, json_filename)
         self.nav_controller.reset_playback_rate()
-        
+        self.playback_controls.set_playback_state(False)
+        self.time_label.setText("00:00 / 00:00")
+        self.timeline_overlay.set_position(0)
+        self.timeline_overlay.set_duration(0)
+        self.timeline_overlay.set_data([], [])
+
         try:
             with open(json_path, 'r', encoding='utf-8') as f:
                 self.current_match_data = json.load(f)
             self._update_favorite_icon(bool(self.current_match_data.get("is_favorite", False)))
             self.clip_controller.set_current_recording(json_filename, self.current_match_data)
             video_path = find_video_for_json(self.config.SAVE_DIR, json_filename, self.current_match_data)
-            
-            if video_path and os.path.exists(video_path):
-                self.player_core.load_source(video_path)
-            else:
-                self.player_core.load_source(None)
-                print(f"[PlayerVideoPage] Video file not found for {json_filename}.")
-                self._update_timeline_data(0)
-
-            # メディアパイプライン初期化完了後に非同期でスイッチャーを更新
-            QTimer.singleShot(100, self._refresh_switcher_safe)
-                
+            self._pending_video_path = video_path if (video_path and os.path.exists(video_path)) else None
         except Exception as e:
+            self._pending_video_path = None
             print(f"[PlayerVideoPage] Error loading recording data: {e}")
+
+    def start_pending_playback(self, expected_seq: Optional[int] = None) -> None:
+        if expected_seq is not None and expected_seq != self._load_sequence:
+            return
+        if not self.isVisible():
+            return
+        self.player_container._update_video_geometry()
+        video_path = self._pending_video_path
+        self._pending_video_path = None
+
+        if video_path and os.path.exists(video_path):
+            self.player_core.load_source(video_path)
+        else:
+            self.player_core.load_source(None)
+            print(f"[PlayerVideoPage] Video file not found for {self.current_json_filename}.")
+            self._update_timeline_data(0)
+
+        self._schedule_switcher_refresh()
+
+    def load_recording(self, json_filename):
+        self.prepare_recording(json_filename)
+        self.start_pending_playback(self._load_sequence)
 
     def _update_timeline_data(self, duration_ms):
         if not self.current_match_data:
@@ -447,7 +487,8 @@ class PlayerVideoPage(QWidget):
         self.top_switcher.update_geometry(self.width())
         self.top_switcher.show()
         self.top_switcher.raise_()
-        self.top_switcher.refresh_records(self.current_json_filename)
+        # 画面遷移の初回ペイントを妨げないよう非同期タイマー経由で一覧更新を予約
+        self._schedule_switcher_refresh()
         sys_vol = float(getattr(self.config, 'PLAYER_SYS_VOLUME', '1.0'))
         if self.player_core.current_sys_volume != sys_vol:
             self.player_core.set_sys_volume(sys_vol * 100)

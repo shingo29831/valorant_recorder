@@ -35,8 +35,28 @@ class PlayerTab(QWidget):
         self.videoPageVisible.emit(self.stacked_widget.currentWidget() == self.video_page)
 
     def on_record_selected(self, json_filename):
-        self.video_page.load_recording(json_filename)
-        self.stacked_widget.setCurrentWidget(self.video_page)
+        self.video_page.prepare_recording(json_filename)
+        load_seq = self.video_page.current_load_sequence()
+
+        # レイアウト確定・ステータスバー非表示・動画ページ切替を単一フレームで一括描画
+        win = self.window()
+        if win is not None:
+            win.setUpdatesEnabled(False)
+        try:
+            self.stacked_widget.setCurrentWidget(self.video_page)
+            if win is not None and win.layout() is not None:
+                win.layout().invalidate()
+                win.layout().activate()
+            self.video_page.update_safe_area()
+            self.video_page.player_container._update_video_geometry()
+            self.video_page.top_switcher.update_geometry(self.video_page.width())
+        finally:
+            if win is not None:
+                win.setUpdatesEnabled(True)
+                win.repaint()
+
+        # 再生画面UIと黒背景プレイヤー枠が完全に描画された直後に映像出力接続と読み込みを開始
+        QTimer.singleShot(0, lambda seq=load_seq: self.video_page.start_pending_playback(seq))
 
     def on_back_requested(self):
         self.video_page.cleanup_media()
