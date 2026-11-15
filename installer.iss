@@ -11,8 +11,8 @@ DefaultDirName={localappdata}\ValoReco
 DefaultGroupName=ValoReco ヴァロレコ
 ; 出力されるインストーラのファイル名
 OutputBaseFilename=ValoReco_Setup
-; 圧縮設定
-Compression=lzma2/ultra64
+; Nuitka onefileは既に圧縮済みのため高速圧縮で二重圧縮コストを抑える
+Compression=lzma2/fast
 SolidCompression=yes
 ; 管理者権限を要求しない（ユーザー権限でインストール可能にするため）
 PrivilegesRequired=lowest

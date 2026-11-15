@@ -22,7 +22,11 @@ def main():
         sys.exit(1)
         
     major, minor, patch = map(int, match.groups())
-    
+
+    if bump_type in ("--current", "keep", "none", "--no-bump"):
+        print(f"{major}.{minor}.{patch}")
+        return
+
     if bump_type == "major":
         major += 1
         minor = 0
@@ -32,13 +36,13 @@ def main():
         patch = 0
     else:
         patch += 1
-        
+
     new_version = f"{major}.{minor}.{patch}"
-    
+
     new_content = re.sub(r'APP_VERSION\s*=\s*"\d+\.\d+\.\d+"', f'APP_VERSION = "{new_version}"', content)
     with open(version_file, "w", encoding="utf-8") as f:
         f.write(new_content)
-        
+
     # バッチファイルで受け取るために標準出力にバージョンのみを出力
     print(new_version)
 

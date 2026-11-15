@@ -1,7 +1,18 @@
 @echo off
 setlocal enabledelayedexpansion
 
-set "BUMP_TYPE=%~1"
+set "BUMP_TYPE="
+set "FORCE_FLAG="
+
+for %%A in (%*) do (
+    if /I "%%~A"=="--force" (
+        set "FORCE_FLAG=--force"
+    ) else if /I "%%~A"=="--no-bump" (
+        set "BUMP_TYPE=keep"
+    ) else if not defined BUMP_TYPE (
+        set "BUMP_TYPE=%%~A"
+    )
+)
 if not "%BUMP_TYPE%"=="" goto :start_release
 
 call :ask_yn "Patch release (x.y.z+1)?" ANS
@@ -22,6 +33,13 @@ call :ask_yn "Major release (x+1.0.0)?" ANS
 if "%ANS%"=="CANCEL" goto :cancelled
 if "%ANS%"=="Y" (
     set "BUMP_TYPE=major"
+    goto :start_release
+)
+
+call :ask_yn "Release current version without bumping (reuse cached build)?" ANS
+if "%ANS%"=="CANCEL" goto :cancelled
+if "%ANS%"=="Y" (
+    set "BUMP_TYPE=keep"
     goto :start_release
 )
 
@@ -54,7 +72,7 @@ echo New version is: %NEW_VERSION%
 
 echo.
 echo [2/6] Building main.exe and Installer...
-call build_installer.bat --no-pause
+call build_installer.bat --no-pause %FORCE_FLAG%
 if errorlevel 1 (
     echo [Error] build_installer.bat failed.
     exit /b 1
@@ -62,8 +80,7 @@ if errorlevel 1 (
 
 echo.
 echo [3/6] Creating update.zip...
-if exist update.zip del update.zip
-powershell -NoProfile -Command "Compress-Archive -Path ValoReco.exe -DestinationPath update.zip -Force"
+python tools\build_cache.py make-zip ValoReco.exe update.zip %FORCE_FLAG%
 if errorlevel 1 (
     echo [Error] Failed to create update.zip.
     exit /b 1
