@@ -73,8 +73,17 @@ class PlayerVideoPage(QWidget):
         self._switcher_refresh_timer.setSingleShot(True)
         self._switcher_refresh_timer.setInterval(150)
         self._switcher_refresh_timer.timeout.connect(self._refresh_switcher_safe)
+
+        self._layout_sync_timer = QTimer(self)
+        self._layout_sync_timer.setSingleShot(True)
+        self._layout_sync_timer.setInterval(0)
+        self._layout_sync_timer.timeout.connect(self._update_content_slide_position)
         
-        self.page_layout = QVBoxLayout(self)
+        # 動画サイズを変えずに画面全体を下へスライドさせるためのコンテナ
+        self.content_widget = QWidget(self)
+        self.content_widget.setMouseTracking(True)
+        self.content_widget.installEventFilter(self)
+        self.page_layout = QVBoxLayout(self.content_widget)
         page_layout = self.page_layout
         page_layout.setContentsMargins(20, 20, 20, 20)
         page_layout.setSpacing(10)
@@ -124,8 +133,8 @@ class PlayerVideoPage(QWidget):
         self.timeline_overlay.seekRequested.connect(self.player_core.on_seek_requested)
         self.timeline_overlay.seekFinished.connect(self.player_core.on_seek_finished)
         
-        controls_widget = QWidget()
-        controls_layout = QHBoxLayout(controls_widget)
+        self.controls_widget = QWidget()
+        controls_layout = QHBoxLayout(self.controls_widget)
         controls_layout.setContentsMargins(0, 0, 0, 0)
         
         self.volume_widget = VolumeWidget()
@@ -223,7 +232,7 @@ class PlayerVideoPage(QWidget):
         top_layout.addWidget(right_container)
         
         page_layout.addLayout(top_layout, stretch=1)
-        page_layout.addWidget(controls_widget)
+        page_layout.addWidget(self.controls_widget)
         
         self.playback_controls = PlaybackControlsWidget()
         self.playback_controls.togglePlayRequested.connect(self.toggle_play)
@@ -269,9 +278,44 @@ class PlayerVideoPage(QWidget):
         self.top_switcher.offsetChanged.connect(self._on_switcher_offset_changed)
         self.top_switcher.deactivate()
 
+    def sizeHint(self) -> QSize:
+        if hasattr(self, 'content_widget'):
+            return self.content_widget.sizeHint()
+        return super().sizeHint()
+
+    def minimumSizeHint(self) -> QSize:
+        if hasattr(self, 'content_widget'):
+            return self.content_widget.minimumSizeHint()
+        return super().minimumSizeHint()
+
+    def _compute_slide_y(self, offset: int) -> int:
+        if offset <= 0 or not hasattr(self, 'top_switcher') or self.top_switcher.BAR_HEIGHT <= 0:
+            return 0
+        bottom_area_h = self.top_switcher.BAR_HEIGHT
+        if hasattr(self, 'controls_widget') and self.controls_widget.y() > 0:
+            bottom_area_h = max(bottom_area_h, self.content_widget.height() - self.controls_widget.y())
+        progress = min(1.0, max(0.0, offset / float(self.top_switcher.BAR_HEIGHT)))
+        return int(round(progress * bottom_area_h))
+
+    def _update_content_slide_position(self) -> None:
+        if not self.isVisible() or not hasattr(self, 'content_widget') or not hasattr(self, 'top_switcher'):
+            return
+        slide_y = self._compute_slide_y(self.top_switcher.offset)
+        if self.content_widget.y() != slide_y:
+            self.content_widget.move(0, slide_y)
+
+    def _sync_content_geometry(self) -> None:
+        if not hasattr(self, 'content_widget'):
+            return
+        slide_y = self._compute_slide_y(self.top_switcher.offset) if hasattr(self, 'top_switcher') else 0
+        self.content_widget.setGeometry(0, slide_y, self.width(), self.height())
+        if self.content_widget.layout() is not None:
+            self.content_widget.layout().activate()
+
     def update_safe_area(self) -> None:
         # 下部コントロールの不要な余白を排除し均等マージンを維持
         self.page_layout.setContentsMargins(20, 20, 20, 20)
+        self._sync_content_geometry()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -290,11 +334,11 @@ class PlayerVideoPage(QWidget):
             self.top_switcher.raise_()
 
     def _on_switcher_offset_changed(self, offset: int):
-        if not self.isVisible():
+        if not self.isVisible() and offset > 0:
             return
-        self.left_layout.setContentsMargins(0, offset, 0, 0)
-        self.right_layout.setContentsMargins(0, offset, 0, 0)
-        self.player_container.set_top_offset(offset)
+        slide_y = self._compute_slide_y(offset)
+        if self.content_widget.y() != slide_y:
+            self.content_widget.move(0, slide_y)
 
     def _create_icon(self, svg_bytes, size=24):
         pixmap = QPixmap(size, size)
@@ -306,6 +350,9 @@ class PlayerVideoPage(QWidget):
         return QIcon(pixmap)
 
     def eventFilter(self, obj, event):
+        if obj == getattr(self, 'content_widget', None) and event.type() == QEvent.Type.LayoutRequest:
+            if self.isVisible() and hasattr(self, 'top_switcher') and self.top_switcher.offset > 0:
+                self._layout_sync_timer.start()
         if self.nav_controller.handle_event_filter(obj, event):
             return True
         return super().eventFilter(obj, event)
@@ -369,16 +416,16 @@ class PlayerVideoPage(QWidget):
         self._pending_video_path = None
         if hasattr(self, '_switcher_refresh_timer'):
             self._switcher_refresh_timer.stop()
+        if hasattr(self, '_layout_sync_timer'):
+            self._layout_sync_timer.stop()
         if hasattr(self, 'nav_controller') and self.nav_controller:
             self.nav_controller.speed_osd_timer.stop()
         if hasattr(self, 'top_switcher') and self.top_switcher:
             self.top_switcher.deactivate()
         if hasattr(self, 'player_core') and self.player_core:
             self.player_core.unload()
-        if hasattr(self, 'left_layout') and hasattr(self, 'right_layout') and hasattr(self, 'player_container'):
-            self.left_layout.setContentsMargins(0, 0, 0, 0)
-            self.right_layout.setContentsMargins(0, 0, 0, 0)
-            self.player_container.top_offset = 0
+        if hasattr(self, 'content_widget'):
+            self.content_widget.move(0, 0)
 
     def restore_media(self):
         if getattr(self, 'current_json_filename', None) and self.player_core.media_player.source().isEmpty():
