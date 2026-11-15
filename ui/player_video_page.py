@@ -82,7 +82,6 @@ class PlayerVideoPage(QWidget):
         # 動画サイズを変えずに画面全体を下へスライドさせるためのコンテナ
         self.content_widget = QWidget(self)
         self.content_widget.setMouseTracking(True)
-        self.content_widget.installEventFilter(self)
         self.page_layout = QVBoxLayout(self.content_widget)
         page_layout = self.page_layout
         page_layout.setContentsMargins(20, 20, 20, 20)
@@ -269,6 +268,7 @@ class PlayerVideoPage(QWidget):
             format_time_fn=self.format_time,
             parent=self,
         )
+        self.content_widget.installEventFilter(self)
         self.video_widget.installEventFilter(self)
         self.player_container.installEventFilter(self)
         self.setMouseTracking(True)
@@ -353,7 +353,7 @@ class PlayerVideoPage(QWidget):
         if obj == getattr(self, 'content_widget', None) and event.type() == QEvent.Type.LayoutRequest:
             if self.isVisible() and hasattr(self, 'top_switcher') and self.top_switcher.offset > 0:
                 self._layout_sync_timer.start()
-        if self.nav_controller.handle_event_filter(obj, event):
+        if hasattr(self, 'nav_controller') and self.nav_controller.handle_event_filter(obj, event):
             return True
         return super().eventFilter(obj, event)
 
