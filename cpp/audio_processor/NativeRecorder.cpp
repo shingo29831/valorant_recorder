@@ -6,6 +6,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <ctime>
 #include <fstream>
 #include <iomanip>
@@ -38,6 +39,8 @@ extern "C" {
 }
 
 static std::atomic<bool> g_isRunning{false};
+static std::atomic<int64_t> g_actualStartTimeMs{0};
+static std::atomic<int64_t> g_actualEndTimeMs{0};
 static std::string g_lastError = "";
 static std::mutex g_errorMutex;
 static std::mutex g_recorderMutex;
@@ -241,6 +244,11 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
     sysQueue.DrainKeepLatest(cushionSamples);
     micQueue.DrainKeepLatest(cushionSamples);
 
+    auto actualStartSysMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()
+    ).count();
+    g_actualStartTimeMs.store(actualStartSysMs);
+
     auto startTime = std::chrono::steady_clock::now();
     uint64_t totalWrittenFrames = 0;
     auto lastLogTime = startTime;
@@ -357,6 +365,11 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
         g_writerThread.join();
     }
 
+    auto actualEndSysMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::system_clock::now().time_since_epoch()
+    ).count();
+    g_actualEndTimeMs.store(actualEndSysMs);
+
     ffmpeg.Stop(10000);
 
     {
@@ -420,6 +433,8 @@ EXPORT_API bool Recorder_Start(const RecorderConfig* config) {
 
         RecorderConfig configCopy = *config;
 
+        g_actualStartTimeMs.store(0);
+        g_actualEndTimeMs.store(0);
         g_isRunning = true;
         SetLastErrorMsg("");
 
@@ -478,4 +493,12 @@ EXPORT_API const char* Recorder_GetLastError() {
     } catch (...) {
         return "";
     }
+}
+
+EXPORT_API int64_t Recorder_GetActualStartTimeMs() {
+    return g_actualStartTimeMs.load();
+}
+
+EXPORT_API int64_t Recorder_GetActualEndTimeMs() {
+    return g_actualEndTimeMs.load();
 }

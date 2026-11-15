@@ -32,3 +32,5 @@ EXPORT_API void Recorder_Stop();
 EXPORT_API bool Recorder_IsRunning();
 EXPORT_API void Recorder_SetLowPriority(bool lowPriority);
 EXPORT_API const char* Recorder_GetLastError();
+EXPORT_API int64_t Recorder_GetActualStartTimeMs();
+EXPORT_API int64_t Recorder_GetActualEndTimeMs();
