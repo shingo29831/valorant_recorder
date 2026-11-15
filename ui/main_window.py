@@ -103,8 +103,8 @@ class MainWindow(QMainWindow):
     def show_fatal_error_dialog(self, error_msg: str) -> None:
         self.dialog_controller.show_fatal_error_dialog(error_msg)
 
-    def show_update_dialog(self, latest_version: str, download_url: str) -> None:
-        self.dialog_controller.show_update_dialog(latest_version, download_url)
+    def show_update_dialog(self, latest_version: str, download_url: str, force: bool = False) -> None:
+        self.dialog_controller.show_update_dialog(latest_version, download_url, force=force)
 
     def show_spec_recommend_dialog(self, force: bool = False) -> None:
         self.dialog_controller.show_spec_recommend_dialog(force=force)
@@ -254,6 +254,11 @@ class MainWindow(QMainWindow):
         if event.type() == QEvent.Type.WindowStateChange:
             if hasattr(self, 'player_tab') and hasattr(self.player_tab, 'video_page'):
                 self.player_tab.video_page.update_safe_area()
+        elif event.type() == QEvent.Type.ActivationChange:
+            # 起動直後・バックグラウンド検出で保留されたアップデートをウィンドウアクティブ化時に表示
+            if self.isActiveWindow() and not self.isHidden() and not self.isMinimized():
+                if hasattr(self, 'dialog_controller'):
+                    self.dialog_controller.check_pending_on_shown()
 
     def hideEvent(self, event) -> None:
         super().hideEvent(event)

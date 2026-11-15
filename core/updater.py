@@ -2,17 +2,23 @@
 自動アップデート機能を提供するモジュール。
 Cloudflare WorkerのAPIから最新バージョンを取得し、ZIPをダウンロード・展開して自身を上書き更新する。
 """
-import os
-import sys
+import datetime
 import json
+import logging
+import os
+import re
+import ssl
+import subprocess
+import sys
+import tempfile
+import urllib.error
 import urllib.request
 import zipfile
-import subprocess
-import tempfile
+
 import jwt
-import datetime
-import ssl
 from PyQt6.QtCore import QThread, pyqtSignal
+
+from core.config import get_app_base_dir
 from core.version import APP_VERSION
 
 class UpdateDownloaderThread(QThread):
@@ -30,31 +36,59 @@ class UpdateDownloaderThread(QThread):
         except Exception as e:
             self.finished.emit(False, str(e))
 
+def _resolve_auth_key_path() -> str:
+    """実行形態に応じて auth.key の実体パスを探索して返す"""
+    candidates = []
+    if hasattr(sys, "_MEIPASS"):
+        candidates.append(os.path.join(sys._MEIPASS, "auth.key"))
+    candidates.append(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "auth.key"))
+    candidates.append(os.path.join(get_app_base_dir(), "auth.key"))
+
+    for path in candidates:
+        if path and os.path.exists(path):
+            return path
+    raise FileNotFoundError(f"Authentication key (auth.key) not found in: {candidates}")
+
+
 def _get_auth_headers():
     """auth.keyを読み込んでJWTを生成し、ヘッダーを返す"""
     headers = {"User-Agent": "ValoReco/1.0"}
-    
-    # Nuitkaビルド環境と開発環境の両方で正しくパスを解決する
-    if hasattr(sys, '_MEIPASS'):
-        base_path = sys._MEIPASS
-    else:
-        base_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    
-    key_path = os.path.join(base_path, "auth.key")
-    
-    if os.path.exists(key_path):
-        try:
-            with open(key_path, "rb") as f:
-                private_key = f.read()
-            payload = {
-                "iat": datetime.datetime.utcnow(),
-                "exp": datetime.datetime.utcnow() + datetime.timedelta(minutes=5)
-            }
-            token = jwt.encode(payload, private_key, algorithm="RS256")
-            headers["Authorization"] = f"Bearer {token}"
-        except Exception as e:
-            print(f"Failed to generate JWT for updater: {e}")
+    key_path = _resolve_auth_key_path()
+    with open(key_path, "rb") as f:
+        private_key = f.read()
+
+    now = datetime.datetime.now(datetime.timezone.utc)
+    payload = {
+        "iat": int(now.timestamp()),
+        "exp": int((now + datetime.timedelta(minutes=5)).timestamp()),
+    }
+    token = jwt.encode(payload, private_key, algorithm="RS256")
+    if isinstance(token, bytes):
+        token = token.decode("utf-8")
+    headers["Authorization"] = f"Bearer {token}"
     return headers
+
+
+def _parse_version_tuple(version_str: str) -> tuple[int, ...]:
+    """バージョン文字列を比較可能な整数タプルへ正規化する"""
+    cleaned = str(version_str or "").strip().lstrip("vV")
+    match = re.match(r"^(\d+(?:\.\d+)*)", cleaned)
+    if not match:
+        raise ValueError(f"Invalid version format: {version_str!r}")
+    return tuple(int(part) for part in match.group(1).split("."))
+
+
+def _is_newer_version(latest_version: str, current_version: str) -> bool:
+    """latest_version が current_version より新しいかを判定する"""
+    try:
+        latest_parts = _parse_version_tuple(latest_version)
+        current_parts = _parse_version_tuple(current_version)
+        max_len = max(len(latest_parts), len(current_parts))
+        latest_padded = latest_parts + (0,) * (max_len - len(latest_parts))
+        current_padded = current_parts + (0,) * (max_len - len(current_parts))
+        return latest_padded > current_padded
+    except ValueError:
+        return str(latest_version or "").strip() != str(current_version or "").strip()
 
 class UpdateCheckerThread(QThread):
     """バックグラウンドでアップデートを確認するスレッド"""
@@ -67,45 +101,56 @@ class UpdateCheckerThread(QThread):
 
     def run(self):
         if not self.api_url:
-            print("[Updater] Update check skipped: API URL is not set.")
+            logging.warning("[Updater] Update check skipped: API URL is not set.")
             return
         try:
             req = urllib.request.Request(self.api_url, headers=_get_auth_headers())
-            
-            # Nuitka環境でのSSL証明書エラーを回避
+
+            # Nuitka環境でのSSL証明書検証失敗を回避
             ctx = ssl.create_default_context()
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
-            
+
             with urllib.request.urlopen(req, timeout=10, context=ctx) as response:
                 if response.status != 200:
-                    self.error_occurred.emit(f"HTTP Error: {response.status}")
+                    msg = f"HTTP Error: {response.status}"
+                    logging.warning(f"[Updater] {msg}")
+                    self.error_occurred.emit(msg)
                     return
-                
-                response_text = response.read().decode('utf-8')
+
+                response_text = response.read().decode("utf-8")
                 data = json.loads(response_text)
-                latest_version = data.get("version")
-                download_url = data.get("download_url")
-                
-                print(f"[Updater] Successfully checked for updates. Current: {APP_VERSION}, Latest: {latest_version}")
-                
-                if latest_version:
-                    try:
-                        # "1.0.1" のような文字列を (1, 0, 1) のタプルに変換して大小比較
-                        latest_tuple = tuple(map(int, latest_version.lstrip('v').split('.')))
-                        current_tuple = tuple(map(int, APP_VERSION.lstrip('v').split('.')))
-                        if latest_tuple > current_tuple:
-                            self.update_available.emit(latest_version, download_url)
-                    except ValueError:
-                        # バージョン文字列のパースに失敗した場合は単純な文字列比較にフォールバック
-                        if latest_version != APP_VERSION:
-                            self.update_available.emit(latest_version, download_url)
+                latest_version = str(data.get("version") or "").strip()
+                download_url = str(data.get("download_url") or "").strip()
+
+                logging.info(
+                    f"[Updater] Update check succeeded. Current={APP_VERSION}, Latest={latest_version}"
+                )
+
+                if latest_version and _is_newer_version(latest_version, APP_VERSION):
+                    if not download_url:
+                        msg = "Update found, but download_url is missing."
+                        logging.warning(f"[Updater] {msg}")
+                        self.error_occurred.emit(msg)
+                        return
+                    self.update_available.emit(latest_version, download_url)
+        except urllib.error.HTTPError as e:
+            error_body = e.read().decode("utf-8", errors="ignore") if e.fp else ""
+            msg = f"HTTP Error {e.code} during update check: {e.reason} {error_body}".strip()
+            logging.warning(f"[Updater] {msg}")
+            self.error_occurred.emit(msg)
         except urllib.error.URLError as e:
-            self.error_occurred.emit(f"Network error during update check: {e.reason}")
+            msg = f"Network error during update check: {e.reason}"
+            logging.warning(f"[Updater] {msg}")
+            self.error_occurred.emit(msg)
         except json.JSONDecodeError as e:
-            self.error_occurred.emit(f"Invalid JSON response during update check: {e}")
+            msg = f"Invalid JSON response during update check: {e}"
+            logging.warning(f"[Updater] {msg}")
+            self.error_occurred.emit(msg)
         except Exception as e:
-            self.error_occurred.emit(f"Unexpected error during update check: {e}")
+            msg = f"Unexpected error during update check: {e}"
+            logging.warning(f"[Updater] {msg}")
+            self.error_occurred.emit(msg)
 
 class NoAuthRedirectHandler(urllib.request.HTTPRedirectHandler):
     """リダイレクト先が別ドメインの場合、Authorizationヘッダーを削除するハンドラ"""
@@ -164,13 +209,9 @@ def download_and_apply_update(download_url: str):
     if not new_exe_path:
         raise FileNotFoundError("Executable (.exe) not found in the downloaded update archive.")
 
-    # 実行ファイルのパスを特定する
-    # PyInstallerの場合は sys.frozen が True になり、sys.executable が自身のexeを指す
-    if getattr(sys, 'frozen', False):
-        current_exe_path = sys.executable
-    else:
-        # Nuitka等で sys.frozen がない場合、sys.executable が元の python.exe を指すことがあるため sys.argv[0] を使用する
-        current_exe_path = os.path.abspath(sys.argv[0])
+    # 一時展開フォルダではなく実際の実行ファイル(.exe)のパスを特定する
+    from core.config import get_real_executable_path
+    current_exe_path = get_real_executable_path()
 
     # 開発環境(Pythonスクリプト実行)の場合は更新をスキップ
     if not current_exe_path.lower().endswith(".exe") or "python" in os.path.basename(current_exe_path).lower():

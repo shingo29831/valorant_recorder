@@ -1,5 +1,6 @@
 """Module: @role: アップデート確認・環境テスト・スペック診断・チュートリアル等のダイアログフロー制御を担うコントローラ"""
 
+import logging
 import sys
 import threading
 import traceback
@@ -39,6 +40,11 @@ class MainDialogController(QObject):
         self._on_refresh_settings = on_refresh_settings
 
         self._pending_update: Optional[tuple[str, str]] = None
+        self._pending_update_scheduled: bool = False
+        self._is_update_dialog_open: bool = False
+        self._dismissed_update_version: Optional[str] = None
+        self._update_retry_count: int = 0
+        self._active_modal_count: int = 0
         self._active_tutorial_dialog: Optional[QWidget] = None
         self._pending_env_test_failures: Optional[dict] = None
         self._is_initial_env_test: bool = False
@@ -47,6 +53,10 @@ class MainDialogController(QObject):
         self.update_downloader: Optional[UpdateDownloaderThread] = None
         self.env_tester: Optional[EnvTesterThread] = None
         self.progress_dialog: Optional[QProgressDialog] = None
+
+        self._periodic_update_timer = QTimer(self)
+        self._periodic_update_timer.setInterval(6 * 60 * 60 * 1000)
+        self._periodic_update_timer.timeout.connect(self.check_for_updates)
 
         self.fatalErrorOccurred.connect(self.show_fatal_error_dialog)
         self._setup_exception_handlers()
@@ -98,36 +108,80 @@ class MainDialogController(QObject):
 
     def check_for_updates(self) -> None:
         """更新チェック用スレッドを開始"""
-        api_url = getattr(self._config, 'UPDATE_API_URL', None)
-        if api_url:
-            self.update_checker = UpdateCheckerThread(api_url)
-            self.update_checker.update_available.connect(self.show_update_dialog)
-            self.update_checker.error_occurred.connect(
-                lambda err: self._on_status_message(f"Update Error: {err}")
-            )
-            self.update_checker.start()
-        else:
-            print("[MainDialogController] UPDATE_API_URL is not set. Update checker skipped.")
-
-    def show_update_dialog(self, latest_version: str, download_url: str) -> None:
-        # ゲームプレイを阻害しないよう非アクティブ時はダイアログを保留
-        if self._window.isHidden() or not self._window.isActiveWindow():
-            self._pending_update = (latest_version, download_url)
+        if self.update_checker and self.update_checker.isRunning():
             return
 
-        msg_box = QMessageBox(self._window)
-        msg_box.setWindowTitle(getattr(self._t, 'update_available_title', "Update Available"))
-        msg_text = getattr(
-            self._t,
-            'update_available_msg',
-            "A new version ({latest}) is available.\nCurrent version: {current}\n\nDo you want to update now?"
-        ).format(latest=latest_version, current=APP_VERSION)
-        msg_box.setText(msg_text)
-        msg_box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        msg_box.button(QMessageBox.StandardButton.Yes).setText(getattr(self._t, 'update_now', "Update Now"))
-        msg_box.button(QMessageBox.StandardButton.No).setText(getattr(self._t, 'update_later', "Later"))
+        api_url = (getattr(self._config, 'UPDATE_API_URL', None) or "").strip()
+        if not api_url:
+            logging.warning("[MainDialogController] UPDATE_API_URL is not set. Update checker skipped.")
+            return
 
-        if msg_box.exec() == QMessageBox.StandardButton.Yes:
+        if not self._periodic_update_timer.isActive():
+            self._periodic_update_timer.start()
+
+        self._last_check_had_error = False
+        self.update_checker = UpdateCheckerThread(api_url)
+        self.update_checker.update_available.connect(self._on_auto_update_available)
+        self.update_checker.error_occurred.connect(self._on_auto_update_error)
+        self.update_checker.finished.connect(self._on_auto_update_finished)
+        self.update_checker.start()
+
+    def _on_auto_update_available(self, latest_version: str, download_url: str) -> None:
+        self._update_retry_count = 0
+        self.show_update_dialog(latest_version, download_url, force=False)
+
+    def _on_auto_update_error(self, err: str) -> None:
+        self._last_check_had_error = True
+        logging.warning(f"[MainDialogController] Auto update check failed: {err}")
+        self._on_status_message(f"Update Error: {err}")
+
+    def _on_auto_update_finished(self) -> None:
+        # 起動直後のネットワーク未接続等による失敗時のみ自動リトライ
+        if self._last_check_had_error and self._update_retry_count < 3:
+            self._update_retry_count += 1
+            QTimer.singleShot(30_000, self.check_for_updates)
+        elif not self._last_check_had_error:
+            self._update_retry_count = 0
+
+    def _can_show_modal_now(self) -> bool:
+        """メインウィンドウがユーザー操作可能なフォアグラウンド状態かを判定"""
+        if self._active_modal_count > 0 or self._is_update_dialog_open:
+            return False
+        if self._window.isHidden() or self._window.isMinimized():
+            return False
+        return self._window.isActiveWindow()
+
+    def show_update_dialog(self, latest_version: str, download_url: str, force: bool = False) -> None:
+        if not force:
+            if self._dismissed_update_version == latest_version:
+                return
+            # ゲームプレイ阻害・他モーダルとの重複を避けるため条件外なら保留
+            if not self._can_show_modal_now():
+                self._pending_update = (latest_version, download_url)
+                return
+
+        self._pending_update = None
+        self._is_update_dialog_open = True
+        self._active_modal_count += 1
+        try:
+            msg_box = QMessageBox(self._window)
+            msg_box.setWindowTitle(getattr(self._t, 'update_available_title', "Update Available"))
+            msg_text = getattr(
+                self._t,
+                'update_available_msg',
+                "A new version ({latest}) is available.\nCurrent version: {current}\n\nDo you want to update now?"
+            ).format(latest=latest_version, current=APP_VERSION)
+            msg_box.setText(msg_text)
+            msg_box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            msg_box.button(QMessageBox.StandardButton.Yes).setText(getattr(self._t, 'update_now', "Update Now"))
+            msg_box.button(QMessageBox.StandardButton.No).setText(getattr(self._t, 'update_later', "Later"))
+
+            result = msg_box.exec()
+        finally:
+            self._active_modal_count = max(0, self._active_modal_count - 1)
+            self._is_update_dialog_open = False
+
+        if result == QMessageBox.StandardButton.Yes:
             cancel_text = getattr(self._t, 'cancel', "Cancel")
             self.progress_dialog = QProgressDialog(
                 getattr(self._t, 'update_downloading', "Downloading update..."),
@@ -144,6 +198,9 @@ class MainDialogController(QObject):
             self.update_downloader = UpdateDownloaderThread(download_url)
             self.update_downloader.finished.connect(self._on_update_download_finished)
             self.update_downloader.start()
+        else:
+            self._dismissed_update_version = latest_version
+            self.check_pending_on_shown()
 
     def _on_update_download_finished(self, success: bool, error_message: str) -> None:
         """更新ダウンロード完了後の後処理"""
@@ -191,31 +248,36 @@ class MainDialogController(QObject):
             detailed_text = "\n\n".join([f"[{e[0]}]\n{e[1]}" for e in errors])
 
             if self._window.isActiveWindow() or not self._window.isHidden():
-                msg_box = QMessageBox(self._window)
-                msg_box.setIcon(QMessageBox.Icon.Warning)
-                msg_box.setWindowTitle(title)
-                msg_box.setText(msg_template.format(errors=summary_text))
-                msg_box.setDetailedText(detailed_text)
+                self._active_modal_count += 1
+                try:
+                    msg_box = QMessageBox(self._window)
+                    msg_box.setIcon(QMessageBox.Icon.Warning)
+                    msg_box.setWindowTitle(title)
+                    msg_box.setText(msg_template.format(errors=summary_text))
+                    msg_box.setDetailedText(detailed_text)
 
-                copy_button = msg_box.addButton(
-                    getattr(self._t, 'copy_diagnostic_report', getattr(self._t, 'copy_log', "Copy Diagnostic Report")),
-                    QMessageBox.ButtonRole.ActionRole,
-                )
-                open_folder_btn = msg_box.addButton(
-                    getattr(self._t, 'open_log_folder', "Open Log Folder"),
-                    QMessageBox.ButtonRole.ActionRole,
-                )
-                msg_box.addButton(QMessageBox.StandardButton.Close)
+                    copy_button = msg_box.addButton(
+                        getattr(self._t, 'copy_diagnostic_report', getattr(self._t, 'copy_log', "Copy Diagnostic Report")),
+                        QMessageBox.ButtonRole.ActionRole,
+                    )
+                    open_folder_btn = msg_box.addButton(
+                        getattr(self._t, 'open_log_folder', "Open Log Folder"),
+                        QMessageBox.ButtonRole.ActionRole,
+                    )
+                    msg_box.addButton(QMessageBox.StandardButton.Close)
 
-                msg_box.exec()
+                    msg_box.exec()
 
-                if msg_box.clickedButton() == copy_button:
-                    report = generate_diagnostic_report(self._config, test_errors=errors)
-                    QGuiApplication.clipboard().setText(report)
-                    copied_text = getattr(self._t, 'copied_to_clipboard', "Copied!")
-                    QMessageBox.information(self._window, "Copied", copied_text)
-                elif msg_box.clickedButton() == open_folder_btn:
-                    open_log_folder(self._window, self._t)
+                    if msg_box.clickedButton() == copy_button:
+                        report = generate_diagnostic_report(self._config, test_errors=errors)
+                        QGuiApplication.clipboard().setText(report)
+                        copied_text = getattr(self._t, 'copied_to_clipboard', "Copied!")
+                        QMessageBox.information(self._window, "Copied", copied_text)
+                    elif msg_box.clickedButton() == open_folder_btn:
+                        open_log_folder(self._window, self._t)
+                finally:
+                    self._active_modal_count = max(0, self._active_modal_count - 1)
+                self.check_pending_on_shown()
             else:
                 self._on_status_message(f"Environment Test Failed: {len(errors)} errors")
 
@@ -224,9 +286,14 @@ class MainDialogController(QObject):
         if force or not getattr(self._config, 'INITIAL_SETUP_COMPLETED', False):
             from ui.spec_recommend_dialog import SpecRecommendDialog
             dialog = SpecRecommendDialog(self._config, self._t, self._window)
-            if dialog.exec():
-                if self._on_refresh_settings:
-                    self._on_refresh_settings()
+            self._active_modal_count += 1
+            try:
+                if dialog.exec():
+                    if self._on_refresh_settings:
+                        self._on_refresh_settings()
+            finally:
+                self._active_modal_count = max(0, self._active_modal_count - 1)
+            self.check_pending_on_shown()
 
     def show_tutorial_dialog(self, force: bool = False) -> None:
         """チュートリアルダイアログを表示"""
@@ -234,10 +301,12 @@ class MainDialogController(QObject):
             from ui.tutorial_dialog import TutorialDialog
             dialog = TutorialDialog(self._config, self._t, self._window)
             self._active_tutorial_dialog = dialog
+            self._active_modal_count += 1
             try:
                 dialog.exec()
             finally:
                 self._active_tutorial_dialog = None
+                self._active_modal_count = max(0, self._active_modal_count - 1)
 
             pending = self._pending_env_test_failures
             if pending:
@@ -246,6 +315,8 @@ class MainDialogController(QObject):
                     pending.get('step_results', {}),
                     pending.get('errors', [])
                 )
+            else:
+                self.check_pending_on_shown()
 
     def show_env_test_result_dialog(self, step_results: dict, errors: list) -> None:
         """環境診断の詳細結果ダイアログを表示"""
@@ -258,14 +329,25 @@ class MainDialogController(QObject):
             initial_results=step_results,
             initial_errors=errors
         )
-        dialog.exec()
+        self._active_modal_count += 1
+        try:
+            dialog.exec()
+        finally:
+            self._active_modal_count = max(0, self._active_modal_count - 1)
+        self.check_pending_on_shown()
+
+    def _flush_pending_update(self) -> None:
+        self._pending_update_scheduled = False
+        if not self._pending_update:
+            return
+        latest_version, download_url = self._pending_update
+        self.show_update_dialog(latest_version, download_url, force=False)
 
     def check_pending_on_shown(self) -> None:
-        """ウィンドウ表示時に保留中のアップデートや環境テスト結果があれば表示"""
-        if self._pending_update:
-            latest_version, download_url = self._pending_update
-            self._pending_update = None
-            QTimer.singleShot(500, lambda: self.show_update_dialog(latest_version, download_url))
+        """ウィンドウ表示・アクティブ復帰時に保留中のアップデートや環境テスト結果があれば表示"""
+        if self._pending_update and not self._pending_update_scheduled:
+            self._pending_update_scheduled = True
+            QTimer.singleShot(250, self._flush_pending_update)
 
         if self._pending_env_test_failures and self._active_tutorial_dialog is None and getattr(self._config, 'TUTORIAL_COMPLETED', False):
             pending = self._pending_env_test_failures

@@ -181,7 +181,7 @@ class GeneralSettingsWidget(QWidget):
         self._update_found = True
         main_window = self.window()
         if hasattr(main_window, 'show_update_dialog'):
-            main_window.show_update_dialog(latest_version, download_url)
+            main_window.show_update_dialog(latest_version, download_url, force=True)
 
     def _on_update_error(self, error_msg):
         self._update_found = True

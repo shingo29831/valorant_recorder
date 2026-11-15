@@ -196,7 +196,8 @@ class Config:
             if clip_env
             else os.path.normpath(os.path.join(self.SAVE_DIR, "clips"))
         )
-        self.UPDATE_API_URL = os.environ.get("UPDATE_API_URL") or "https://valoreco-api.meld-task.com/api/version"
+        raw_update_url = (os.environ.get("UPDATE_API_URL") or "").strip()
+        self.UPDATE_API_URL = raw_update_url or "https://valoreco-api.meld-task.com/api/version"
         self.PLAYER_SYS_VOLUME = self._parse_volume(os.environ.get("PLAYER_SYS_VOLUME", "1.0"))
         self.PLAYER_MIC_VOLUME = self._parse_volume(os.environ.get("PLAYER_MIC_VOLUME", "1.0"))
         self.AUTO_START = os.environ.get("AUTO_START", "False").lower() == "true"
