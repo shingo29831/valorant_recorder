@@ -38,7 +38,8 @@ class WatcherThread(QThread):
             on_real_match_end=self.handle_real_match_end,
             on_round_phase_changed=self.handle_round_phase_changed,
             on_ability_used=self.handle_ability_used,
-            on_performance_drop=self.handle_performance_drop
+            on_performance_drop=self.handle_performance_drop,
+            on_client_closed=self.handle_client_closed,
         )
         self.current_video_path = None
         self.local_round_events = []
@@ -53,6 +54,7 @@ class WatcherThread(QThread):
         self._match_tag_line = None
         self._match_region = None
         self._match_player_verified = False
+        self._match_map_name = "Unknown"
         self._stop_timer = None
         self._is_manual_action = False
         self._is_manual_recording = False
@@ -103,6 +105,40 @@ class WatcherThread(QThread):
                 pass
             self._stop_timer = None
 
+    def _is_range_map_name(self, map_name: str) -> bool:
+        if not map_name:
+            return False
+        lower_name = map_name.lower()
+        return any(
+            k in lower_name
+            for k in ("the range", "range", "rangev2", "poveglia", "basictraining", "shooting", "tutorial", "pingo")
+        )
+
+    def _resolve_valid_watcher_map(self) -> str:
+        cur_map = getattr(self.watcher, "current_map_name", "Unknown") or "Unknown"
+        if cur_map != "Unknown" and not self._is_range_map_name(cur_map):
+            return cur_map
+        last_map = getattr(self.watcher, "last_valid_map_name", "Unknown") or "Unknown"
+        if last_map != "Unknown" and not self._is_range_map_name(last_map):
+            return last_map
+        return "Unknown"
+
+    def handle_client_closed(self) -> bool:
+        # ウィンドウ終了に伴うメニュー遷移で停止待機タイマーが動いていた場合はキャンセルして録画を継続する
+        if self._is_manual_recording or self.current_video_path is None:
+            return False
+        if self._stop_timer is not None and not getattr(self.watcher, "_last_end_was_explicit", False):
+            self._cancel_stop_timer()
+            self.real_match_end_time_ms = None
+            default_msg = (
+                "VALORANTの終了を検知したため停止待機をキャンセルし、再接続に備えて録画を継続します。"
+                if getattr(self.config, "LANGUAGE", "ja") == "ja"
+                else "VALORANT closed; cancelled stop timer and continuing recording for reconnect."
+            )
+            self.log_signal.emit(getattr(self.t, "log_client_closed_continue", default_msg))
+            return True
+        return False
+
     def start_manual_recording(self):
         if self.current_video_path is not None:
             self.log_signal.emit(self.t.log_manual_already_recording)
@@ -118,6 +154,7 @@ class WatcherThread(QThread):
         self._match_tag_line = self.current_tag_line
         self._match_region = self.current_region
         self._match_player_verified = verified
+        self._match_map_name = self._resolve_valid_watcher_map()
         self.log_signal.emit(self.t.log_manual_starting)
         self._is_manual_recording = True
         try:
@@ -165,6 +202,10 @@ class WatcherThread(QThread):
 
     def handle_match_start(self, is_range: bool, match_start_timestamp: float = None, is_recovery: bool = False):
         if self._is_range_match(is_range):
+            # 前試合の終了待機タイマー中に射撃場へ入った場合は前試合の録画を即座に保存・終了する
+            if self._stop_timer is not None and not self._is_manual_recording and self.current_video_path is not None:
+                self._cancel_stop_timer()
+                self._stop_and_process_recording()
             self.log_signal.emit(self.t.log_range_detected_skip)
             return
             
@@ -196,6 +237,7 @@ class WatcherThread(QThread):
         self._match_tag_line = self.current_tag_line
         self._match_region = self.current_region
         self._match_player_verified = verified
+        self._match_map_name = self._resolve_valid_watcher_map()
         
         if is_recovery:
             self.log_signal.emit(self.t.log_recovery_mode)
@@ -228,6 +270,8 @@ class WatcherThread(QThread):
 
     def handle_round_phase_changed(self, phase: str, phase_timestamp: float = None):
         if self.current_video_path is not None:
+            if getattr(self, "_match_map_name", "Unknown") == "Unknown":
+                self._match_map_name = self._resolve_valid_watcher_map()
             # 絶対時刻(UNIXタイムスタンプミリ秒)で記録し、後でAPIデータと高精度に同期する
             ts_ms = int((phase_timestamp if phase_timestamp else time.time()) * 1000)
             self.local_round_events.append({"phase": phase, "time_ms": ts_ms})
@@ -235,6 +279,8 @@ class WatcherThread(QThread):
 
     def handle_ability_used(self, timestamp: float):
         if self.current_video_path is not None:
+            if getattr(self, "_match_map_name", "Unknown") == "Unknown":
+                self._match_map_name = self._resolve_valid_watcher_map()
             ts_ms = int(timestamp * 1000)
             self.local_ability_events.append({"time_ms": ts_ms})
             
@@ -252,6 +298,9 @@ class WatcherThread(QThread):
 
         if self.current_video_path is None:
             return
+
+        if getattr(self, "_match_map_name", "Unknown") == "Unknown":
+            self._match_map_name = self._resolve_valid_watcher_map()
 
         # 実際の試合終了時間を記録
         self.real_match_end_time_ms = int(time.time() * 1000)
@@ -289,6 +338,10 @@ class WatcherThread(QThread):
         match_tag_line = getattr(self, '_match_tag_line', None) or self.current_tag_line
         match_region = getattr(self, '_match_region', None) or self.current_region
         match_player_verified = bool(getattr(self, '_match_player_verified', False))
+        # 射撃場や次マップへの遷移でwatcher.current_map_nameが上書きされても前試合の退避マップ名を最優先する
+        match_map_name = getattr(self, '_match_map_name', 'Unknown') or 'Unknown'
+        if match_map_name == "Unknown" or self._is_range_map_name(match_map_name):
+            match_map_name = self._resolve_valid_watcher_map()
         
         # UIフリーズを防ぐため、状態を即座にリセット
         if video_path:
@@ -301,6 +354,7 @@ class WatcherThread(QThread):
         self._match_tag_line = None
         self._match_region = None
         self._match_player_verified = False
+        self._match_map_name = "Unknown"
         self.local_round_events = []
         self.local_ability_events = []
         self.recording_state_changed.emit(False)
@@ -320,6 +374,7 @@ class WatcherThread(QThread):
                 match_tag_line,
                 match_region,
                 match_player_verified,
+                match_map_name,
             ),
             daemon=True
         ).start()
@@ -337,6 +392,7 @@ class WatcherThread(QThread):
         match_tag_line=None,
         match_region=None,
         match_player_verified=False,
+        match_map_name="Unknown",
     ):
         try:
             try:
@@ -355,7 +411,7 @@ class WatcherThread(QThread):
                     match_tag_line = self.current_tag_line
                     match_region = self.current_region
 
-            raw_map = getattr(self.watcher, 'current_map_name', 'Unknown')
+            raw_map = match_map_name or "Unknown"
             temp_filepath = self.metadata_service.save_temp_metadata(
                 video_path=video_path,
                 map_name="Fetching..." if raw_map == "Unknown" else raw_map,

@@ -1,5 +1,8 @@
 """Module: @role: VALORANTログ行の正規表現定義とマップ・状態遷移パース処理を担うモジュール"""
+import ctypes
+from ctypes import wintypes
 from datetime import datetime, timezone
+import os
 import re
 import time
 from typing import Optional, Tuple
@@ -119,6 +122,17 @@ RELEVANT_LOG_KEYWORDS: tuple[str, ...] = (
     "Ability activated",
     "Performance drop",
     "Hitch detected",
+    "LogExit",
+    "RequestExit",
+    "EngineExit",
+    "Closing by request",
+    "ApplicationWillTerminate",
+    "Log file closed",
+    "Log file open",
+    "Window 'VALORANT",
+    "being destroyed",
+    "Destroy",
+    "WM_CLOSE",
 )
 
 START_LOG_PATTERNS: tuple[str, ...] = (
@@ -145,6 +159,29 @@ MENU_LOG_PATTERNS: tuple[str, ...] = (
     "Broadcasting state changed to TransitionToMainMenu",
     "Loopstate changed from INGAME to MENUS",
     "Loopstate changed from PREGAME to MENUS",
+)
+
+SETTLED_MENU_LOG_PATTERNS: tuple[str, ...] = (
+    "Broadcasting state changed to Menus",
+    "Broadcasting state changed to MainMenu",
+    "Loopstate changed from INGAME to MENUS",
+    "Loopstate changed from PREGAME to MENUS",
+)
+
+PREGAME_LOG_PATTERNS: tuple[str, ...] = (
+    "Broadcasting state changed to Pregame",
+    "Broadcasting state changed to TransitionToPregame",
+    "Loopstate changed from MENUS to PREGAME",
+)
+
+APP_EXIT_LOG_PATTERNS: tuple[str, ...] = (
+    "LogExit: Preparing to exit",
+    "LogExit: Game engine shut down",
+    "LogExit: Exiting",
+    "LogExit: Object subsystem successfully closed",
+    "FPlatformMisc::RequestExit",
+    "EngineExit(",
+    "Log file closed",
 )
 
 PERF_WARNING_PATTERNS: tuple[str, ...] = (
@@ -203,7 +240,100 @@ def parse_state_transition(line: str) -> Tuple[Optional[str], Optional[str]]:
 def is_menu_transition_line(line: str, to_state: Optional[str] = None) -> bool:
     if any(p in line for p in MENU_LOG_PATTERNS):
         return True
-    return to_state in ("Menus", "MainMenu") and ("Match State Changed" in line or "LogGameFlowStateManager" in line)
+    return to_state in ("Menus", "MainMenu", "TransitionToMainMenu") and (
+        "Match State Changed" in line or "LogGameFlowStateManager" in line
+    )
+
+
+def is_menu_settled_line(line: str, to_state: Optional[str] = None) -> bool:
+    if any(p in line for p in SETTLED_MENU_LOG_PATTERNS):
+        return True
+    return to_state in ("Menus", "MainMenu") and (
+        "Match State Changed" in line or "LogGameFlowStateManager" in line
+    )
+
+
+def is_pregame_transition_line(line: str, to_state: Optional[str] = None) -> bool:
+    if any(p in line for p in PREGAME_LOG_PATTERNS):
+        return True
+    return to_state in ("Pregame", "TransitionToPregame") and (
+        "Match State Changed" in line or "LogGameFlowStateManager" in line
+    )
+
+
+def is_app_exit_line(line: str) -> bool:
+    """VALORANTウィンドウを閉じた際（エンジン終了・ウィンドウ破棄）のログ行かを判定する"""
+    if any(p in line for p in APP_EXIT_LOG_PATTERNS):
+        return True
+    if "LogExit:" in line:
+        return True
+    if "Window 'VALORANT" in line and ("being destroyed" in line or "Destroy" in line):
+        return True
+    if ("LogWindows:" in line or "LogSlate:" in line or "LogEngine:" in line) and (
+        "RequestExit" in line
+        or "ApplicationWillTerminate" in line
+        or "Closing by request" in line
+        or "WM_CLOSE" in line
+    ):
+        return True
+    return False
+
+
+def is_valorant_window_open() -> Optional[bool]:
+    """OS上でVALORANTのゲームウィンドウハンドルが存在するか判定する（最小化や一時非表示でもTrue）"""
+    if os.name != "nt":
+        return None
+    try:
+        user32 = ctypes.windll.user32
+        enum_proc_type = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+        # 64bit環境でのHWND上位ビット欠落を防ぐためシグネチャを明示定義
+        find_window = user32.FindWindowW
+        find_window.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+        find_window.restype = wintypes.HWND
+
+        is_window = user32.IsWindow
+        is_window.argtypes = [wintypes.HWND]
+        is_window.restype = wintypes.BOOL
+
+        get_class_name = user32.GetClassNameW
+        get_class_name.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+        get_class_name.restype = ctypes.c_int
+
+        get_window_text = user32.GetWindowTextW
+        get_window_text.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+        get_window_text.restype = ctypes.c_int
+
+        enum_windows = user32.EnumWindows
+        enum_windows.argtypes = [enum_proc_type, wintypes.LPARAM]
+        enum_windows.restype = wintypes.BOOL
+
+        hwnd = find_window("UnrealWindow", "VALORANT  ")
+        if hwnd and is_window(hwnd):
+            return True
+
+        found = False
+
+        def _enum_cb(h_wnd: int, _lparam: int) -> bool:
+            nonlocal found
+            if not h_wnd or not is_window(h_wnd):
+                return True
+            cls_buf = ctypes.create_unicode_buffer(64)
+            if get_class_name(h_wnd, cls_buf, 64) <= 0:
+                return True
+            if cls_buf.value != "UnrealWindow":
+                return True
+            title_buf = ctypes.create_unicode_buffer(128)
+            get_window_text(h_wnd, title_buf, 128)
+            if title_buf.value.strip().upper().startswith("VALORANT"):
+                found = True
+                return False
+            return True
+
+        enum_windows(enum_proc_type(_enum_cb), 0)
+        return found
+    except Exception:
+        return None
 
 
 def parse_map_update_from_line(
