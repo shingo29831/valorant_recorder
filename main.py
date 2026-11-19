@@ -310,6 +310,13 @@ def main():
     # 最後のウィンドウが閉じられてもアプリを終了しないように設定
     app.setQuitOnLastWindowClosed(False)
     
+    # UI初期化によるaudio_processor.dllロード前に1回だけ最新C++モジュールのビルドを確認
+    try:
+        from recorder.native_bridge import try_rebuild_native_recorder
+        try_rebuild_native_recorder()
+    except Exception as e:
+        logging.warning(f"[Main] Pre-load native rebuild check skipped: {e}")
+
     config = Config()
     if config.AUTO_START:
         set_autostart(True)

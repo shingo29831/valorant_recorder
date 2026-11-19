@@ -159,15 +159,17 @@ class MicMonitorThread(QThread):
     def set_monitor_audio(self, monitor):
         self.monitor_audio = monitor
 
-    def process_audio(self, data):
+    def process_audio(self, data, apply_gain=True):
         if data is None or len(data) == 0:
             self.level_ready.emit(0.0)
             return data
-        data = data * self.gain
+        data = np.nan_to_num(data, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32, copy=False)
+        if apply_gain:
+            data = data * self.gain
 
         # メーター表示用のレベル計算（ゲート適用前）
-        peak = np.max(np.abs(data))
-        level = min(1.0, peak ** 0.5)
+        peak = float(np.max(np.abs(data)))
+        level = min(1.0, peak ** 0.5) if np.isfinite(peak) else 0.0
         self.level_ready.emit(float(level))
 
         # 再生用のノイズゲート適用
@@ -295,6 +297,9 @@ class MicMonitorThread(QThread):
                     if last_denoise != denoise_target:
                         processor.set_denoise_type(denoise_target)
                         last_denoise = denoise_target
+                    elif denoise_target == "DeepFilterNet":
+                        # 非同期モデル取得完了時にユーザー再操作なしで自動有効化
+                        processor.try_activate_deepfilter_if_ready()
                     return processor.process(raw_data)
 
                 if recorder is not None:
@@ -322,8 +327,11 @@ class MicMonitorThread(QThread):
                                     data = data.mean(axis=1, keepdims=True)
                             elif data.ndim == 2 and data.shape[1] > 2:
                                 data = data.mean(axis=1, keepdims=True)
+                            # 録画側(DownmixToStereo->AudioProcessor)と順序を統一し、歪み防止はC++ソフトクリップへ委譲
+                            data = np.nan_to_num(data, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32, copy=False)
+                            data = data * np.float32(self.gain)
                             data = apply_native_dsp(data)
-                            processed = self.process_audio(data)
+                            processed = self.process_audio(data, apply_gain=False)
                             if self.monitor_audio:
                                 if active_player is None:
                                     for out_ch in (2, 1):

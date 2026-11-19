@@ -30,6 +30,8 @@ struct RecorderConfig {
 EXPORT_API bool Recorder_Start(const RecorderConfig* config);
 EXPORT_API void Recorder_Stop();
 EXPORT_API bool Recorder_IsRunning();
+// 起動状態: 0=IDLE, 1=INITIALIZING, 2=RUNNING, 3=FAILED
+EXPORT_API int32_t Recorder_GetStartupState();
 EXPORT_API void Recorder_SetLowPriority(bool lowPriority);
 EXPORT_API const char* Recorder_GetLastError();
 EXPORT_API int64_t Recorder_GetActualStartTimeMs();

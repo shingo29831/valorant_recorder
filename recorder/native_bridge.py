@@ -4,8 +4,18 @@ from datetime import datetime
 import logging
 import os
 import subprocess
+import threading
 import time
-from recorder.audio_processor_wrapper import get_short_path_name
+from core.config import is_compiled_binary
+from recorder.audio_processor_wrapper import (
+    ensure_deepfilter_model_async,
+    find_or_download_deepfilter_model,
+    is_audio_processor_dll_loaded,
+)
+
+_REBUILD_LOCK = threading.Lock()
+_REBUILD_CHECKED = False
+_NATIVE_DLL_LOADED = False
 
 
 class RecorderConfig(ctypes.Structure):
@@ -26,50 +36,63 @@ class RecorderConfig(ctypes.Structure):
 
 
 def try_rebuild_native_recorder() -> None:
-    """C++のソースファイルがDLLより新しい場合、CMakeビルドを実行して最新化する。"""
-    try:
-        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "cpp", "audio_processor"))
-        cpp_sources = [
-            os.path.join(base_dir, "NativeRecorder.cpp"),
-            os.path.join(base_dir, "NativeRecorder.h"),
-            os.path.join(base_dir, "NativeAudioUtils.h"),
-            os.path.join(base_dir, "WasapiCapture.cpp"),
-            os.path.join(base_dir, "WasapiCapture.h"),
-            os.path.join(base_dir, "AudioProcessor.cpp"),
-            os.path.join(base_dir, "AudioProcessor.h"),
-        ]
-        build_dir = os.path.join(base_dir, "build")
-        dll_paths = [
-            os.path.join(build_dir, "Release", "native_recorder.dll"),
-            os.path.join(build_dir, "Release", "audio_processor.dll"),
-        ]
-
-        existing_sources = [p for p in cpp_sources if os.path.exists(p)]
-        if not existing_sources:
+    """C++のソースファイルがDLLより新しい場合、全DLL未ロード時に1回限りCMakeビルドを実行する。"""
+    global _REBUILD_CHECKED
+    if is_compiled_binary():
+        return
+    # ビルド完了までロックを保持し、DLL既ロード時はファイルロック競合・シンボル不整合を防ぐためスキップ
+    with _REBUILD_LOCK:
+        if _REBUILD_CHECKED or _NATIVE_DLL_LOADED or is_audio_processor_dll_loaded():
             return
+        _REBUILD_CHECKED = True
 
-        max_src_mtime = max(os.path.getmtime(p) for p in existing_sources)
-        needs_build = any((not os.path.exists(dll_p) or max_src_mtime > os.path.getmtime(dll_p)) for dll_p in dll_paths)
+        try:
+            base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "cpp", "audio_processor"))
+            cpp_sources = [
+                os.path.join(base_dir, "NativeRecorder.cpp"),
+                os.path.join(base_dir, "NativeRecorder.h"),
+                os.path.join(base_dir, "NativeAudioUtils.h"),
+                os.path.join(base_dir, "FFmpegProcess.cpp"),
+                os.path.join(base_dir, "FFmpegProcess.h"),
+                os.path.join(base_dir, "WasapiCapture.cpp"),
+                os.path.join(base_dir, "WasapiCapture.h"),
+                os.path.join(base_dir, "AudioProcessor.cpp"),
+                os.path.join(base_dir, "AudioProcessor.h"),
+            ]
+            build_dir = os.path.join(base_dir, "build")
+            dll_paths = [
+                os.path.join(build_dir, "Release", "native_recorder.dll"),
+                os.path.join(build_dir, "Release", "audio_processor.dll"),
+            ]
 
-        if needs_build:
-            logging.info("[FFmpegRecorder] Newer C++ source detected. Rebuilding native_recorder.dll...")
-            os.makedirs(build_dir, exist_ok=True)
-            res = subprocess.run(
-                ["cmake", "--build", ".", "--config", "Release"],
-                cwd=build_dir,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-                timeout=30,
+            existing_sources = [p for p in cpp_sources if os.path.exists(p)]
+            if not existing_sources:
+                return
+
+            max_src_mtime = max(os.path.getmtime(p) for p in existing_sources)
+            needs_build = any(
+                (not os.path.exists(dll_p) or max_src_mtime > os.path.getmtime(dll_p)) for dll_p in dll_paths
             )
-            if res.returncode == 0:
-                logging.info("[FFmpegRecorder] C++ module successfully rebuilt.")
-            else:
-                logging.warning(
-                    f"[FFmpegRecorder] Auto-rebuild skipped: {res.stderr.decode('utf-8', errors='replace')}"
+
+            if needs_build:
+                logging.info("[FFmpegRecorder] Newer C++ source detected. Rebuilding native_recorder.dll...")
+                os.makedirs(build_dir, exist_ok=True)
+                res = subprocess.run(
+                    ["cmake", "--build", ".", "--config", "Release"],
+                    cwd=build_dir,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                    timeout=60,
                 )
-    except Exception as e:
-        logging.warning(f"[FFmpegRecorder] Auto-rebuild check skipped: {e}")
+                if res.returncode == 0:
+                    logging.info("[FFmpegRecorder] C++ module successfully rebuilt.")
+                else:
+                    logging.warning(
+                        f"[FFmpegRecorder] Auto-rebuild skipped: {res.stderr.decode('utf-8', errors='replace')}"
+                    )
+        except Exception as e:
+            logging.warning(f"[FFmpegRecorder] Auto-rebuild check skipped: {e}")
 
 
 def load_native_recorder_dll() -> ctypes.CDLL:
@@ -100,16 +123,22 @@ def load_native_recorder_dll() -> ctypes.CDLL:
         else:
             logging.warning(f"[FFmpegRecorder] Dependency not found: {dep_path}")
 
-    try:
-        native_lib = ctypes.CDLL(dll_path, winmode=load_with_altered_search_path)
-    except Exception as e:
-        logging.error(f"[FFmpegRecorder] Failed to load native_recorder.dll: {e}")
-        raise RuntimeError(f"Failed to load native recorder module: {e}")
+    global _NATIVE_DLL_LOADED
+    with _REBUILD_LOCK:
+        try:
+            native_lib = ctypes.CDLL(dll_path, winmode=load_with_altered_search_path)
+            _NATIVE_DLL_LOADED = True
+        except Exception as e:
+            logging.error(f"[FFmpegRecorder] Failed to load native_recorder.dll: {e}")
+            raise RuntimeError(f"Failed to load native recorder module: {e}")
 
     native_lib.Recorder_Start.argtypes = [ctypes.POINTER(RecorderConfig)]
     native_lib.Recorder_Start.restype = ctypes.c_bool
     native_lib.Recorder_Stop.argtypes = []
     native_lib.Recorder_IsRunning.restype = ctypes.c_bool
+    if hasattr(native_lib, "Recorder_GetStartupState"):
+        native_lib.Recorder_GetStartupState.argtypes = []
+        native_lib.Recorder_GetStartupState.restype = ctypes.c_int32
     native_lib.Recorder_GetLastError.restype = ctypes.c_char_p
     if hasattr(native_lib, "Recorder_SetLowPriority"):
         native_lib.Recorder_SetLowPriority.argtypes = [ctypes.c_bool]
@@ -127,44 +156,11 @@ def load_native_recorder_dll() -> ctypes.CDLL:
 def resolve_deepfilter_model_path(denoise_mode: int) -> str:
     if denoise_mode != 1:
         return ""
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    primary_model_path = os.path.join(
-        project_root, "cpp", "audio_processor", "models", "DeepFilterNet3", "DeepFilterNet3_onnx.tar.gz"
-    )
-    possible_model_paths = [
-        primary_model_path,
-        os.path.join(project_root, "models", "DeepFilterNet3", "DeepFilterNet3_onnx.tar.gz"),
-        os.path.join(project_root, "models", "DeepFilterNet3_onnx.tar.gz"),
-    ]
-    df_model_path = next(
-        (p for p in possible_model_paths if os.path.isfile(p) and os.path.getsize(p) > 1024),
-        "",
-    )
-    if not df_model_path:
-        for root, _, files in os.walk(project_root):
-            for f in files:
-                if f.endswith(".tar.gz") and "deepfilter" in f.lower():
-                    cand = os.path.join(root, f)
-                    if os.path.getsize(cand) > 1024:
-                        df_model_path = cand
-                        break
-            if df_model_path:
-                break
-
-    if not df_model_path:
-        import urllib.request
-        model_url = "https://github.com/Rikorose/DeepFilterNet/raw/main/models/DeepFilterNet3_onnx.tar.gz"
-        try:
-            os.makedirs(os.path.dirname(primary_model_path), exist_ok=True)
-            urllib.request.urlretrieve(model_url, primary_model_path)
-            if os.path.isfile(primary_model_path) and os.path.getsize(primary_model_path) > 1024:
-                df_model_path = primary_model_path
-        except Exception:
-            pass
-
-    if df_model_path:
-        return get_short_path_name(df_model_path).replace("\\", "/")
-    return ""
+    # 手動録画(UIスレッド)等のホットパスをブロックしないためローカルのみ即時解決し、不在時は裏で取得
+    model_path = find_or_download_deepfilter_model(allow_download=False)
+    if not model_path:
+        ensure_deepfilter_model_async()
+    return model_path
 
 
 def collect_and_save_diagnostic(native_lib: ctypes.CDLL, save_dir: str, err_msg: str) -> None:

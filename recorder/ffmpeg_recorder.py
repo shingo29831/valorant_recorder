@@ -68,6 +68,21 @@ class FFmpegRecorder:
     def _try_start_and_verify(self, config_struct: RecorderConfig) -> bool:
         if not self.native_lib.Recorder_Start(ctypes.byref(config_struct)):
             return False
+        if hasattr(self.native_lib, "Recorder_GetStartupState"):
+            # DeepFilterNet展開〜FFmpeg/D3D11起動成否が確定するまで待機し、フォールバック判定を正確に機能させる
+            deadline = time.monotonic() + 10.0
+            while time.monotonic() < deadline:
+                state = int(self.native_lib.Recorder_GetStartupState())
+                if state == 3 or not self.native_lib.Recorder_IsRunning():
+                    return False
+                if state == 2:
+                    for _ in range(6):
+                        time.sleep(0.05)
+                        if not self.native_lib.Recorder_IsRunning():
+                            return False
+                    return True
+                time.sleep(0.05)
+            return False
         for _ in range(7):
             time.sleep(0.1)
             if not self.native_lib.Recorder_IsRunning():

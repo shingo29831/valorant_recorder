@@ -35,10 +35,17 @@ extern "C" {
     void AudioProcessor_Destroy(void* processor);
     void AudioProcessor_SetPreProcessType(void* processor, int type);
     void AudioProcessor_SetDenoiseType(void* processor, int type);
+    int AudioProcessor_IsDeepFilterActive(void* processor);
     void AudioProcessor_Process(void* processor, const float* input, float* output, int num_frames);
 }
 
+static constexpr int32_t kStartupIdle = 0;
+static constexpr int32_t kStartupInitializing = 1;
+static constexpr int32_t kStartupRunning = 2;
+static constexpr int32_t kStartupFailed = 3;
+
 static std::atomic<bool> g_isRunning{false};
+static std::atomic<int32_t> g_startupState{kStartupIdle};
 static std::atomic<int64_t> g_actualStartTimeMs{0};
 static std::atomic<int64_t> g_actualEndTimeMs{0};
 static std::string g_lastError = "";
@@ -160,11 +167,36 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
         }
     }
 
+    const bool hasActiveMic = (g_micCapture && g_micCapture->IsInitialized());
+    auto audioProcDeleter = [](void* p) {
+        if (p) AudioProcessor_Destroy(p);
+    };
+    std::unique_ptr<void, decltype(audioProcDeleter)> audioProc(nullptr, audioProcDeleter);
+
+    // WASAPI Start()前かつFFmpeg起動前にモデル展開を完了し、初期パイプ遅延・A/V同期ズレを防止
+    if (hasActiveMic && (configCopy.denoise_mode > 0 || configCopy.preprocess_mode > 0)) {
+        const char* modelPathCStr = (configCopy.denoise_mode == 1 && !dfModelPath.empty()) ? dfModelPath.c_str() : "";
+        NativeLog("Initializing AudioProcessor (Preprocess=" + std::to_string(configCopy.preprocess_mode) +
+                  ", Denoise=" + std::to_string(configCopy.denoise_mode) +
+                  ", ModelPath=" + (dfModelPath.empty() ? "<empty>" : dfModelPath) + ")");
+        audioProc.reset(AudioProcessor_Create(48000, 2, modelPathCStr));
+        if (audioProc) {
+            AudioProcessor_SetPreProcessType(audioProc.get(), configCopy.preprocess_mode);
+            AudioProcessor_SetDenoiseType(audioProc.get(), configCopy.denoise_mode);
+            const bool dfActive = (AudioProcessor_IsDeepFilterActive(audioProc.get()) != 0);
+            NativeLog("AudioProcessor initialized successfully. DeepFilterActive: " +
+                      std::string(dfActive ? "true" : "false"));
+        } else {
+            NativeLog("Notice: AudioProcessor initialization bypassed or failed. Continuing standard capture.");
+        }
+    }
+
     FFmpegProcess ffmpeg;
     ffmpeg.SetLogger(NativeLog);
     std::string ffmpegErr;
     if (!ffmpeg.Start(ffmpegCmd, ffmpegLogPath, configCopy.low_priority != 0, ffmpegErr)) {
         SetLastErrorMsg(ffmpegErr);
+        g_startupState.store(kStartupFailed);
         g_isRunning = false;
         return;
     }
@@ -172,22 +204,6 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
     {
         std::lock_guard<std::mutex> lock(g_processMutex);
         g_activeProcess = &ffmpeg;
-    }
-
-    const bool hasActiveMic = (g_micCapture && g_micCapture->IsInitialized());
-    void* audioProc = nullptr;
-    if (hasActiveMic && (configCopy.denoise_mode > 0 || configCopy.preprocess_mode > 0)) {
-        const char* modelPathCStr = (configCopy.denoise_mode == 1 && !dfModelPath.empty()) ? dfModelPath.c_str() : "";
-        audioProc = AudioProcessor_Create(48000, 2, modelPathCStr);
-        if (audioProc) {
-            AudioProcessor_SetPreProcessType(audioProc, configCopy.preprocess_mode);
-            AudioProcessor_SetDenoiseType(audioProc, configCopy.denoise_mode);
-            NativeLog("AudioProcessor initialized successfully. Preprocess: " +
-                      std::to_string(configCopy.preprocess_mode) + ", Denoise: " +
-                      std::to_string(configCopy.denoise_mode));
-        } else {
-            NativeLog("Notice: AudioProcessor initialization bypassed or failed. Continuing standard capture.");
-        }
     }
 
     NoiseGate micNoiseGate;
@@ -225,6 +241,7 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
         if (ffmpeg.IsExited(0)) {
             DWORD exitCode = ffmpeg.GetExitCode();
             SetLastErrorMsg("FFmpeg process exited during initialization with code " + std::to_string(exitCode));
+            g_startupState.store(kStartupFailed);
             g_isRunning = false;
             break;
         }
@@ -238,6 +255,13 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
             break;
         }
         Sleep(5);
+    }
+
+    if (g_isRunning && !ffmpeg.IsExited(0)) {
+        g_startupState.store(kStartupRunning);
+    } else if (g_startupState.load() == kStartupInitializing) {
+        g_startupState.store(kStartupFailed);
+        g_isRunning = false;
     }
 
     // 映像キャプチャ開始と同時にキューを直近20msにアラインし、A/Vの初期ズレを根絶
@@ -276,7 +300,7 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
 
         if (hasActiveMic) {
             if (audioProc && (configCopy.denoise_mode > 0 || configCopy.preprocess_mode > 0)) {
-                AudioProcessor_Process(audioProc, micBuf.data(), micProcessed.data(), static_cast<int>(framesPerChunk));
+                AudioProcessor_Process(audioProc.get(), micBuf.data(), micProcessed.data(), static_cast<int>(framesPerChunk));
             } else {
                 std::copy(micBuf.begin(), micBuf.begin() + reqMicSamples, micProcessed.begin());
             }
@@ -354,10 +378,7 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
         }
     }
 
-    if (audioProc) {
-        AudioProcessor_Destroy(audioProc);
-        audioProc = nullptr;
-    }
+    audioProc.reset();
 
     g_isWriterRunning = false;
     outQueue.NotifyAll();
@@ -379,9 +400,15 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
     g_isRunning = false;
     } catch (const std::exception& e) {
         SetLastErrorMsg(std::string("Exception in RecordingThreadFunc: ") + e.what());
+        if (g_startupState.load() == kStartupInitializing) {
+            g_startupState.store(kStartupFailed);
+        }
         g_isRunning = false;
     } catch (...) {
         SetLastErrorMsg("Unknown exception in RecordingThreadFunc.");
+        if (g_startupState.load() == kStartupInitializing) {
+            g_startupState.store(kStartupFailed);
+        }
         g_isRunning = false;
     }
 }
@@ -435,6 +462,7 @@ EXPORT_API bool Recorder_Start(const RecorderConfig* config) {
 
         g_actualStartTimeMs.store(0);
         g_actualEndTimeMs.store(0);
+        g_startupState.store(kStartupInitializing);
         g_isRunning = true;
         SetLastErrorMsg("");
 
@@ -442,10 +470,12 @@ EXPORT_API bool Recorder_Start(const RecorderConfig* config) {
         return true;
     } catch (const std::exception& e) {
         SetLastErrorMsg(std::string("Exception in Recorder_Start: ") + e.what());
+        g_startupState.store(kStartupFailed);
         g_isRunning = false;
         return false;
     } catch (...) {
         SetLastErrorMsg("Unknown exception in Recorder_Start.");
+        g_startupState.store(kStartupFailed);
         g_isRunning = false;
         return false;
     }
@@ -454,12 +484,11 @@ EXPORT_API bool Recorder_Start(const RecorderConfig* config) {
 EXPORT_API void Recorder_Stop() {
     std::lock_guard<std::mutex> lock(g_recorderMutex);
     try {
-        if (g_isRunning) {
-            g_isRunning = false;
-            if (g_recordingThread.joinable()) {
-                g_recordingThread.join();
-            }
+        g_isRunning = false;
+        if (g_recordingThread.joinable()) {
+            g_recordingThread.join();
         }
+        g_startupState.store(kStartupIdle);
 
         std::lock_guard<std::mutex> lockLog(g_logMutex);
         if (g_logFile.is_open()) {
@@ -475,6 +504,10 @@ EXPORT_API void Recorder_Stop() {
 
 EXPORT_API bool Recorder_IsRunning() {
     return g_isRunning.load();
+}
+
+EXPORT_API int32_t Recorder_GetStartupState() {
+    return g_startupState.load();
 }
 
 EXPORT_API void Recorder_SetLowPriority(bool lowPriority) {

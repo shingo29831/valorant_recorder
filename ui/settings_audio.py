@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from recorder.audio_processor_wrapper import AudioProcessorWrapper
+from recorder.audio_processor_wrapper import AudioProcessorWrapper, ensure_deepfilter_model_async
 from ui.audio_monitor_threads import MicMonitorThread, SystemAudioMonitorThread
 from ui.settings_utils import HoverWheelComboBox
 from ui.volume_meter import VolumeMeter
@@ -158,6 +158,8 @@ class AudioSettingsWidget(QWidget):
         idx = self.mic_denoise_combo.findData(denoise_val)
         if idx >= 0:
             self.mic_denoise_combo.setCurrentIndex(idx)
+        if denoise_val == "AI (DeepFilterNet)":
+            ensure_deepfilter_model_async()
         self.mic_denoise_combo.currentIndexChanged.connect(self._on_denoise_changed)
 
         self.mic_preprocess_combo = HoverWheelComboBox()
@@ -308,6 +310,8 @@ class AudioSettingsWidget(QWidget):
                     self.mic_denoise_combo.blockSignals(False)
                 mode = "AI (RNNoise)"
 
+        if mode == "AI (DeepFilterNet)":
+            ensure_deepfilter_model_async()
         if self.monitor_thread:
             self.monitor_thread.set_denoise(mode)
         self._save_audio_settings()
