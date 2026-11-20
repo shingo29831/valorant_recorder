@@ -39,6 +39,7 @@ class MatchMetadataService:
         ability_events: list,
         start_time_ms: Optional[int],
         real_match_end_time_ms: Optional[int],
+        recording_segments: Optional[list[dict]] = None,
     ) -> str:
         resolved_map = "Fetching..." if map_name == "Unknown" else map_name
         temp_match_data = {
@@ -63,6 +64,8 @@ class MatchMetadataService:
             temp_match_data["local_recording_start_time_ms"] = start_time_ms
         if real_match_end_time_ms is not None:
             temp_match_data["local_real_match_end_time_ms"] = real_match_end_time_ms
+        if recording_segments:
+            temp_match_data["local_recording_segments"] = recording_segments
 
         temp_filepath = self.store.save_match_metadata(temp_match_data, 0)
         self._emit_match_saved()
@@ -78,6 +81,7 @@ class MatchMetadataService:
         temp_filepath: Optional[str] = None,
         start_time_ms: Optional[int] = None,
         real_match_end_time_ms: Optional[int] = None,
+        recording_segments: Optional[list[dict]] = None,
     ) -> None:
         if events is None:
             events = []
@@ -105,6 +109,8 @@ class MatchMetadataService:
             match_data["local_recording_start_time_ms"] = start_time_ms
         if real_match_end_time_ms is not None:
             match_data["local_real_match_end_time_ms"] = real_match_end_time_ms
+        if recording_segments:
+            match_data["local_recording_segments"] = recording_segments
 
         filepath = self.store.save_match_metadata(match_data, 0)
         if temp_filepath and os.path.exists(temp_filepath) and temp_filepath != filepath:
@@ -128,6 +134,7 @@ class MatchMetadataService:
         temp_filepath: Optional[str] = None,
         start_time_ms: Optional[int] = None,
         real_match_end_time_ms: Optional[int] = None,
+        recording_segments: Optional[list[dict]] = None,
     ) -> None:
         if ability_events is None:
             ability_events = []
@@ -150,7 +157,7 @@ class MatchMetadataService:
         if not riot_id or not tag_line:
             self._emit_log(self.t.log_api_no_player_id)
             self.create_dummy_metadata(
-                video_path, start_time, map_name, end_time, events, temp_filepath, start_time_ms, real_match_end_time_ms
+                video_path, start_time, map_name, end_time, events, temp_filepath, start_time_ms, real_match_end_time_ms, recording_segments
             )
             return
 
@@ -229,6 +236,8 @@ class MatchMetadataService:
                     match_data["local_recording_start_time_ms"] = start_time_ms
                 if real_match_end_time_ms is not None:
                     match_data["local_real_match_end_time_ms"] = real_match_end_time_ms
+                if recording_segments:
+                    match_data["local_recording_segments"] = recording_segments
 
                 filepath = self.store.save_match_metadata(match_data, mmr_change)
                 if temp_filepath and os.path.exists(temp_filepath) and temp_filepath != filepath:
@@ -243,7 +252,7 @@ class MatchMetadataService:
         else:
             self._emit_log(self.t.log_api_not_found)
             self.create_dummy_metadata(
-                video_path, start_time, map_name, end_time, events, temp_filepath, start_time_ms, real_match_end_time_ms
+                video_path, start_time, map_name, end_time, events, temp_filepath, start_time_ms, real_match_end_time_ms, recording_segments
             )
 
     @staticmethod

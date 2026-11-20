@@ -58,6 +58,10 @@ class WatcherThread(QThread):
         self._stop_timer = None
         self._is_manual_action = False
         self._is_manual_recording = False
+        # I/OやFFmpeg待機では絶対に保持しない軽量なメモリ状態専用ロック
+        self._state_lock = threading.Lock()
+        self._recording_session_id = 0
+        self._is_starting_recording = False
         self._processing_video_paths = set()
         self.supervisor = WatcherSupervisor(self)
 
@@ -123,13 +127,56 @@ class WatcherThread(QThread):
             return last_map
         return "Unknown"
 
+    def resume_active_recording_segment(self, allow_gdigrab_fallback: bool = False) -> bool:
+        """試合中・手動録画中に中断されたパイプラインをUIロックを阻害せず同一セッションのまま復旧する"""
+        with self._state_lock:
+            if self._is_starting_recording or self.current_video_path is None:
+                return False
+            if not self._is_manual_recording:
+                if not getattr(self.watcher, "is_in_match", False) or self._is_range_match():
+                    return False
+            session_id = self._recording_session_id
+            expected_path = self.current_video_path
+
+        if not hasattr(self.recorder, "resume_recording_segment"):
+            return False
+
+        # ロック外でFFmpeg起動検証を実行し、手動停止などUIスレッド操作のフリーズを防止
+        resumed = bool(
+            self.recorder.resume_recording_segment(
+                expected_filepath=expected_path,
+                allow_gdigrab_fallback=allow_gdigrab_fallback,
+            )
+        )
+        if not resumed:
+            return False
+
+        # 復旧処理中に別スレッドから録画終了された場合は新セグメントを安全に停止してセッション整合を保つ
+        with self._state_lock:
+            still_active = (
+                self._recording_session_id == session_id
+                and self.current_video_path == expected_path
+            )
+        if not still_active:
+            try:
+                self.recorder.stop_recording(target_filepath=expected_path)
+            except Exception:
+                pass
+            return False
+        return True
+
     def handle_client_closed(self) -> bool:
         # ウィンドウ終了に伴うメニュー遷移で停止待機タイマーが動いていた場合はキャンセルして録画を継続する
-        if self._is_manual_recording or self.current_video_path is None:
-            return False
-        if self._stop_timer is not None and not getattr(self.watcher, "_last_end_was_explicit", False):
-            self._cancel_stop_timer()
-            self.real_match_end_time_ms = None
+        with self._state_lock:
+            if self._is_manual_recording or self.current_video_path is None:
+                return False
+            if self._stop_timer is not None and not getattr(self.watcher, "_last_end_was_explicit", False):
+                self._cancel_stop_timer()
+                self.real_match_end_time_ms = None
+                cancelled = True
+            else:
+                cancelled = False
+        if cancelled:
             default_msg = (
                 "VALORANTの終了を検知したため停止待機をキャンセルし、再接続に備えて録画を継続します。"
                 if getattr(self.config, "LANGUAGE", "ja") == "ja"
@@ -140,32 +187,46 @@ class WatcherThread(QThread):
         return False
 
     def start_manual_recording(self):
-        if self.current_video_path is not None:
+        with self._state_lock:
+            if self.current_video_path is not None or self._is_starting_recording:
+                already_active = True
+            else:
+                already_active = False
+                self._is_starting_recording = True
+                self._cancel_stop_timer()
+                self.recording_start_time = time.time()
+                self.local_recording_start_time_ms = int(self.recording_start_time * 1000)
+                self.real_match_end_time_ms = None
+                self.local_round_events = []
+                self.local_ability_events = []
+                self._is_manual_recording = True
+                self._recording_session_id += 1
+        if already_active:
             self.log_signal.emit(self.t.log_manual_already_recording)
             return
-        self._cancel_stop_timer()
-        self.recording_start_time = time.time()
-        self.local_recording_start_time_ms = int(self.recording_start_time * 1000)
-        self.real_match_end_time_ms = None
-        self.local_round_events = []
-        self.local_ability_events = []
+
         verified = self._update_current_player()
-        self._match_riot_id = self.current_riot_id
-        self._match_tag_line = self.current_tag_line
-        self._match_region = self.current_region
-        self._match_player_verified = verified
-        self._match_map_name = self._resolve_valid_watcher_map()
+        with self._state_lock:
+            self._match_riot_id = self.current_riot_id
+            self._match_tag_line = self.current_tag_line
+            self._match_region = self.current_region
+            self._match_player_verified = verified
+            self._match_map_name = self._resolve_valid_watcher_map()
         self.log_signal.emit(self.t.log_manual_starting)
-        self._is_manual_recording = True
         try:
-            self.current_video_path = self.recorder.start_recording()
-            self.log_signal.emit(self.t.log_manual_recording_to.format(path=self.current_video_path))
+            started_path = self.recorder.start_recording()
+            with self._state_lock:
+                self.current_video_path = started_path
+                self._is_starting_recording = False
+            self.log_signal.emit(self.t.log_manual_recording_to.format(path=started_path))
             self._is_manual_action = True
             self.recording_state_changed.emit(True)
             self._is_manual_action = False
         except Exception as e:
-            self._is_manual_recording = False
-            self.current_video_path = None
+            with self._state_lock:
+                self._is_manual_recording = False
+                self._is_starting_recording = False
+                self.current_video_path = None
             err_str = str(e)
             try:
                 msg = self.t.log_manual_start_failed.format(error=err_str)
@@ -176,19 +237,24 @@ class WatcherThread(QThread):
             self.log_signal.emit(msg)
 
     def stop_manual_recording(self):
-        if self.current_video_path is None:
+        with self._state_lock:
+            has_video = self.current_video_path is not None
+            if has_video:
+                self._cancel_stop_timer()
+        if not has_video:
             return
-        self._cancel_stop_timer()
         self.log_signal.emit(self.t.log_manual_stopping)
         self._is_manual_action = True
         self._stop_and_process_recording()
         self._is_manual_action = False
 
     def handle_real_match_end(self):
-        if self._is_manual_recording:
-            return
+        with self._state_lock:
+            if self._is_manual_recording:
+                return
+            has_video = self.current_video_path is not None
         self.log_signal.emit(self.t.log_real_match_end)
-        if self.current_video_path is not None:
+        if has_video:
             self.log_signal.emit(self.t.log_stopping_real_match_end)
             self._stop_and_process_recording()
 
@@ -203,41 +269,63 @@ class WatcherThread(QThread):
     def handle_match_start(self, is_range: bool, match_start_timestamp: float = None, is_recovery: bool = False):
         if self._is_range_match(is_range):
             # 前試合の終了待機タイマー中に射撃場へ入った場合は前試合の録画を即座に保存・終了する
-            if self._stop_timer is not None and not self._is_manual_recording and self.current_video_path is not None:
-                self._cancel_stop_timer()
+            with self._state_lock:
+                should_finalize = (
+                    self._stop_timer is not None
+                    and not self._is_manual_recording
+                    and self.current_video_path is not None
+                )
+                if should_finalize:
+                    self._cancel_stop_timer()
+            if should_finalize:
                 self._stop_and_process_recording()
             self.log_signal.emit(self.t.log_range_detected_skip)
             return
-            
-        self.real_match_end_time_ms = None
 
-        if self._is_manual_recording and self.current_video_path is not None:
-            self._cancel_stop_timer()
+        need_stop_prev = False
+        with self._state_lock:
+            self.real_match_end_time_ms = None
+            if self._is_manual_recording and self.current_video_path is not None:
+                self._cancel_stop_timer()
+                manual_cont = True
+            else:
+                manual_cont = False
+                if self._stop_timer is not None:
+                    self._cancel_stop_timer()
+                    if self.current_video_path is not None:
+                        need_stop_prev = True
+        if manual_cont:
             self.log_signal.emit(self.t.log_already_recording_cont)
             return
 
         # 遅延停止タイマーが動いている間に次の試合が始まった場合、タイマーをキャンセルして即座に前の録画を終了する
-        if self._stop_timer is not None:
-            self._cancel_stop_timer()
-            if self.current_video_path is not None:
-                self.log_signal.emit(self.t.log_new_match_during_delay)
-                self._stop_and_process_recording()
+        if need_stop_prev:
+            self.log_signal.emit(self.t.log_new_match_during_delay)
+            self._stop_and_process_recording()
 
-        if self.current_video_path is not None:
+        with self._state_lock:
+            if self.current_video_path is not None or self._is_starting_recording:
+                already_rec = True
+            else:
+                already_rec = False
+                self._is_starting_recording = True
+                self.recording_start_time = time.time()
+                self.local_recording_start_time_ms = int(self.recording_start_time * 1000)
+                self.local_round_events = []
+                self.local_ability_events = []
+                self._is_manual_recording = False
+                self._recording_session_id += 1
+        if already_rec:
             self.log_signal.emit(self.t.log_already_recording_cont)
             return
 
-        self.recording_start_time = time.time()
-        self.local_recording_start_time_ms = int(self.recording_start_time * 1000)
-        self.local_round_events = []
-        self.local_ability_events = []
-        self._is_manual_recording = False
         verified = self._update_current_player()
-        self._match_riot_id = self.current_riot_id
-        self._match_tag_line = self.current_tag_line
-        self._match_region = self.current_region
-        self._match_player_verified = verified
-        self._match_map_name = self._resolve_valid_watcher_map()
+        with self._state_lock:
+            self._match_riot_id = self.current_riot_id
+            self._match_tag_line = self.current_tag_line
+            self._match_region = self.current_region
+            self._match_player_verified = verified
+            self._match_map_name = self._resolve_valid_watcher_map()
         
         if is_recovery:
             self.log_signal.emit(self.t.log_recovery_mode)
@@ -247,16 +335,21 @@ class WatcherThread(QThread):
         try:
             import logging
             logging.info("[WatcherThread] Attempting to start FFmpeg recording...")
-            self.current_video_path = self.recorder.start_recording()
-            logging.info(f"[WatcherThread] Recording successfully started: {self.current_video_path}")
-            self.log_signal.emit(self.t.log_recording_to.format(path=self.current_video_path))
+            started_path = self.recorder.start_recording()
+            with self._state_lock:
+                self.current_video_path = started_path
+                self._is_starting_recording = False
+            logging.info(f"[WatcherThread] Recording successfully started: {started_path}")
+            self.log_signal.emit(self.t.log_recording_to.format(path=started_path))
             self.recording_state_changed.emit(True)
         except Exception as e:
             import logging
             err_str = str(e)
             logging.error(f"[WatcherThread] Failed to start recording: {err_str}")
             # 録画失敗時はログ監視側の状態をリセットし次マッチ検知不能を防ぐ
-            self.current_video_path = None
+            with self._state_lock:
+                self.current_video_path = None
+                self._is_starting_recording = False
             if hasattr(self, 'watcher'):
                 self.watcher.is_in_match = False
                 self.watcher.has_entered_in_progress = False
@@ -290,73 +383,80 @@ class WatcherThread(QThread):
             self.recorder.set_low_priority()
 
     def handle_match_end(self, is_range: bool):
-        if self._is_manual_recording:
-            return
-
         if self._is_range_match(is_range):
             return
 
-        if self.current_video_path is None:
-            return
+        with self._state_lock:
+            if self._is_manual_recording or self.current_video_path is None:
+                return
+            if getattr(self, "_match_map_name", "Unknown") == "Unknown":
+                self._match_map_name = self._resolve_valid_watcher_map()
+            # 実際の試合終了時間を記録
+            self.real_match_end_time_ms = int(time.time() * 1000)
+            target_video_path = self.current_video_path
+            self._cancel_stop_timer()
 
-        if getattr(self, "_match_map_name", "Unknown") == "Unknown":
-            self._match_map_name = self._resolve_valid_watcher_map()
+            def delayed_stop(video_path_to_stop):
+                with self._state_lock:
+                    self._stop_timer = None
+                    should_stop = (
+                        not self._is_manual_recording
+                        and self.current_video_path == video_path_to_stop
+                    )
+                if should_stop:
+                    self.log_signal.emit(self.t.log_stopping_after_delay)
+                    self._stop_and_process_recording()
 
-        # 実際の試合終了時間を記録
-        self.real_match_end_time_ms = int(time.time() * 1000)
+            self._stop_timer = threading.Timer(15.0, delayed_stop, args=[target_video_path])
+            self._stop_timer.start()
+
         self.log_signal.emit(self.t.log_match_ended_wait)
-        
-        self._cancel_stop_timer()
-            
-        def delayed_stop(video_path_to_stop):
-            self._stop_timer = None
-            if not self._is_manual_recording and self.current_video_path == video_path_to_stop:
-                self.log_signal.emit(self.t.log_stopping_after_delay)
-                self._stop_and_process_recording()
-
-        self._stop_timer = threading.Timer(15.0, delayed_stop, args=[self.current_video_path])
-        self._stop_timer.start()
 
     def _stop_and_process_recording(self):
-        self._cancel_stop_timer()
-        self.recording_end_time = time.time()
-        
-        video_path = self.current_video_path
-        start_time = self.recording_start_time
-        end_time = self.recording_end_time
-        events = list(self.local_round_events)
-        ability_events = list(self.local_ability_events)
-        start_time_ms = getattr(self, 'local_recording_start_time_ms', None)
+        with self._state_lock:
+            self._cancel_stop_timer()
+            video_path = self.current_video_path
+            if video_path is None:
+                return
+            self.recording_end_time = time.time()
+            start_time = self.recording_start_time
+            end_time = self.recording_end_time
+            events = list(self.local_round_events)
+            ability_events = list(self.local_ability_events)
+            start_time_ms = getattr(self, 'local_recording_start_time_ms', None)
+            real_match_end_time_ms = getattr(self, 'real_match_end_time_ms', None)
+            match_riot_id = getattr(self, '_match_riot_id', None) or self.current_riot_id
+            match_tag_line = getattr(self, '_match_tag_line', None) or self.current_tag_line
+            match_region = getattr(self, '_match_region', None) or self.current_region
+            match_player_verified = bool(getattr(self, '_match_player_verified', False))
+            # 射撃場や次マップへの遷移でwatcher.current_map_nameが上書きされても前試合の退避マップ名を最優先する
+            match_map_name = getattr(self, '_match_map_name', 'Unknown') or 'Unknown'
+            if match_map_name == "Unknown" or self._is_range_map_name(match_map_name):
+                match_map_name = self._resolve_valid_watcher_map()
+
+            # UIフリーズを防ぐため、軽量ロック内で状態を即座にリセットし世代IDを更新
+            self._processing_video_paths.add(os.path.basename(video_path))
+            self.current_video_path = None
+            self._is_manual_recording = False
+            self._recording_session_id += 1
+            self.local_recording_start_time_ms = None
+            self.real_match_end_time_ms = None
+            self._match_riot_id = None
+            self._match_tag_line = None
+            self._match_region = None
+            self._match_player_verified = False
+            self._match_map_name = "Unknown"
+            self.local_round_events = []
+            self.local_ability_events = []
+
         # C++側が計測した映像・音声パイプラインの実開始時刻を優先して起動遅延ズレを防ぐ
         if hasattr(self.recorder, 'get_actual_start_time_ms'):
             native_start_ms = self.recorder.get_actual_start_time_ms()
             if native_start_ms:
                 start_time_ms = native_start_ms
                 start_time = native_start_ms / 1000.0
-        real_match_end_time_ms = getattr(self, 'real_match_end_time_ms', None)
-        match_riot_id = getattr(self, '_match_riot_id', None) or self.current_riot_id
-        match_tag_line = getattr(self, '_match_tag_line', None) or self.current_tag_line
-        match_region = getattr(self, '_match_region', None) or self.current_region
-        match_player_verified = bool(getattr(self, '_match_player_verified', False))
-        # 射撃場や次マップへの遷移でwatcher.current_map_nameが上書きされても前試合の退避マップ名を最優先する
-        match_map_name = getattr(self, '_match_map_name', 'Unknown') or 'Unknown'
-        if match_map_name == "Unknown" or self._is_range_map_name(match_map_name):
-            match_map_name = self._resolve_valid_watcher_map()
-        
-        # UIフリーズを防ぐため、状態を即座にリセット
-        if video_path:
-            self._processing_video_paths.add(os.path.basename(video_path))
-        self.current_video_path = None
-        self._is_manual_recording = False
-        self.local_recording_start_time_ms = None
-        self.real_match_end_time_ms = None
-        self._match_riot_id = None
-        self._match_tag_line = None
-        self._match_region = None
-        self._match_player_verified = False
-        self._match_map_name = "Unknown"
-        self.local_round_events = []
-        self.local_ability_events = []
+
+        # 再入デッドロック防止のためシグナルはロック外で発火
         self.recording_state_changed.emit(False)
         
         # 録画停止処理（FFmpegの終了待ちなど）を別スレッドで実行
@@ -394,9 +494,12 @@ class WatcherThread(QThread):
         match_player_verified=False,
         match_map_name="Unknown",
     ):
+        recording_segments = []
         try:
             try:
-                self.recorder.stop_recording(target_filepath=video_path)
+                stopped_segments = self.recorder.stop_recording(target_filepath=video_path)
+                if isinstance(stopped_segments, list):
+                    recording_segments = stopped_segments
             except Exception as e:
                 self.log_signal.emit(self.t.log_stop_failed.format(error=e))
 
@@ -421,6 +524,7 @@ class WatcherThread(QThread):
                 ability_events=ability_events,
                 start_time_ms=start_time_ms,
                 real_match_end_time_ms=real_match_end_time_ms,
+                recording_segments=recording_segments,
             )
             self.metadata_service.fetch_api_and_save(
                 video_path=video_path,
@@ -435,6 +539,7 @@ class WatcherThread(QThread):
                 temp_filepath=temp_filepath,
                 start_time_ms=start_time_ms,
                 real_match_end_time_ms=real_match_end_time_ms,
+                recording_segments=recording_segments,
             )
         finally:
             if video_path:
@@ -456,14 +561,17 @@ class WatcherThread(QThread):
     def stop(self):
         self._is_running = False
         self.supervisor.stop()
-        if self._stop_timer is not None:
-            self._stop_timer.cancel()
-            self._stop_timer = None
+        with self._state_lock:
+            self._cancel_stop_timer()
+            active_path = self.current_video_path
+            self.current_video_path = None
+            self._is_manual_recording = False
+            self._recording_session_id += 1
         if hasattr(self, 'watcher') and hasattr(self.watcher, 'stop'):
             self.watcher.stop()
-        if self.current_video_path is not None:
+        if active_path is not None:
             try:
-                self.recorder.stop_recording()
+                self.recorder.stop_recording(target_filepath=active_path)
             except Exception:
                 pass
         if self.isRunning() and not self.wait(1500):

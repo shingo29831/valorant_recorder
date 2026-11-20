@@ -336,6 +336,66 @@ def is_valorant_window_open() -> Optional[bool]:
         return None
 
 
+def is_valorant_process_running() -> Optional[bool]:
+    """OS上でVALORANT本体プロセスが生存しているか判定する（裏画面・別デスクトップ切替時の誤検知防止）"""
+    if os.name != "nt":
+        return None
+    try:
+        # 共有windll.kernel32のargtypes/restype書き換えによる他モジュール競合を防ぐためローカル取得
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        th32cs_snapprocess = 0x00000002
+        invalid_handle = ctypes.c_void_p(-1).value
+
+        class _PROCESSENTRY32W(ctypes.Structure):
+            _fields_ = [
+                ("dwSize", wintypes.DWORD),
+                ("cntUsage", wintypes.DWORD),
+                ("th32ProcessID", wintypes.DWORD),
+                ("th32DefaultHeapID", ctypes.c_size_t),
+                ("th32ModuleID", wintypes.DWORD),
+                ("cntThreads", wintypes.DWORD),
+                ("th32ParentProcessID", wintypes.DWORD),
+                ("pcPriClassBase", wintypes.LONG),
+                ("dwFlags", wintypes.DWORD),
+                ("szExeFile", ctypes.c_wchar * 260),
+            ]
+
+        create_snapshot = kernel32.CreateToolhelp32Snapshot
+        create_snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+        create_snapshot.restype = wintypes.HANDLE
+
+        process32_first = kernel32.Process32FirstW
+        process32_first.argtypes = [wintypes.HANDLE, ctypes.POINTER(_PROCESSENTRY32W)]
+        process32_first.restype = wintypes.BOOL
+
+        process32_next = kernel32.Process32NextW
+        process32_next.argtypes = [wintypes.HANDLE, ctypes.POINTER(_PROCESSENTRY32W)]
+        process32_next.restype = wintypes.BOOL
+
+        close_handle = kernel32.CloseHandle
+        close_handle.argtypes = [wintypes.HANDLE]
+        close_handle.restype = wintypes.BOOL
+
+        snapshot = create_snapshot(th32cs_snapprocess, 0)
+        if not snapshot or snapshot == invalid_handle:
+            return None
+        try:
+            entry = _PROCESSENTRY32W()
+            entry.dwSize = ctypes.sizeof(_PROCESSENTRY32W)
+            if not process32_first(snapshot, ctypes.byref(entry)):
+                return False
+            while True:
+                if entry.szExeFile.lower() == "valorant-win64-shipping.exe":
+                    return True
+                if not process32_next(snapshot, ctypes.byref(entry)):
+                    break
+            return False
+        finally:
+            close_handle(snapshot)
+    except Exception:
+        return None
+
+
 def parse_map_update_from_line(
     line: str, current_map_name: str, is_range: bool
 ) -> Tuple[str, bool, bool, bool]:

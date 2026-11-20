@@ -20,6 +20,7 @@ from watcher.log_parser import (
     is_menu_settled_line,
     is_menu_transition_line,
     is_pregame_transition_line,
+    is_valorant_process_running,
     is_valorant_window_open,
     normalize_map_name,
     parse_log_timestamp,
@@ -49,6 +50,7 @@ class LogWatcher:
         on_performance_drop: Optional[Callable[[], None]] = None,
         on_client_closed: Optional[Callable[[], Optional[bool]]] = None,
         window_checker: Optional[Callable[[], Optional[bool]]] = None,
+        process_checker: Optional[Callable[[], Optional[bool]]] = None,
     ):
         self.on_match_start = on_match_start
         self.on_match_end = on_match_end
@@ -58,6 +60,13 @@ class LogWatcher:
         self.on_performance_drop = on_performance_drop
         self.on_client_closed = on_client_closed
         self._window_checker = window_checker or is_valorant_window_open
+        # 外部からwindow_checkerのみ注入された環境では実OSプロセス参照を行わない
+        if process_checker is not None:
+            self._process_checker = process_checker
+        elif window_checker is not None:
+            self._process_checker = lambda: None
+        else:
+            self._process_checker = is_valorant_process_running
         self.is_in_match = False
         self.is_match_ending = False
         self.has_entered_in_progress = False
@@ -109,9 +118,21 @@ class LogWatcher:
             self._window_observed_in_match = True
         return state
 
+    def _is_valorant_process_alive(self) -> Optional[bool]:
+        try:
+            return self._process_checker()
+        except Exception:
+            return None
+
     def _is_window_closed_after_observed(self) -> bool:
         state = self._refresh_window_observation()
         return bool(self._window_observed_in_match and state is False)
+
+    def _is_client_terminated_after_observed(self) -> bool:
+        if not self._is_window_closed_after_observed():
+            return False
+        # 裏画面・別デスクトップ切替等で一時的にHWNDが見えない場合、プロセス生存中は終了扱いしない
+        return self._is_valorant_process_alive() is not True
 
     def _is_different_valid_map(self, map_a: str, map_b: str) -> bool:
         if not map_a or not map_b or map_a == "Unknown" or map_b == "Unknown":
@@ -181,7 +202,7 @@ class LogWatcher:
         if not self.is_in_match or self._is_client_closing or self._awaiting_match_reconnect:
             self._pending_match_end = None
             return
-        if not force and self._is_window_closed_after_observed():
+        if not force and self._is_client_terminated_after_observed():
             logging.info("[LogWatcher] VALORANT window closed during menu transition. Keeping recording active.")
             self._handle_client_exit()
             return
@@ -209,7 +230,7 @@ class LogWatcher:
             return
         if self._is_client_closing or self._reconnect_menu_entered_at is None:
             return
-        if self._is_window_closed_after_observed():
+        if self._is_client_terminated_after_observed():
             self._handle_client_exit()
             return
         if now - self._reconnect_menu_entered_at >= _RECONNECT_FROM_MENU_TIMEOUT_SEC:
@@ -454,7 +475,7 @@ class LogWatcher:
                 if is_settled_menu and not self._is_client_closing and self._reconnect_menu_entered_at is None:
                     self._reconnect_menu_entered_at = time.time()
             elif not self._is_client_closing and is_menu:
-                if self._is_window_closed_after_observed():
+                if self._is_client_terminated_after_observed():
                     logging.info("[LogWatcher] Ignore menu transition because VALORANT window is closed.")
                     self._handle_client_exit()
                 else:
@@ -520,7 +541,7 @@ class LogWatcher:
                             elif (
                                 not self._is_client_closing
                                 and not self._awaiting_match_reconnect
-                                and self._is_window_closed_after_observed()
+                                and self._is_client_terminated_after_observed()
                             ):
                                 logging.info("[LogWatcher] VALORANT window closed without exit log. Keeping recording active.")
                                 self._handle_client_exit()

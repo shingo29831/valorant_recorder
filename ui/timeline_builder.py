@@ -46,6 +46,54 @@ def is_headshot_kill(kill: dict, match_info: dict) -> bool:
                             return True
     return False
 
+def map_local_time_to_video_ms(
+    local_time_ms: int,
+    recording_start_ms: int,
+    recording_segments: Optional[list[dict]] = None,
+) -> int:
+    """実時刻(ms)をセグメント間の無録画ギャップを考慮した動画内再生時刻(ms)へ写像する"""
+    if not recording_segments or len(recording_segments) < 2:
+        return int(local_time_ms - recording_start_ms)
+
+    valid_segs = [
+        seg for seg in recording_segments
+        if isinstance(seg, dict) and int(seg.get("wall_start_ms") or 0) > 0
+    ]
+    if len(valid_segs) < 2:
+        return int(local_time_ms - recording_start_ms)
+
+    first_start = int(valid_segs[0]["wall_start_ms"])
+    if local_time_ms < first_start:
+        return int(local_time_ms - first_start)
+
+    for idx, seg in enumerate(valid_segs):
+        w_start = int(seg["wall_start_ms"])
+        v_start = int(seg.get("video_start_ms") or 0)
+        dur = max(0, int(seg.get("duration_ms") or 0))
+        w_end = int(seg.get("wall_end_ms") or (w_start + dur))
+        if w_end < w_start:
+            w_end = w_start + dur
+
+        is_last = (idx == len(valid_segs) - 1)
+        if is_last:
+            return int(v_start + (local_time_ms - w_start))
+
+        next_seg = valid_segs[idx + 1]
+        next_w_start = int(next_seg["wall_start_ms"])
+        next_v_start = int(next_seg.get("video_start_ms") or (v_start + dur))
+
+        if local_time_ms <= w_end:
+            offset = local_time_ms - w_start
+            if dur > 0:
+                offset = min(offset, dur)
+            return int(v_start + offset)
+        if local_time_ms < next_w_start:
+            # 再開待ちの無録画ギャップ中に発生したイベントは次セグメントの継ぎ目へ吸着
+            return int(next_v_start)
+
+    return int(local_time_ms - recording_start_ms)
+
+
 def compute_timeline_base_context(match_info: dict, duration_ms: int = 0) -> dict:
     """タイムライン描画・自動同期・手動基準合わせで共有する基準オフセット(sync_offset=0時)を計算する"""
     recording_start_ms = match_info.get("local_recording_start_time_ms")
@@ -134,6 +182,7 @@ def compute_timeline_base_context(match_info: dict, duration_ms: int = 0) -> dic
         "recording_start_ms": int(recording_start_ms),
         "api_to_local_offset": int(api_to_local_offset),
         "base_offset_ms": int(api_to_local_offset - recording_start_ms),
+        "recording_segments": match_info.get("local_recording_segments") or [],
         "mode": mode,
         "is_deathmatch": is_deathmatch,
         "gl_ms": gl_ms,
@@ -152,6 +201,9 @@ def _extract_player_kill_events(
     tag_line: str,
     known_accounts: Optional[list[str]] = None,
     include_headshot: bool = True,
+    recording_start_ms: Optional[int] = None,
+    api_to_local_offset: Optional[int] = None,
+    recording_segments: Optional[list[dict]] = None,
 ) -> list[dict]:
     kills_data = match_info.get("kills", [])
     players = match_info.get("players", {}).get("all_players") or []
@@ -162,7 +214,14 @@ def _extract_player_kill_events(
     result = []
     for kill in kills_data:
         t_api = kill.get("kill_time_in_match", 0)
-        time_in_video = int(t_api + base_offset_ms + sync_offset_ms)
+        if recording_segments and recording_start_ms is not None and api_to_local_offset is not None:
+            t_local = int(t_api + api_to_local_offset)
+            time_in_video = int(
+                map_local_time_to_video_ms(t_local, recording_start_ms, recording_segments)
+                + sync_offset_ms
+            )
+        else:
+            time_in_video = int(t_api + base_offset_ms + sync_offset_ms)
 
         if target_puuid:
             killer_puuid = kill.get("killer_puuid")
@@ -223,6 +282,9 @@ def extract_player_sync_events(
         tag_line=tag_line,
         known_accounts=known_accounts,
         include_headshot=False,
+        recording_start_ms=ctx["recording_start_ms"],
+        api_to_local_offset=ctx["api_to_local_offset"],
+        recording_segments=ctx["recording_segments"],
     )
     return [{"base_time_ms": ev["time"], "type": ev["type"]} for ev in raw_events]
 
@@ -238,6 +300,7 @@ def build_timeline_data(
     recording_start_ms = ctx["recording_start_ms"]
     api_to_local_offset = ctx["api_to_local_offset"]
     base_offset_ms = ctx["base_offset_ms"]
+    recording_segments = ctx["recording_segments"]
     sync_offset_ms = int(match_info.get("timeline_sync_offset_ms") or 0)
     mode = ctx["mode"]
     is_deathmatch = ctx["is_deathmatch"]
@@ -256,6 +319,9 @@ def build_timeline_data(
             tag_line=tag_line,
             known_accounts=known_accounts,
             include_headshot=True,
+            recording_start_ms=recording_start_ms,
+            api_to_local_offset=api_to_local_offset,
+            recording_segments=recording_segments,
         )
         if 0 <= ev["time"] <= duration_ms + 10000
     ]
@@ -265,13 +331,32 @@ def build_timeline_data(
         t_local = ev["time_ms"]
         if t_local < 1000000000000:
             t_local += recording_start_ms
-        time_in_video = int(t_local - recording_start_ms + sync_offset_ms)
+        time_in_video = int(
+            map_local_time_to_video_ms(t_local, recording_start_ms, recording_segments)
+            + sync_offset_ms
+        )
         if 0 <= time_in_video <= duration_ms + 10000:
             events.append({"time": time_in_video, "type": "ult"})
             
     if is_deathmatch:
-        round_start = max(0, int(api_to_local_offset - recording_start_ms + sync_offset_ms))
-        round_end = min(duration_ms, int(api_to_local_offset + effective_match_duration_ms - recording_start_ms + sync_offset_ms))
+        round_start = max(
+            0,
+            int(
+                map_local_time_to_video_ms(api_to_local_offset, recording_start_ms, recording_segments)
+                + sync_offset_ms
+            ),
+        )
+        round_end = min(
+            duration_ms,
+            int(
+                map_local_time_to_video_ms(
+                    api_to_local_offset + effective_match_duration_ms,
+                    recording_start_ms,
+                    recording_segments,
+                )
+                + sync_offset_ms
+            ),
+        )
         if round_end <= round_start:
             round_end = duration_ms
         rounds.append({"start": round_start, "end": round_end, "phase": "Round"})
@@ -283,7 +368,10 @@ def build_timeline_data(
             t_local = ev["time_ms"]
             if t_local < 1000000000000:
                 t_local += recording_start_ms
-            time_in_video = int(t_local - recording_start_ms + sync_offset_ms)
+            time_in_video = int(
+                map_local_time_to_video_ms(t_local, recording_start_ms, recording_segments)
+                + sync_offset_ms
+            )
 
             if time_in_video < 0:
                 time_in_video = 0
@@ -312,22 +400,41 @@ def build_timeline_data(
             next_buy_ms = 20000 if "spike rush" in mode else 30000
             for i, r_start in enumerate(api_round_starts):
                 t_local = r_start + api_to_local_offset
-                start_time = int(t_local - recording_start_ms + sync_offset_ms)
+                start_time = int(
+                    map_local_time_to_video_ms(t_local, recording_start_ms, recording_segments)
+                    + sync_offset_ms
+                )
                 
                 # バリアが降りる瞬間の2秒前をラウンド開始位置とする
                 start_time = max(0, start_time - 2000)
                 
                 if i + 1 < len(api_round_starts):
                     next_t_local = api_round_starts[i+1] + api_to_local_offset
-                    end_time = int(next_t_local - recording_start_ms + sync_offset_ms) - next_buy_ms
+                    end_time = (
+                        int(
+                            map_local_time_to_video_ms(next_t_local, recording_start_ms, recording_segments)
+                            + sync_offset_ms
+                        )
+                        - next_buy_ms
+                    )
                 else:
                     if real_match_end_time_ms:
-                        end_time = int(real_match_end_time_ms - recording_start_ms + sync_offset_ms)
+                        end_time = int(
+                            map_local_time_to_video_ms(real_match_end_time_ms, recording_start_ms, recording_segments)
+                            + sync_offset_ms
+                        )
                     else:
                         game_length = match_info.get("metadata", {}).get("game_length", 0)
                         gl_ms = game_length if game_length > 300000 else game_length * 1000
                         if gl_ms > 0:
-                            end_time = int((gl_ms + api_to_local_offset) - recording_start_ms + sync_offset_ms)
+                            end_time = int(
+                                map_local_time_to_video_ms(
+                                    gl_ms + api_to_local_offset,
+                                    recording_start_ms,
+                                    recording_segments,
+                                )
+                                + sync_offset_ms
+                            )
                         else:
                             end_time = duration_ms
                 

@@ -30,17 +30,26 @@ class WatcherSupervisor:
         )
         last_cleanup_time = time.time()
         last_api_check_time = time.time()
+        recovery_retry_count = 0
+        next_recovery_retry_at = 0.0
 
         while self._is_running:
             time.sleep(1)
             now = time.time()
 
-            # --- 1. 録画プロセスの死活監視と自動再開 (クラッシュ対策) ---
-            if self.wt.current_video_path is not None:
-                if getattr(self.wt.watcher, "is_in_match", False) and not self.wt._is_manual_recording:
+            # --- 1. 録画プロセスの死活監視と自動再開 (裏画面遷移・クラッシュ対策) ---
+            with self.wt._state_lock:
+                active_video_path = self.wt.current_video_path
+                is_manual = self.wt._is_manual_recording
+                is_starting = self.wt._is_starting_recording
+
+            if active_video_path is not None and not is_starting:
+                if getattr(self.wt.watcher, "is_in_match", False) and not is_manual:
                     if self.wt._is_range_match():
                         self.wt.log_signal.emit(self.wt.t.log_range_transition_cancel)
-                        self.wt.current_video_path = None
+                        with self.wt._state_lock:
+                            self.wt.current_video_path = None
+                            self.wt._recording_session_id += 1
                         self.wt.recording_state_changed.emit(False)
                         if hasattr(self.wt.recorder, "cancel_recording"):
                             self.wt.recorder.cancel_recording()
@@ -49,29 +58,54 @@ class WatcherSupervisor:
                                 self.wt.recorder.stop_recording()
                             except Exception:
                                 pass
+                        recovery_retry_count = 0
+                        next_recovery_retry_at = 0.0
                         continue
 
-                if not self.wt.recorder.is_recording():
-                    if not self.wt._is_manual_recording and self.wt._is_range_match():
-                        self.wt.current_video_path = None
+                if self.wt.recorder.is_recording():
+                    recovery_retry_count = 0
+                    next_recovery_retry_at = 0.0
+                else:
+                    if not is_manual and self.wt._is_range_match():
+                        with self.wt._state_lock:
+                            self.wt.current_video_path = None
+                            self.wt._recording_session_id += 1
                         self.wt.recording_state_changed.emit(False)
+                        recovery_retry_count = 0
+                        next_recovery_retry_at = 0.0
                         continue
-                    was_manual = self.wt._is_manual_recording
-                    err_detail = self.wt.recorder.get_last_error() if hasattr(self.wt.recorder, "get_last_error") else "-1"
-                    self.wt.log_signal.emit(self.wt.t.log_ffmpeg_crashed.format(code=err_detail or -1))
-                    # 異常終了したセッションを確実に停止・Remux完了させてから再開しプロセス競合を防止
-                    crashed_video = self.wt.current_video_path
-                    try:
-                        self.wt.recorder.stop_recording(target_filepath=crashed_video)
-                    except Exception:
-                        pass
+
+                    is_ongoing = is_manual or (
+                        getattr(self.wt.watcher, "is_in_match", False) and not self.wt._is_range_match()
+                    )
+                    if is_ongoing:
+                        # 試合継続中の裏画面遷移(DXGI消失等)では録画を中断・分割せず同一セッション内でシームレス復旧
+                        if now < next_recovery_retry_at:
+                            continue
+                        if recovery_retry_count == 0:
+                            err_detail = self.wt.recorder.get_last_error() if hasattr(self.wt.recorder, "get_last_error") else "-1"
+                            self.wt.log_signal.emit(self.wt.t.log_ffmpeg_crashed.format(code=err_detail or -1))
+                        # 連続失敗時のみgdigrabフォールバックを許可し、単発Alt+Tabでの黒画面固定化を防止
+                        resumed = self.wt.resume_active_recording_segment(
+                            allow_gdigrab_fallback=(recovery_retry_count >= 4)
+                        )
+                        if resumed:
+                            recovery_retry_count = 0
+                            next_recovery_retry_at = 0.0
+                        else:
+                            recovery_retry_count += 1
+                            backoff_sec = min(3.0, 0.5 * recovery_retry_count)
+                            next_recovery_retry_at = time.time() + backoff_sec
+                        continue
+
+                    # 試合終了後に録画プロセスが停止している場合はタイマー状態に関わらず確実に保存・解放する
                     self.wt._stop_and_process_recording()
-                    time.sleep(2)
-                    if was_manual:
-                        self.wt.start_manual_recording()
-                    elif getattr(self.wt.watcher, "is_in_match", False) and not self.wt._is_range_match():
-                        self.wt.handle_match_start(is_range=False, is_recovery=True)
+                    recovery_retry_count = 0
+                    next_recovery_retry_at = 0.0
                     continue
+            else:
+                recovery_retry_count = 0
+                next_recovery_retry_at = 0.0
 
             # --- 2. 定期クリーンアップ (1時間ごと) ---
             if now - last_cleanup_time > 3600:
