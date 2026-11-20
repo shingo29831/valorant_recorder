@@ -180,6 +180,9 @@ class Config:
         self.RECORD_INPUT_SOURCE = "primary" if raw_input_source in ("", "desktop") else raw_input_source
         self.RECORD_AUDIO_SYSTEM = os.environ.get("RECORD_AUDIO_SYSTEM", "default")
         self.RECORD_AUDIO_SYSTEM_GAIN = os.environ.get("RECORD_AUDIO_SYSTEM_GAIN", "1.0")
+        self.RECORD_AUDIO_CHAT_SEPARATE = os.environ.get("RECORD_AUDIO_CHAT_SEPARATE", "False").lower() == "true"
+        self.RECORD_AUDIO_CHAT = os.environ.get("RECORD_AUDIO_CHAT", "None")
+        self.RECORD_AUDIO_CHAT_GAIN = os.environ.get("RECORD_AUDIO_CHAT_GAIN", "1.0")
         self.RECORD_AUDIO_MIC = os.environ.get("RECORD_AUDIO_MIC", "")
         self.RECORD_AUDIO_MIC_GAIN = os.environ.get("RECORD_AUDIO_MIC_GAIN", "1.0")
         self.RECORD_AUDIO_MIC_NOISE_GATE = os.environ.get("RECORD_AUDIO_MIC_NOISE_GATE", "0")
@@ -204,6 +207,7 @@ class Config:
         self.UPDATE_API_URL = raw_update_url or "https://valoreco-api.meld-task.com/api/version"
         self.PLAYER_SYS_VOLUME = self._parse_volume(os.environ.get("PLAYER_SYS_VOLUME", "1.0"))
         self.PLAYER_MIC_VOLUME = self._parse_volume(os.environ.get("PLAYER_MIC_VOLUME", "1.0"))
+        self.PLAYER_CHAT_VOLUME = self._parse_volume(os.environ.get("PLAYER_CHAT_VOLUME", "1.0"))
         self.AUTO_START = os.environ.get("AUTO_START", "False").lower() == "true"
         self.TUTORIAL_COMPLETED = os.environ.get("TUTORIAL_COMPLETED", "False").lower() == "true"
         self.INITIAL_SETUP_COMPLETED = os.environ.get("INITIAL_SETUP_COMPLETED", "False").lower() == "true"
@@ -289,6 +293,9 @@ class Config:
                 "RECORD_INPUT_SOURCE": str(self.RECORD_INPUT_SOURCE or "primary"),
                 "RECORD_AUDIO_SYSTEM": str(self.RECORD_AUDIO_SYSTEM or "default"),
                 "RECORD_AUDIO_SYSTEM_GAIN": str(self.RECORD_AUDIO_SYSTEM_GAIN),
+                "RECORD_AUDIO_CHAT_SEPARATE": str(self.RECORD_AUDIO_CHAT_SEPARATE),
+                "RECORD_AUDIO_CHAT": str(self.RECORD_AUDIO_CHAT or "None"),
+                "RECORD_AUDIO_CHAT_GAIN": str(self.RECORD_AUDIO_CHAT_GAIN),
                 "RECORD_AUDIO_MIC": str(self.RECORD_AUDIO_MIC or ""),
                 "RECORD_AUDIO_MIC_GAIN": str(self.RECORD_AUDIO_MIC_GAIN),
                 "RECORD_AUDIO_MIC_NOISE_GATE": str(self.RECORD_AUDIO_MIC_NOISE_GATE),
@@ -302,6 +309,7 @@ class Config:
                 "UPDATE_API_URL": str(self.UPDATE_API_URL or ""),
                 "PLAYER_SYS_VOLUME": str(self.PLAYER_SYS_VOLUME),
                 "PLAYER_MIC_VOLUME": str(self.PLAYER_MIC_VOLUME),
+                "PLAYER_CHAT_VOLUME": str(self.PLAYER_CHAT_VOLUME),
                 "AUTO_START": str(self.AUTO_START),
                 "TUTORIAL_COMPLETED": str(self.TUTORIAL_COMPLETED),
                 "INITIAL_SETUP_COMPLETED": str(self.INITIAL_SETUP_COMPLETED),

@@ -40,7 +40,7 @@ std::string WasapiCapture::WideToUTF8(const std::wstring& wstr) {
     return strTo;
 }
 
-bool WasapiCapture::Initialize() {
+bool WasapiCapture::Initialize(bool allowDefaultFallback) {
     HRESULT hr = CoInitializeEx(NULL, COINIT_MULTITHREADED);
 
     IMMDeviceEnumerator* pEnumerator = nullptr;
@@ -83,7 +83,8 @@ bool WasapiCapture::Initialize() {
                                     SAFE_RELEASE(pProps);
                                     SAFE_RELEASE(pEndpoint);
                                     break;
-                                } else if (!partialMatchDevice && (lowerUtf8.find(lowerTarget) != std::string::npos || lowerTarget.find(lowerUtf8) != std::string::npos)) {
+                                } else if (allowDefaultFallback && !partialMatchDevice && lowerUtf8.find(lowerTarget) != std::string::npos) {
+                                    // フォールバック抑止時(チャット分離等)は別デバイス誤爆を防ぐため部分一致を許可しない
                                     partialMatchDevice = pEndpoint;
                                     partialMatchDevice->AddRef();
                                 }
@@ -102,6 +103,12 @@ bool WasapiCapture::Initialize() {
                 SAFE_RELEASE(pCollection);
             }
         if (!m_device) {
+            // チャット音声等では意図しない既定出力の重複録音を避けるためフォールバックを抑止
+            if (!allowDefaultFallback) {
+                SetError("Audio device not found: " + m_deviceName);
+                SAFE_RELEASE(pEnumerator);
+                return false;
+            }
             if (m_logger) {
                 m_logger("Warning: Specified audio device '" + m_deviceName + "' not found. Falling back to default endpoint.");
             }

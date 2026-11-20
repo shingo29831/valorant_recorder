@@ -228,6 +228,12 @@ class Translations:
     sync_source_manual: str = "Manual"
     sync_auto_applied: str = "Timeline synced with video ({offset})."
     sync_auto_not_confident: str = "Could not detect sync automatically. Use manual adjustment or Align to Current Time."
+    chat_audio_separate: str = "Record voice chat from a separate output device (e.g., Discord)"
+    chat_audio_device: str = "Chat Audio:"
+    chat_audio_unselected_warning: str = "Select an output device above to record voice chat as a separate track."
+    chat_gain: str = "Chat Gain:"
+    chat_level: str = "Chat Level:"
+    chat_volume: str = "Chat Volume"
 
 EN = Translations(**EN_DICT)
 JA = Translations(**JA_DICT)

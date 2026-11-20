@@ -13,7 +13,7 @@ from core.config import Config
 from ui.video_player_core import VideoPlayerCore
 from core.i18n import get_trans
 from ui.player_components import ClickableVideoWidget, PlayerContainer
-from ui.volume_widgets import VolumeWidget, MicVolumeWidget
+from ui.volume_widgets import VolumeWidget, MicVolumeWidget, ChatVolumeWidget
 from ui.timeline_overlay import TimelineOverlay
 from ui.player_utils import find_video_for_json
 from ui.player_list_actions import toggle_favorite_status, delete_single_record_files
@@ -135,6 +135,7 @@ class PlayerVideoPage(QWidget):
         self.player_core.positionChanged.connect(self.position_changed)
         self.player_core.durationChanged.connect(self.duration_changed)
         self.player_core.playbackStateChanged.connect(self._on_playback_state_changed)
+        self.player_core.audioTracksChanged.connect(self._on_audio_tracks_changed)
         self.player_core.errorOccurred.connect(self.handle_media_error)
         
         self.timeline_overlay = TimelineOverlay()
@@ -147,12 +148,20 @@ class PlayerVideoPage(QWidget):
         controls_layout.setContentsMargins(0, 0, 0, 0)
         
         self.volume_widget = VolumeWidget()
-        self.volume_widget.set_volume(int(self.player_core.current_sys_volume * 100))
+        self.volume_widget.setToolTip(self.t.system_volume)
+        self.volume_widget.set_volume(int(round(self.player_core.current_sys_volume * 100)))
         self.volume_widget.volumeChanged.connect(self.player_core.set_sys_volume)
         
         self.mic_volume_widget = MicVolumeWidget()
-        self.mic_volume_widget.set_volume(int(self.player_core.current_mic_volume * 100))
+        self.mic_volume_widget.setToolTip(self.t.mic_volume)
+        self.mic_volume_widget.set_volume(int(round(self.player_core.current_mic_volume * 100)))
         self.mic_volume_widget.volumeChanged.connect(self.player_core.set_mic_volume)
+
+        self.chat_volume_widget = ChatVolumeWidget()
+        self.chat_volume_widget.setToolTip(getattr(self.t, "chat_volume", "Chat Volume"))
+        self.chat_volume_widget.set_volume(int(round(self.player_core.current_chat_volume * 100)))
+        self.chat_volume_widget.volumeChanged.connect(self.player_core.set_chat_volume)
+        self.chat_volume_widget.setVisible(False)
         
         self.time_label = QLabel("00:00 / 00:00")
         self.time_label.setFixedWidth(100)
@@ -176,6 +185,7 @@ class PlayerVideoPage(QWidget):
         
         controls_layout.addWidget(self.volume_widget)
         controls_layout.addWidget(self.mic_volume_widget)
+        controls_layout.addWidget(self.chat_volume_widget)
         controls_layout.addWidget(self.time_label)
         controls_layout.addWidget(self.timeline_overlay)
         controls_layout.addWidget(self.zoom_out_btn)
@@ -491,6 +501,7 @@ class PlayerVideoPage(QWidget):
                 QPushButton:hover { background-color: #444444; }
             """)
         self.player_core.stop()
+        self.chat_volume_widget.setVisible(False)
         self.current_json_filename = json_filename
         json_path = os.path.join(self.config.SAVE_DIR, json_filename)
         self.nav_controller.reset_playback_rate()
@@ -744,6 +755,9 @@ class PlayerVideoPage(QWidget):
     def _on_playback_state_changed(self, state):
         self.playback_controls.set_playback_state(state == QMediaPlayer.PlaybackState.PlayingState.value)
 
+    def _on_audio_tracks_changed(self, track_count: int):
+        self.chat_volume_widget.setVisible(track_count >= 3)
+
     def format_time(self, ms):
         s = ms // 1000
         m = s // 60
@@ -774,14 +788,19 @@ class PlayerVideoPage(QWidget):
         self.top_switcher.raise_()
         # 画面遷移の初回ペイントを妨げないよう非同期タイマー経由で一覧更新を予約
         self._schedule_switcher_refresh()
-        sys_vol = float(getattr(self.config, 'PLAYER_SYS_VOLUME', '1.0'))
-        if self.player_core.current_sys_volume != sys_vol:
-            self.player_core.set_sys_volume(sys_vol * 100)
-            self.volume_widget.set_volume(int(sys_vol * 100))
+        sys_pct = int(round(float(getattr(self.config, 'PLAYER_SYS_VOLUME', '1.0')) * 100))
+        if int(round(self.player_core.current_sys_volume * 100)) != sys_pct:
+            self.player_core.set_sys_volume(sys_pct)
+            self.volume_widget.set_volume(sys_pct)
             
-        mic_vol = float(getattr(self.config, 'PLAYER_MIC_VOLUME', '1.0'))
-        if self.player_core.current_mic_volume != mic_vol:
-            self.player_core.set_mic_volume(mic_vol * 100)
-            self.mic_volume_widget.set_volume(int(mic_vol * 100))
+        mic_pct = int(round(float(getattr(self.config, 'PLAYER_MIC_VOLUME', '1.0')) * 100))
+        if int(round(self.player_core.current_mic_volume * 100)) != mic_pct:
+            self.player_core.set_mic_volume(mic_pct)
+            self.mic_volume_widget.set_volume(mic_pct)
+
+        chat_pct = int(round(float(getattr(self.config, 'PLAYER_CHAT_VOLUME', '1.0')) * 100))
+        if int(round(self.player_core.current_chat_volume * 100)) != chat_pct:
+            self.player_core.set_chat_volume(chat_pct)
+            self.chat_volume_widget.set_volume(chat_pct)
             
         self.nav_controller.apply_playback_rate()

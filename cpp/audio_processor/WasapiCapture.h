@@ -20,7 +20,7 @@ public:
     WasapiCapture(CaptureType type, const std::string& deviceName = "");
     ~WasapiCapture();
 
-    bool Initialize();
+    bool Initialize(bool allowDefaultFallback = true);
     bool Start();
     void Stop();
     bool IsInitialized() const { return m_isInitialized; }

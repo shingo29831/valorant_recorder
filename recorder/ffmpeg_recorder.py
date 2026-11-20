@@ -55,7 +55,12 @@ class FFmpegRecorder:
                 pass
         return best_encoder
 
-    def _build_ffmpeg_command(self, force_sw_download: bool = False, force_gdigrab: bool = False) -> str:
+    def _build_ffmpeg_command(
+        self,
+        force_sw_download: bool = False,
+        force_gdigrab: bool = False,
+        enable_chat_track: Optional[bool] = None,
+    ) -> str:
         return build_ffmpeg_command(
             config=self.config,
             ffmpeg_path=self.ffmpeg_path,
@@ -63,6 +68,7 @@ class FFmpegRecorder:
             temp_filepath=self.temp_filepath or "",
             force_sw_download=force_sw_download,
             force_gdigrab=force_gdigrab,
+            enable_chat_track=enable_chat_track,
         )
 
     def _try_start_and_verify(self, config_struct: RecorderConfig) -> bool:
@@ -112,9 +118,29 @@ class FFmpegRecorder:
 
             is_lightweight = bool(getattr(self.config, 'LIGHTWEIGHT_MODE', False))
             force_sw = self.actual_encoder in self._sw_download_fallback_encoders
-            cmd_str = self._build_ffmpeg_command(force_sw_download=force_sw)
 
-            gate_level = float(getattr(self.config, 'RECORD_AUDIO_MIC_NOISE_GATE', '0')) / 100.0
+            chat_separate = bool(getattr(self.config, 'RECORD_AUDIO_CHAT_SEPARATE', False))
+            chat_device = str(getattr(self.config, 'RECORD_AUDIO_CHAT', 'None')).strip()
+            supports_chat = bool(
+                hasattr(self.native_lib, "Recorder_SupportsChatTrack")
+                and self.native_lib.Recorder_SupportsChatTrack()
+            )
+            if chat_separate and chat_device.lower() != 'none' and not supports_chat:
+                # 未ビルドの旧DLLで6chパイプ不整合による音声破損を防ぐため4chに安全フォールバック
+                logging.warning(
+                    "[FFmpegRecorder] Separate chat track requested, but loaded native_recorder.dll does not support 6ch audio. Falling back to 4ch."
+                )
+            use_chat_track = chat_separate and supports_chat and (chat_device.lower() != 'none')
+
+            cmd_str = self._build_ffmpeg_command(force_sw_download=force_sw, enable_chat_track=use_chat_track)
+
+            def _parse_float(raw_val, default: float) -> float:
+                try:
+                    return float(raw_val)
+                except (ValueError, TypeError):
+                    return default
+
+            gate_level = max(0.0, min(1.0, _parse_float(getattr(self.config, 'RECORD_AUDIO_MIC_NOISE_GATE', '0'), 0.0) / 100.0))
             denoise_str = str(getattr(self.config, 'RECORD_AUDIO_MIC_DENOISE', 'None')).lower()
             if "deepfilter" in denoise_str:
                 denoise_mode = 2 if is_lightweight else 1
@@ -126,18 +152,32 @@ class FFmpegRecorder:
             preprocess_str = str(getattr(self.config, 'RECORD_AUDIO_MIC_PREPROCESS', 'SpeexDSP'))
             preprocess_mode = 1 if preprocess_str == 'SpeexDSP' else 0
 
-            raw_mic_gain = float(getattr(self.config, 'RECORD_AUDIO_MIC_GAIN', 1.0))
-            mic_gain = raw_mic_gain / 100.0 if raw_mic_gain > 10.0 else raw_mic_gain
-            raw_sys_gain = float(getattr(self.config, 'RECORD_AUDIO_SYSTEM_GAIN', getattr(self.config, 'RECORD_AUDIO_SYS_GAIN', 1.0)))
-            sys_gain = raw_sys_gain / 100.0 if raw_sys_gain > 10.0 else raw_sys_gain
+            raw_mic_gain = _parse_float(getattr(self.config, 'RECORD_AUDIO_MIC_GAIN', 1.0), 1.0)
+            mic_gain = max(0.0, raw_mic_gain / 100.0 if raw_mic_gain > 10.0 else raw_mic_gain)
+            raw_sys_gain = _parse_float(getattr(self.config, 'RECORD_AUDIO_SYSTEM_GAIN', getattr(self.config, 'RECORD_AUDIO_SYS_GAIN', 1.0)), 1.0)
+            sys_gain = max(0.0, raw_sys_gain / 100.0 if raw_sys_gain > 10.0 else raw_sys_gain)
+            raw_chat_gain = _parse_float(getattr(self.config, 'RECORD_AUDIO_CHAT_GAIN', 1.0), 1.0)
+            chat_gain = max(0.0, raw_chat_gain / 100.0 if raw_chat_gain > 10.0 else raw_chat_gain)
+
             sys_device = str(getattr(self.config, 'RECORD_AUDIO_SYSTEM', 'default')).strip()
             if sys_device.lower() == 'none':
                 os.environ["VALORECO_SYS_AUDIO_DEVICE"] = "__NONE__"
+                sys_device_bytes = b"__NONE__"
                 sys_gain = 0.0
             elif not sys_device or sys_device.lower() == 'default':
                 os.environ["VALORECO_SYS_AUDIO_DEVICE"] = ""
+                sys_device_bytes = b""
             else:
                 os.environ["VALORECO_SYS_AUDIO_DEVICE"] = sys_device
+                sys_device_bytes = sys_device.encode('utf-8')
+
+            if not use_chat_track or chat_device.lower() == 'none':
+                chat_device_bytes = b"__NONE__"
+                chat_gain = 0.0
+            elif not chat_device or chat_device.lower() == 'default':
+                chat_device_bytes = b""
+            else:
+                chat_device_bytes = chat_device.encode('utf-8')
 
             config_struct = RecorderConfig()
             config_struct.mic_gain = mic_gain
@@ -146,6 +186,10 @@ class FFmpegRecorder:
             config_struct.denoise_mode = denoise_mode
             config_struct.preprocess_mode = preprocess_mode
             config_struct.low_priority = 1 if is_lightweight else 0
+            config_struct.system_device_name = sys_device_bytes
+            config_struct.chat_device_name = chat_device_bytes
+            config_struct.chat_gain = chat_gain
+            config_struct.chat_enabled = 1 if use_chat_track else 0
 
             mic_device = getattr(self.config, 'RECORD_AUDIO_MIC', getattr(self.config, 'RECORD_AUDIO_MIC_DEVICE', ''))
             if mic_device.strip().lower() == 'none':
@@ -161,7 +205,7 @@ class FFmpegRecorder:
 
             config_struct.df_model_path = resolve_deepfilter_model_path(denoise_mode).encode('utf-8')
 
-            logging.info(f"[FFmpegRecorder] Starting NativeRecorder. Encoder: {self.actual_encoder}, Lightweight: {is_lightweight}")
+            logging.info(f"[FFmpegRecorder] Starting NativeRecorder. Encoder: {self.actual_encoder}, Lightweight: {is_lightweight}, ChatTrack: {use_chat_track}")
             logging.info(f"[FFmpegRecorder] Command: {cmd_str}")
 
             started_ok = self._try_start_and_verify(config_struct)
@@ -173,7 +217,7 @@ class FFmpegRecorder:
                     self.native_lib.Recorder_Stop()
                 except Exception:
                     pass
-                cmd_str = self._build_ffmpeg_command(force_sw_download=True)
+                cmd_str = self._build_ffmpeg_command(force_sw_download=True, enable_chat_track=use_chat_track)
                 config_struct.ffmpeg_command = cmd_str.encode('utf-8')
                 logging.info(f"[FFmpegRecorder] Fallback Command: {cmd_str}")
                 started_ok = self._try_start_and_verify(config_struct)
@@ -188,7 +232,7 @@ class FFmpegRecorder:
                     self.native_lib.Recorder_Stop()
                 except Exception:
                     pass
-                cmd_str = self._build_ffmpeg_command(force_sw_download=True, force_gdigrab=True)
+                cmd_str = self._build_ffmpeg_command(force_sw_download=True, force_gdigrab=True, enable_chat_track=use_chat_track)
                 config_struct.ffmpeg_command = cmd_str.encode('utf-8')
                 logging.info(f"[FFmpegRecorder] GDI Fallback Command: {cmd_str}")
                 started_ok = self._try_start_and_verify(config_struct)
@@ -201,7 +245,7 @@ class FFmpegRecorder:
                 except Exception:
                     pass
                 self.actual_encoder = "libx264"
-                cmd_str = self._build_ffmpeg_command(force_sw_download=True)
+                cmd_str = self._build_ffmpeg_command(force_sw_download=True, enable_chat_track=use_chat_track)
                 config_struct.ffmpeg_command = cmd_str.encode('utf-8')
                 logging.info(f"[FFmpegRecorder] Software Fallback Command: {cmd_str}")
                 started_ok = self._try_start_and_verify(config_struct)
@@ -212,7 +256,7 @@ class FFmpegRecorder:
                         self.native_lib.Recorder_Stop()
                     except Exception:
                         pass
-                    cmd_str = self._build_ffmpeg_command(force_sw_download=True, force_gdigrab=True)
+                    cmd_str = self._build_ffmpeg_command(force_sw_download=True, force_gdigrab=True, enable_chat_track=use_chat_track)
                     config_struct.ffmpeg_command = cmd_str.encode('utf-8')
                     logging.info(f"[FFmpegRecorder] Software GDI Fallback Command: {cmd_str}")
                     started_ok = self._try_start_and_verify(config_struct)

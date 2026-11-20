@@ -38,6 +38,9 @@ def generate_diagnostic_report(config, test_errors: list = None) -> str:
     lines.append(f"- Res / FPS: {getattr(config, 'RECORD_RESOLUTION', 'unknown')} / {getattr(config, 'RECORD_FPS', 'unknown')}fps")
     lines.append(f"- Lightweight: {getattr(config, 'LIGHTWEIGHT_MODE', False)}")
     lines.append(f"- Audio System: {getattr(config, 'RECORD_AUDIO_SYSTEM', 'default')}")
+    lines.append(
+        f"- Audio Chat: {getattr(config, 'RECORD_AUDIO_CHAT', 'None') if getattr(config, 'RECORD_AUDIO_CHAT_SEPARATE', False) else 'Disabled (Same as System)'}"
+    )
     lines.append(f"- Audio Mic: {getattr(config, 'RECORD_AUDIO_MIC', 'None') or 'None'} (Preprocess: {getattr(config, 'RECORD_AUDIO_MIC_PREPROCESS', 'None')})")
     lines.append("")
 

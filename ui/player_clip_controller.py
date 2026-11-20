@@ -148,6 +148,7 @@ class PlayerClipController(QObject):
             sys_volume=self.player_core.current_sys_volume,
             mic_volume=self.player_core.current_mic_volume,
             audio_track_count=audio_track_count,
+            chat_volume=self.player_core.current_chat_volume,
         )
         self.clip_thread.finished.connect(self._on_clip_finished)
         self.clip_thread.start()

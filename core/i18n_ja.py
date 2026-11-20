@@ -224,4 +224,10 @@ JA_DICT: dict[str, str] = dict(
     sync_source_manual="手動",
     sync_auto_applied="✅ 映像とログを自動同期しました ({offset})",
     sync_auto_not_confident="⚠️ 自動同期の確信度が不足しています。手動ボタンまたはイベント基準合わせをご利用ください。",
+    chat_audio_separate="音声チャットを別出力デバイスから記録する (Discord 等)",
+    chat_audio_device="チャット音声:",
+    chat_audio_unselected_warning="※チャット音声の出力デバイスが「なし」のままでは別トラック録音されません。出力デバイスを選択してください。",
+    chat_gain="チャット音量:",
+    chat_level="チャットレベル:",
+    chat_volume="チャット音量",
 )

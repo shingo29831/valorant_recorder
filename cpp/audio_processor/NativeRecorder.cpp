@@ -7,6 +7,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <ctime>
 #include <fstream>
 #include <iomanip>
@@ -57,6 +58,7 @@ static FFmpegProcess* g_activeProcess = nullptr;
 
 static std::unique_ptr<WasapiCapture> g_sysCapture;
 static std::unique_ptr<WasapiCapture> g_micCapture;
+static std::unique_ptr<WasapiCapture> g_chatCapture;
 
 static void SetLastErrorMsg(const std::string& msg) {
     std::lock_guard<std::mutex> lock(g_errorMutex);
@@ -67,11 +69,11 @@ static void SetLastErrorMsg(const std::string& msg) {
 static std::atomic<bool> g_isWriterRunning{false};
 static std::thread g_writerThread;
 
-static void WriterThreadFunc(FFmpegProcess* ffmpeg, AudioSyncQueue* outQueue) {
-    NativeLog("Starting WriterThreadFunc...");
+static void WriterThreadFunc(FFmpegProcess* ffmpeg, AudioSyncQueue* outQueue, size_t outChannels) {
+    NativeLog("Starting WriterThreadFunc (channels=" + std::to_string(outChannels) + ")...");
     std::vector<float> outBuf;
     const size_t framesPerChunk = 480;
-    const size_t outSamples = framesPerChunk * 4;
+    const size_t outSamples = framesPerChunk * outChannels;
 
     // 停止要求後もキュー内の未書き込み音声を全てパイプへ書き切って末尾欠損を防止
     while (g_isWriterRunning || outQueue->AvailableSamples() >= outSamples) {
@@ -89,15 +91,34 @@ static void WriterThreadFunc(FFmpegProcess* ffmpeg, AudioSyncQueue* outQueue) {
     NativeLog("Exiting WriterThreadFunc...");
 }
 
-static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice, std::string ffmpegCmd, std::string dfModelPath) {
+static void RecordingThreadFunc(
+    RecorderConfig configCopy,
+    std::string sysDevice,
+    std::string micDevice,
+    std::string chatDevice,
+    std::string saveFilePath,
+    std::string ffmpegCmd,
+    std::string dfModelPath
+) {
     try {
         NativeLog("Starting RecordingThreadFunc...");
 
-    g_sysCapture = std::make_unique<WasapiCapture>(CaptureType::SystemLoopback);
-    g_sysCapture->SetLogger(NativeLog);
+    // 前回セッションのキャプチャインスタンス残留による不要キャプチャを防止
+    g_sysCapture.reset();
+    g_micCapture.reset();
+    g_chatCapture.reset();
 
-    if (!g_sysCapture->Initialize()) {
-        NativeLog("[WARNING] System audio init failed: " + g_sysCapture->GetLastError() + ". Continuing with silent system audio track.");
+    const bool chatEnabled = (configCopy.chat_enabled != 0);
+    const size_t outChannels = chatEnabled ? 6 : 4;
+
+    if (sysDevice == "__NONE__") {
+        NativeLog("Notice: System audio capture is disabled by configuration (None).");
+    } else {
+        g_sysCapture = std::make_unique<WasapiCapture>(CaptureType::SystemLoopback, sysDevice);
+        g_sysCapture->SetLogger(NativeLog);
+        if (!g_sysCapture->Initialize(true)) {
+            NativeLog("[WARNING] System audio init failed: " + g_sysCapture->GetLastError() + ". Continuing with silent system audio track.");
+        }
     }
 
     if (micDevice == "__NONE__") {
@@ -105,32 +126,64 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
     } else {
         g_micCapture = std::make_unique<WasapiCapture>(CaptureType::Microphone, micDevice);
         g_micCapture->SetLogger(NativeLog);
-        if (!g_micCapture->Initialize()) {
+        if (!g_micCapture->Initialize(true)) {
             NativeLog("[WARNING] Failed to initialize microphone (" + micDevice + "): " + g_micCapture->GetLastError() + ". Continuing with silent mic stream.");
+        }
+    }
+
+    if (chatEnabled) {
+        if (chatDevice == "__NONE__") {
+            NativeLog("Notice: Voice chat capture is disabled by configuration (None).");
+        } else {
+            g_chatCapture = std::make_unique<WasapiCapture>(CaptureType::SystemLoopback, chatDevice);
+            g_chatCapture->SetLogger(NativeLog);
+            const bool allowFallback = (chatDevice.empty() || chatDevice == "default" || chatDevice == "Default");
+            if (!g_chatCapture->Initialize(allowFallback)) {
+                NativeLog("[WARNING] Voice chat audio init failed (" + chatDevice + "): " + g_chatCapture->GetLastError() + ". Continuing with silent chat track.");
+            }
         }
     }
 
     AudioSyncQueue sysQueue(2, 2000);
     AudioSyncQueue micQueue(2, 2000);
+    AudioSyncQueue chatQueue(2, 2000);
     std::unique_ptr<Resampler> sysResampler;
     std::unique_ptr<Resampler> micResampler;
+    std::unique_ptr<Resampler> chatResampler;
     std::mutex sysResamplerMtx;
     std::mutex micResamplerMtx;
+    std::mutex chatResamplerMtx;
     std::vector<float> sysRawIn, sysStereoIn, sysStereoOut;
     std::vector<float> micRawIn, micStereoIn, micStereoOut;
+    std::vector<float> chatRawIn, chatStereoIn, chatStereoOut;
 
     float sysGain = configCopy.system_gain;
     float micGain = configCopy.mic_gain;
+    float chatGain = configCopy.chat_gain;
 
-    g_sysCapture->SetCallback([&](const float* data, uint32_t frames, uint32_t channels, uint32_t sampleRate) {
-        std::lock_guard<std::mutex> lock(sysResamplerMtx);
-        sysRawIn.assign(data, data + frames * channels);
-        DownmixToStereo(sysRawIn, frames, channels, sysGain, sysStereoIn);
+    if (g_sysCapture) {
+        g_sysCapture->SetCallback([&](const float* data, uint32_t frames, uint32_t channels, uint32_t sampleRate) {
+            std::lock_guard<std::mutex> lock(sysResamplerMtx);
+            sysRawIn.assign(data, data + frames * channels);
+            DownmixToStereo(sysRawIn, frames, channels, sysGain, sysStereoIn);
 
-        if (!sysResampler) sysResampler = std::make_unique<Resampler>(2, sampleRate, 48000);
-        sysResampler->Process(sysStereoIn.data(), frames, sysStereoOut);
-        sysQueue.Push(sysStereoOut);
-    });
+            if (!sysResampler) sysResampler = std::make_unique<Resampler>(2, sampleRate, 48000);
+            sysResampler->Process(sysStereoIn.data(), frames, sysStereoOut);
+            sysQueue.Push(sysStereoOut);
+        });
+    }
+
+    if (g_chatCapture) {
+        g_chatCapture->SetCallback([&](const float* data, uint32_t frames, uint32_t channels, uint32_t sampleRate) {
+            std::lock_guard<std::mutex> lock(chatResamplerMtx);
+            chatRawIn.assign(data, data + frames * channels);
+            DownmixToStereo(chatRawIn, frames, channels, chatGain, chatStereoIn);
+
+            if (!chatResampler) chatResampler = std::make_unique<Resampler>(2, sampleRate, 48000);
+            chatResampler->Process(chatStereoIn.data(), frames, chatStereoOut);
+            chatQueue.Push(chatStereoOut);
+        });
+    }
 
     if (g_micCapture) {
         g_micCapture->SetCallback([&](const float* data, uint32_t frames, uint32_t channels, uint32_t sampleRate) {
@@ -159,15 +212,16 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
     }
 
     std::string ffmpegLogPath = "native_ffmpeg.log";
-    std::string saveDirStr = configCopy.save_file_path ? configCopy.save_file_path : "";
-    if (!saveDirStr.empty()) {
-        size_t pos = saveDirStr.find_last_of("\\/");
+    if (!saveFilePath.empty()) {
+        size_t pos = saveFilePath.find_last_of("\\/");
         if (pos != std::string::npos) {
-            ffmpegLogPath = saveDirStr.substr(0, pos) + "/native_ffmpeg.log";
+            ffmpegLogPath = saveFilePath.substr(0, pos) + "/native_ffmpeg.log";
         }
     }
 
+    const bool hasActiveSys = (g_sysCapture && g_sysCapture->IsInitialized());
     const bool hasActiveMic = (g_micCapture && g_micCapture->IsInitialized());
+    const bool hasActiveChat = (chatEnabled && g_chatCapture && g_chatCapture->IsInitialized());
     auto audioProcDeleter = [](void* p) {
         if (p) AudioProcessor_Destroy(p);
     };
@@ -209,31 +263,36 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
     NoiseGate micNoiseGate;
     micNoiseGate.SetThreshold(configCopy.noise_gate_threshold);
 
-    if (g_sysCapture && g_sysCapture->IsInitialized()) {
+    if (hasActiveSys) {
         g_sysCapture->Start();
     }
-    if (g_micCapture && g_micCapture->IsInitialized()) {
+    if (hasActiveMic) {
         g_micCapture->Start();
     }
+    if (hasActiveChat) {
+        g_chatCapture->Start();
+    }
 
-    AudioSyncQueue outQueue(4, 10000);
+    AudioSyncQueue outQueue(outChannels, 10000);
     g_isWriterRunning = true;
-    g_writerThread = std::thread(WriterThreadFunc, &ffmpeg, &outQueue);
+    g_writerThread = std::thread(WriterThreadFunc, &ffmpeg, &outQueue, outChannels);
 
     const size_t framesPerChunk = 480;
     const size_t sysSamples = framesPerChunk * 2;
     const size_t micSamples = framesPerChunk * 2;
+    const size_t chatSamples = framesPerChunk * 2;
 
-    std::vector<float> sysBuf(sysSamples);
-    std::vector<float> micBuf(micSamples);
-    std::vector<float> micProcessed(micSamples);
-    std::vector<float> outBuf(framesPerChunk * 4);
+    std::vector<float> sysBuf(sysSamples, 0.0f);
+    std::vector<float> micBuf(micSamples, 0.0f);
+    std::vector<float> micProcessed(micSamples, 0.0f);
+    std::vector<float> chatBuf(chatSamples, 0.0f);
+    std::vector<float> outBuf(framesPerChunk * outChannels);
 
     timeBeginPeriod(1);
     SetThreadPriority(GetCurrentThread(), (configCopy.low_priority != 0) ? THREAD_PRIORITY_NORMAL : THREAD_PRIORITY_ABOVE_NORMAL);
 
     // FFmpegのpipe:0プローブ完了を促すため最小限(10ms)の無音フレームのみ先行投入
-    outQueue.Push(std::vector<float>(framesPerChunk * 4, 0.0f));
+    outQueue.Push(std::vector<float>(framesPerChunk * outChannels, 0.0f));
 
     const size_t cushionSamples = framesPerChunk * 2;
     auto syncWaitStart = std::chrono::steady_clock::now();
@@ -248,10 +307,11 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
         auto elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
             std::chrono::steady_clock::now() - syncWaitStart
         ).count();
-        bool hasSysAudio = (!g_sysCapture || !g_sysCapture->IsInitialized() || sysQueue.AvailableSamples() >= cushionSamples);
-        bool hasMicAudio = (!g_micCapture || !g_micCapture->IsInitialized() || micQueue.AvailableSamples() >= cushionSamples);
+        bool hasSysAudio = (!hasActiveSys || sysQueue.AvailableSamples() >= cushionSamples);
+        bool hasMicAudio = (!hasActiveMic || micQueue.AvailableSamples() >= cushionSamples);
+        bool hasChatAudio = (!hasActiveChat || chatQueue.AvailableSamples() >= cushionSamples);
         // D3D11/ハードウェアエンコーダの初期化完了とキャプチャ開始を検知して同期
-        if ((ffmpeg.HasCaptureStarted() && hasSysAudio && hasMicAudio) || elapsedMs >= 3000) {
+        if ((ffmpeg.HasCaptureStarted() && hasSysAudio && hasMicAudio && hasChatAudio) || elapsedMs >= 3000) {
             break;
         }
         Sleep(5);
@@ -267,6 +327,9 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
     // 映像キャプチャ開始と同時にキューを直近20msにアラインし、A/Vの初期ズレを根絶
     sysQueue.DrainKeepLatest(cushionSamples);
     micQueue.DrainKeepLatest(cushionSamples);
+    if (chatEnabled) {
+        chatQueue.DrainKeepLatest(cushionSamples);
+    }
 
     auto actualStartSysMs = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()
@@ -279,21 +342,36 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
 
     const size_t reqSysSamples = framesPerChunk * 2;
     const size_t reqMicSamples = framesPerChunk * 2;
+    const size_t reqChatSamples = framesPerChunk * 2;
     const size_t maxAllowedBuffer = framesPerChunk * 20 * 2;
 
     auto processAndPushChunk = [&](bool drainMode) {
         if (drainMode) {
-            sysQueue.PopExact(reqSysSamples, sysBuf);
+            if (hasActiveSys) {
+                sysQueue.PopExact(reqSysSamples, sysBuf);
+            } else {
+                std::fill(sysBuf.begin(), sysBuf.end(), 0.0f);
+            }
             if (hasActiveMic) {
                 micQueue.PopExact(reqMicSamples, micBuf);
             }
+            if (hasActiveChat) {
+                chatQueue.PopExact(reqChatSamples, chatBuf);
+            } else if (chatEnabled) {
+                std::fill(chatBuf.begin(), chatBuf.end(), 0.0f);
+            }
         } else {
-            if (!sysQueue.PopChunk(reqSysSamples, sysBuf, maxAllowedBuffer)) {
+            if (!hasActiveSys || !sysQueue.PopChunk(reqSysSamples, sysBuf, maxAllowedBuffer)) {
                 std::fill(sysBuf.begin(), sysBuf.end(), 0.0f);
             }
             if (hasActiveMic) {
                 if (!micQueue.PopChunk(reqMicSamples, micBuf, maxAllowedBuffer)) {
                     std::fill(micBuf.begin(), micBuf.end(), 0.0f);
+                }
+            }
+            if (chatEnabled) {
+                if (!hasActiveChat || !chatQueue.PopChunk(reqChatSamples, chatBuf, maxAllowedBuffer)) {
+                    std::fill(chatBuf.begin(), chatBuf.end(), 0.0f);
                 }
             }
         }
@@ -309,11 +387,22 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
             std::fill(micProcessed.begin(), micProcessed.end(), 0.0f);
         }
 
-        for (size_t i = 0; i < framesPerChunk; ++i) {
-            outBuf[i * 4 + 0] = sysBuf[i * 2 + 0];
-            outBuf[i * 4 + 1] = sysBuf[i * 2 + 1];
-            outBuf[i * 4 + 2] = micProcessed[i * 2 + 0];
-            outBuf[i * 4 + 3] = micProcessed[i * 2 + 1];
+        if (chatEnabled) {
+            for (size_t i = 0; i < framesPerChunk; ++i) {
+                outBuf[i * 6 + 0] = sysBuf[i * 2 + 0];
+                outBuf[i * 6 + 1] = sysBuf[i * 2 + 1];
+                outBuf[i * 6 + 2] = micProcessed[i * 2 + 0];
+                outBuf[i * 6 + 3] = micProcessed[i * 2 + 1];
+                outBuf[i * 6 + 4] = chatBuf[i * 2 + 0];
+                outBuf[i * 6 + 5] = chatBuf[i * 2 + 1];
+            }
+        } else {
+            for (size_t i = 0; i < framesPerChunk; ++i) {
+                outBuf[i * 4 + 0] = sysBuf[i * 2 + 0];
+                outBuf[i * 4 + 1] = sysBuf[i * 2 + 1];
+                outBuf[i * 4 + 2] = micProcessed[i * 2 + 0];
+                outBuf[i * 4 + 3] = micProcessed[i * 2 + 1];
+            }
         }
 
         outQueue.Push(outBuf);
@@ -365,13 +454,21 @@ static void RecordingThreadFunc(RecorderConfig configCopy, std::string micDevice
     timeEndPeriod(1);
     NativeLog("Exiting main recording loop...");
 
-    g_sysCapture->Stop();
+    if (g_sysCapture) {
+        g_sysCapture->Stop();
+    }
     if (g_micCapture) {
         g_micCapture->Stop();
+    }
+    if (g_chatCapture) {
+        g_chatCapture->Stop();
     }
 
     if (g_isWriterRunning && !ffmpeg.IsExited(0)) {
         size_t remainingSamples = (std::max)(sysQueue.AvailableSamples(), micQueue.AvailableSamples());
+        if (chatEnabled) {
+            remainingSamples = (std::max)(remainingSamples, chatQueue.AvailableSamples());
+        }
         size_t drainChunks = (std::max)(remainingSamples / reqSysSamples + 1, static_cast<size_t>(10));
         for (size_t c = 0; c < drainChunks; ++c) {
             processAndPushChunk(true);
@@ -454,7 +551,19 @@ EXPORT_API bool Recorder_Start(const RecorderConfig* config) {
             }
         }
 
+        std::string sysDevice;
+        if (config->system_device_name != nullptr) {
+            sysDevice = config->system_device_name;
+        } else {
+            // 明示的な""(Default)指定を上書きしないようNULL時のみ旧環境変数を参照
+            const char* envSys = std::getenv("VALORECO_SYS_AUDIO_DEVICE");
+            if (envSys && envSys[0] != '\0') {
+                sysDevice = envSys;
+            }
+        }
         std::string micDevice = config->mic_device_name ? config->mic_device_name : "";
+        std::string chatDevice = config->chat_device_name ? config->chat_device_name : "";
+        std::string saveFilePath = config->save_file_path ? config->save_file_path : "";
         std::string ffmpegCmd = config->ffmpeg_command ? config->ffmpeg_command : "";
         std::string dfModelPath = config->df_model_path ? config->df_model_path : "";
 
@@ -466,7 +575,16 @@ EXPORT_API bool Recorder_Start(const RecorderConfig* config) {
         g_isRunning = true;
         SetLastErrorMsg("");
 
-        g_recordingThread = std::thread(RecordingThreadFunc, configCopy, micDevice, ffmpegCmd, dfModelPath);
+        g_recordingThread = std::thread(
+            RecordingThreadFunc,
+            configCopy,
+            sysDevice,
+            micDevice,
+            chatDevice,
+            saveFilePath,
+            ffmpegCmd,
+            dfModelPath
+        );
         return true;
     } catch (const std::exception& e) {
         SetLastErrorMsg(std::string("Exception in Recorder_Start: ") + e.what());
@@ -534,4 +652,8 @@ EXPORT_API int64_t Recorder_GetActualStartTimeMs() {
 
 EXPORT_API int64_t Recorder_GetActualEndTimeMs() {
     return g_actualEndTimeMs.load();
+}
+
+EXPORT_API bool Recorder_SupportsChatTrack() {
+    return true;
 }

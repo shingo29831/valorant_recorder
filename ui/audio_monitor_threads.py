@@ -4,10 +4,11 @@ import numpy as np
 class SystemAudioMonitorThread(QThread):
     level_ready = pyqtSignal(float)
 
-    def __init__(self, gain, device_name="default"):
+    def __init__(self, gain, device_name="default", allow_default_fallback=True):
         super().__init__()
         self.gain = gain
         self.device_name = device_name
+        self.allow_default_fallback = allow_default_fallback
         self.running = True
         self.current_limiter_gain = 1.0
 
@@ -59,22 +60,31 @@ class SystemAudioMonitorThread(QThread):
             with sc_lock:
                 speaker = None
                 if self.device_name and self.device_name not in ("default", "Default", "None"):
-                    for s in sc.all_speakers():
-                        if s.name == self.device_name or self.device_name in s.name:
+                    all_spks = sc.all_speakers()
+                    target_lower = self.device_name.lower()
+                    for s in all_spks:
+                        if s.name.lower() == target_lower:
                             speaker = s
                             break
-                if speaker is None:
+                    # チャット分離等のフォールバック抑止時は別デバイスへの誤爆を防ぐため部分一致を行わない
+                    if speaker is None and self.allow_default_fallback:
+                        for s in all_spks:
+                            if target_lower in s.name.lower():
+                                speaker = s
+                                break
+                if speaker is None and (self.allow_default_fallback or self.device_name in ("", "default", "Default")):
                     speaker = sc.default_speaker()
-                spk_mic = sc.get_microphone(speaker.id, include_loopback=True)
                 recorder = None
-                for ch in (2, 1):
-                    try:
-                        cand = spk_mic.recorder(samplerate=48000, channels=ch)
-                        cand.__enter__()
-                        recorder = cand
-                        break
-                    except Exception:
-                        recorder = None
+                if speaker is not None:
+                    spk_mic = sc.get_microphone(speaker.id, include_loopback=True)
+                    for ch in (2, 1):
+                        try:
+                            cand = spk_mic.recorder(samplerate=48000, channels=ch)
+                            cand.__enter__()
+                            recorder = cand
+                            break
+                        except Exception:
+                            recorder = None
 
             if recorder is not None:
                 try:

@@ -5,7 +5,7 @@ from PyQt6.QtCore import QThread, pyqtSignal
 class ClipGeneratorThread(QThread):
     finished = pyqtSignal(bool, str)
     
-    def __init__(self, ffmpeg_path, input_path, output_path, start_ms, end_ms, encoder, sys_volume, mic_volume, audio_track_count):
+    def __init__(self, ffmpeg_path, input_path, output_path, start_ms, end_ms, encoder, sys_volume, mic_volume, audio_track_count, chat_volume=1.0):
         super().__init__()
         self.ffmpeg_path = ffmpeg_path
         self.input_path = input_path
@@ -15,6 +15,7 @@ class ClipGeneratorThread(QThread):
         self.encoder = encoder
         self.sys_volume = sys_volume
         self.mic_volume = mic_volume
+        self.chat_volume = chat_volume
         self.audio_track_count = audio_track_count
         
     def _build_encoder_args(self, encoder: str) -> list[str]:
@@ -41,7 +42,15 @@ class ClipGeneratorThread(QThread):
         cmd.extend(["-c:a", "aac", "-b:a", "192k", "-movflags", "+faststart"])
 
         # amixのデフォルト正規化(音量半減)をnormalize=0で防ぎユーザー設定音量を維持
-        if self.audio_track_count >= 2:
+        if self.audio_track_count >= 3:
+            filter_complex = (
+                f"[0:a:0]volume={self.sys_volume}[a0];"
+                f"[0:a:1]volume={self.mic_volume}[a1];"
+                f"[0:a:2]volume={self.chat_volume}[a2];"
+                f"[a0][a1][a2]amix=inputs=3:duration=longest:normalize=0[aout]"
+            )
+            cmd.extend(["-filter_complex", filter_complex, "-map", "[aout]"])
+        elif self.audio_track_count >= 2:
             filter_complex = f"[0:a:0]volume={self.sys_volume}[a0];[0:a:1]volume={self.mic_volume}[a1];[a0][a1]amix=inputs=2:duration=longest:normalize=0[aout]"
             cmd.extend(["-filter_complex", filter_complex, "-map", "[aout]"])
         else:

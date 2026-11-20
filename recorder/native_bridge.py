@@ -32,6 +32,10 @@ class RecorderConfig(ctypes.Structure):
         ("denoise_mode", ctypes.c_int32),
         ("preprocess_mode", ctypes.c_int32),
         ("low_priority", ctypes.c_int32),
+        ("system_device_name", ctypes.c_char_p),
+        ("chat_device_name", ctypes.c_char_p),
+        ("chat_gain", ctypes.c_float),
+        ("chat_enabled", ctypes.c_int32),
     ]
 
 
@@ -149,6 +153,9 @@ def load_native_recorder_dll() -> ctypes.CDLL:
     if hasattr(native_lib, "Recorder_GetActualEndTimeMs"):
         native_lib.Recorder_GetActualEndTimeMs.argtypes = []
         native_lib.Recorder_GetActualEndTimeMs.restype = ctypes.c_int64
+    if hasattr(native_lib, "Recorder_SupportsChatTrack"):
+        native_lib.Recorder_SupportsChatTrack.argtypes = []
+        native_lib.Recorder_SupportsChatTrack.restype = ctypes.c_bool
 
     return native_lib
 

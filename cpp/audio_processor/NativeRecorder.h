@@ -24,6 +24,12 @@ struct RecorderConfig {
     int32_t denoise_mode;
     int32_t preprocess_mode;
     int32_t low_priority;
+
+    // 末尾追加により既存ABIオフセットを維持
+    const char* system_device_name;
+    const char* chat_device_name;
+    float chat_gain;
+    int32_t chat_enabled;
 };
 
 // Python (ctypes) から呼び出すAPI
@@ -36,3 +42,4 @@ EXPORT_API void Recorder_SetLowPriority(bool lowPriority);
 EXPORT_API const char* Recorder_GetLastError();
 EXPORT_API int64_t Recorder_GetActualStartTimeMs();
 EXPORT_API int64_t Recorder_GetActualEndTimeMs();
+EXPORT_API bool Recorder_SupportsChatTrack();

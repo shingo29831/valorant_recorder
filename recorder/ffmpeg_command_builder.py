@@ -439,7 +439,13 @@ def build_ffmpeg_command(
     temp_filepath: str,
     force_sw_download: bool = False,
     force_gdigrab: bool = False,
+    enable_chat_track: Optional[bool] = None,
 ) -> str:
+    if enable_chat_track is None:
+        chat_sep = bool(getattr(config, "RECORD_AUDIO_CHAT_SEPARATE", False))
+        chat_dev = str(getattr(config, "RECORD_AUDIO_CHAT", "None")).strip().lower()
+        enable_chat_track = chat_sep and chat_dev != "none"
+
     is_lightweight = bool(getattr(config, "LIGHTWEIGHT_MODE", False))
     enc_lower = actual_encoder.lower()
     is_nvenc = "nvenc" in enc_lower
@@ -596,11 +602,23 @@ def build_ffmpeg_command(
             encoder_opts.extend(["-threads", "4"])
 
     # panフィルタのチャンネル識別子混在エラー(-EINVAL)を防ぐため番号形式(c0,c1...)で統一
-    audio_filter = (
-        "[0:a]aresample=async=1000:first_pts=0,asetpts=N/SR/TB,asplit=2[sys_in][mic_in];"
-        "[sys_in]pan=stereo|c0=c0|c1=c1[a_sys];"
-        "[mic_in]pan=stereo|c0=c2|c1=c3[a_mic]"
-    )
+    if enable_chat_track:
+        audio_filter = (
+            "[0:a]aresample=async=1000:first_pts=0,asetpts=N/SR/TB,asplit=3[sys_in][mic_in][chat_in];"
+            "[sys_in]pan=stereo|c0=c0|c1=c1[a_sys];"
+            "[mic_in]pan=stereo|c0=c2|c1=c3[a_mic];"
+            "[chat_in]pan=stereo|c0=c4|c1=c5[a_chat]"
+        )
+        pipe_channels = "6"
+        pipe_layout = "5.1"
+    else:
+        audio_filter = (
+            "[0:a]aresample=async=1000:first_pts=0,asetpts=N/SR/TB,asplit=2[sys_in][mic_in];"
+            "[sys_in]pan=stereo|c0=c0|c1=c1[a_sys];"
+            "[mic_in]pan=stereo|c0=c2|c1=c3[a_mic]"
+        )
+        pipe_channels = "4"
+        pipe_layout = "quad"
     filter_complex = video_filter + audio_filter
 
     supports_input_tqs, supports_output_tqs = get_thread_queue_size_support(ffmpeg_path)
@@ -615,8 +633,8 @@ def build_ffmpeg_command(
         "-analyzeduration", "0",
         "-f", "f32le",
         "-ar", "48000",
-        "-ac", "4",
-        "-channel_layout", "quad",
+        "-ac", pipe_channels,
+        "-channel_layout", pipe_layout,
         "-i", "pipe:0",
     ])
     cmd.extend(pipe_opts)
@@ -645,14 +663,21 @@ def build_ffmpeg_command(
             ])
         cmd.extend(gdi_opts)
 
-    cmd.extend([
+    map_opts = [
         "-filter_complex", filter_complex,
         "-map", "[v_out]",
         "-map", "[a_sys]",
         "-map", "[a_mic]",
+    ]
+    if enable_chat_track:
+        map_opts.extend(["-map", "[a_chat]"])
+    map_opts.extend([
         "-metadata:s:a:0", "title=System Audio",
         "-metadata:s:a:1", "title=Microphone",
     ])
+    if enable_chat_track:
+        map_opts.extend(["-metadata:s:a:2", "title=Voice Chat"])
+    cmd.extend(map_opts)
     cmd.extend(encoder_opts)
     cmd.extend([
         "-r", fps,

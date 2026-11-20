@@ -224,4 +224,10 @@ EN_DICT: dict[str, str] = dict(
     sync_source_manual="Manual",
     sync_auto_applied="✅ Timeline auto-synced with video ({offset}).",
     sync_auto_not_confident="⚠️ Auto-sync confidence was low. Please use manual adjustment or Align to Current Time.",
+    chat_audio_separate="Record voice chat from a separate output device (e.g., Discord)",
+    chat_audio_device="Chat Audio:",
+    chat_audio_unselected_warning="No chat output device is selected (None). Select a device to record a separate chat track.",
+    chat_gain="Chat Gain:",
+    chat_level="Chat Level:",
+    chat_volume="Chat Volume",
 )
