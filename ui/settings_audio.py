@@ -13,7 +13,9 @@ from PyQt6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from core.config import get_app_data_dir
 from recorder.audio_processor_wrapper import AudioProcessorWrapper, ensure_deepfilter_model_async
+from recorder.ffmpeg_downloader import ensure_rnnoise_model_async
 from ui.audio_monitor_threads import MicMonitorThread, SystemAudioMonitorThread
 from ui.settings_utils import HoverWheelComboBox
 from ui.volume_meter import VolumeMeter
@@ -235,21 +237,7 @@ class AudioSettingsWidget(QWidget):
         self.mic_denoise_combo.addItem("AI (RNNoise)", "AI (RNNoise)")
         self.mic_denoise_combo.addItem("NVIDIA Broadcast", "NVIDIA Broadcast")
 
-        denoise_val = getattr(self.config, "RECORD_AUDIO_MIC_DENOISE", "None")
-        if denoise_val in ("True", "Standard (FFmpeg)", "RNNoise", "SpeexDSP"):
-            denoise_val = "AI (RNNoise)"
-        elif denoise_val == "DeepFilterNet":
-            denoise_val = "AI (DeepFilterNet)"
-        elif denoise_val == "False":
-            denoise_val = "None"
-        if denoise_val == "AI (DeepFilterNet)" and not AudioProcessorWrapper.is_available():
-            denoise_val = "AI (RNNoise)"
-
-        idx = self.mic_denoise_combo.findData(denoise_val)
-        if idx >= 0:
-            self.mic_denoise_combo.setCurrentIndex(idx)
-        if denoise_val == "AI (DeepFilterNet)":
-            ensure_deepfilter_model_async()
+        effective_denoise = self._apply_denoise_selection_from_config()
         self.mic_denoise_combo.currentIndexChanged.connect(self._on_denoise_changed)
 
         self.mic_preprocess_combo = HoverWheelComboBox()
@@ -306,7 +294,7 @@ class AudioSettingsWidget(QWidget):
         self.monitor_warning_label = QLabel(self.t.monitor_warning)
         self.monitor_warning_label.setWordWrap(True)
         self.monitor_warning_label.setStyleSheet("color: #B8C4D0; font-size: 13px; padding-left: 26px;")
-        self.monitor_warning_label.setVisible(denoise_val in ("AI (RNNoise)", "AI (DeepFilterNet)"))
+        self.monitor_warning_label.setVisible(effective_denoise in ("AI (RNNoise)", "AI (DeepFilterNet)"))
 
         monitor_layout = QVBoxLayout()
         monitor_layout.setContentsMargins(0, 0, 0, 0)
@@ -352,6 +340,38 @@ class AudioSettingsWidget(QWidget):
         is_enabled = self.chat_separate_cb.isChecked()
         cur_dev = self.chat_audio_input.currentData() or "None"
         self.chat_unselected_warning_label.setVisible(is_enabled and cur_dev == "None")
+
+    @staticmethod
+    def _trigger_denoise_model_prefetch(mode: str) -> None:
+        if mode == "AI (DeepFilterNet)":
+            ensure_deepfilter_model_async()
+        elif mode == "AI (RNNoise)" and not AudioProcessorWrapper.is_available():
+            ensure_rnnoise_model_async(get_app_data_dir())
+
+    def _apply_denoise_selection_from_config(self) -> str:
+        """__init__とrefresh_from_configで完全に同一の正規化・DLL不可フォールバック・事前DLを適用する"""
+        denoise_val = getattr(self.config, "RECORD_AUDIO_MIC_DENOISE", "None")
+        if denoise_val in ("True", "Standard (FFmpeg)", "RNNoise", "SpeexDSP"):
+            denoise_val = "AI (RNNoise)"
+        elif denoise_val == "DeepFilterNet":
+            denoise_val = "AI (DeepFilterNet)"
+        elif denoise_val == "False":
+            denoise_val = "None"
+        if denoise_val == "AI (DeepFilterNet)" and not AudioProcessorWrapper.is_available():
+            denoise_val = "AI (RNNoise)"
+
+        self.mic_denoise_combo.blockSignals(True)
+        idx = self.mic_denoise_combo.findData(denoise_val)
+        if idx < 0:
+            idx = self.mic_denoise_combo.findData("AI (RNNoise)")
+        if idx < 0:
+            idx = 0
+        self.mic_denoise_combo.setCurrentIndex(idx)
+        self.mic_denoise_combo.blockSignals(False)
+
+        effective_denoise = self.mic_denoise_combo.currentData() or "None"
+        self._trigger_denoise_model_prefetch(effective_denoise)
+        return effective_denoise
 
     def apply_lightweight_defaults(self) -> None:
         if self.mic_denoise_combo.currentData() == "AI (DeepFilterNet)":
@@ -472,8 +492,9 @@ class AudioSettingsWidget(QWidget):
                     self.mic_denoise_combo.blockSignals(False)
                 mode = "AI (RNNoise)"
 
-        if mode == "AI (DeepFilterNet)":
-            ensure_deepfilter_model_async()
+        effective_mode = self.mic_denoise_combo.currentData() or "None"
+        self.monitor_warning_label.setVisible(effective_mode in ("AI (RNNoise)", "AI (DeepFilterNet)"))
+        self._trigger_denoise_model_prefetch(effective_mode)
         if self.monitor_thread:
             self.monitor_thread.set_denoise(mode)
         self._save_audio_settings()
@@ -618,19 +639,8 @@ class AudioSettingsWidget(QWidget):
         self.volume_meter.set_gate_threshold(gate_val / 100.0)
         self.mic_gate_slider.blockSignals(False)
 
-        denoise_val = getattr(self.config, "RECORD_AUDIO_MIC_DENOISE", "None")
-        if denoise_val in ("True", "Standard (FFmpeg)", "RNNoise", "SpeexDSP"):
-            denoise_val = "AI (RNNoise)"
-        elif denoise_val == "DeepFilterNet":
-            denoise_val = "AI (DeepFilterNet)"
-        elif denoise_val == "False":
-            denoise_val = "None"
-        self.mic_denoise_combo.blockSignals(True)
-        dn_idx = self.mic_denoise_combo.findData(denoise_val)
-        if dn_idx >= 0:
-            self.mic_denoise_combo.setCurrentIndex(dn_idx)
-        self.mic_denoise_combo.blockSignals(False)
-        self.monitor_warning_label.setVisible(denoise_val in ("AI (RNNoise)", "AI (DeepFilterNet)"))
+        effective_denoise = self._apply_denoise_selection_from_config()
+        self.monitor_warning_label.setVisible(effective_denoise in ("AI (RNNoise)", "AI (DeepFilterNet)"))
 
         pre_val = getattr(self.config, "RECORD_AUDIO_MIC_PREPROCESS", "SpeexDSP")
         if pre_val == "WebRTC":

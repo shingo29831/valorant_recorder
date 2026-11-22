@@ -86,6 +86,14 @@ def get_real_executable_path() -> str:
     return _INITIAL_ARGV0 or exe_path
 
 
+def get_app_data_dir(ensure_exists: bool = False) -> str:
+    """アプリの永続データディレクトリ(bin・モデル・設定等)を一元解決して返す"""
+    appdata_dir = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "ValoReco")
+    if ensure_exists:
+        os.makedirs(appdata_dir, exist_ok=True)
+    return appdata_dir
+
+
 def get_app_base_dir() -> str:
     """アプリの基準ディレクトリ(一時展開ディレクトリを除外した永続配置先)を返す"""
     if is_compiled_binary():
@@ -93,9 +101,7 @@ def get_app_base_dir() -> str:
         exe_dir = os.path.dirname(real_exe)
         if exe_dir and os.path.isdir(exe_dir) and not is_temp_extraction_dir(exe_dir):
             return exe_dir
-        appdata_dir = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "ValoReco")
-        os.makedirs(appdata_dir, exist_ok=True)
-        return appdata_dir
+        return get_app_data_dir(ensure_exists=True)
 
     module_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if not is_temp_extraction_dir(module_root):
@@ -105,7 +111,7 @@ def get_app_base_dir() -> str:
 
 def _resolve_env_file() -> str:
     """実行形態に応じて一時フォルダに依存しない永続的な.envファイルパスを解決する"""
-    appdata_dir = os.path.join(os.environ.get("LOCALAPPDATA", os.path.expanduser("~")), "ValoReco")
+    appdata_dir = get_app_data_dir()
     appdata_env = os.path.join(appdata_dir, ".env")
 
     if is_compiled_binary():

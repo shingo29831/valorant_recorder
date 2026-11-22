@@ -4,11 +4,18 @@ from dataclasses import dataclass
 import logging
 import os
 import re
+import shutil
 import subprocess
+import threading
+import time
 from typing import List, Optional
-from core.config import Config
+from core.config import Config, get_app_base_dir, get_app_data_dir
 from recorder.audio_processor_wrapper import get_short_path_name
-from recorder.ffmpeg_downloader import ensure_rnnoise_model_downloaded
+from recorder.ffmpeg_downloader import (
+    ensure_rnnoise_model_async,
+    ensure_rnnoise_model_downloaded,
+    is_valid_rnnoise_model,
+)
 
 _DISPLAY_DEVICE_ATTACHED_TO_DESKTOP = 0x00000001
 _DISPLAY_DEVICE_PRIMARY_DEVICE = 0x00000004
@@ -360,19 +367,130 @@ def parse_target_resolution(config: Config) -> tuple[int, int]:
     return 1920, 1080
 
 
+_TQS_CACHE_LOCK = threading.Lock()
 _THREAD_QUEUE_SIZE_SUPPORT_CACHE: dict[str, tuple[bool, bool]] = {}
+_FFMPEG_FILTERS_LOCK = threading.Lock()
+_FFMPEG_FILTERS_CACHE: dict[str, set[str]] = {}
+_FFMPEG_FILTERS_PROBING: set[str] = set()
+_FFMPEG_FILTERS_FAIL_UNTIL: dict[str, float] = {}
+_FFMPEG_FILTER_FAIL_COOLDOWN_SEC = 5.0
+
+
+def resolve_ffmpeg_path() -> Optional[str]:
+    """AppData・実行ディレクトリ・プロジェクト配下・PATHからFFmpeg実行ファイルを汎用解決する"""
+    exe_name = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    candidates = [
+        os.path.join(get_app_data_dir(), "bin", exe_name),
+        os.path.join(get_app_base_dir(), "bin", exe_name),
+        os.path.join(project_root, "bin", exe_name),
+    ]
+    for path in candidates:
+        if path and os.path.isfile(path):
+            return path
+    return shutil.which("ffmpeg")
+
+
+def _norm_path_key(path: str) -> str:
+    return os.path.normcase(os.path.abspath(path)) if path else ""
+
+
+def is_ffmpeg_filter_known_supported(ffmpeg_path: str, filter_name: str) -> Optional[bool]:
+    """キャッシュ済みであれば非ブロックでフィルタ対応可否を返し、未計測ならNoneを返す"""
+    if not ffmpeg_path or not filter_name:
+        return False
+    key = _norm_path_key(ffmpeg_path)
+    with _FFMPEG_FILTERS_LOCK:
+        cached = _FFMPEG_FILTERS_CACHE.get(key)
+    if cached is None:
+        return None
+    return filter_name.lower() in cached
+
+
+def probe_ffmpeg_filters_async(ffmpeg_path: str) -> None:
+    """UI・モニタースレッドをブロックしないよう裏スレッドでFFmpegフィルタ一覧を事前キャッシュする"""
+    if not ffmpeg_path or not os.path.exists(ffmpeg_path):
+        return
+    key = _norm_path_key(ffmpeg_path)
+    now = time.monotonic()
+    with _FFMPEG_FILTERS_LOCK:
+        if key in _FFMPEG_FILTERS_CACHE or key in _FFMPEG_FILTERS_PROBING:
+            return
+        if now < _FFMPEG_FILTERS_FAIL_UNTIL.get(key, 0.0):
+            return
+        _FFMPEG_FILTERS_PROBING.add(key)
+
+    def _worker() -> None:
+        try:
+            supports_ffmpeg_filter(ffmpeg_path, "arnndn")
+        finally:
+            with _FFMPEG_FILTERS_LOCK:
+                _FFMPEG_FILTERS_PROBING.discard(key)
+
+    threading.Thread(target=_worker, name="FFmpegFilterProbe", daemon=True).start()
+
+
+def supports_ffmpeg_filter(ffmpeg_path: str, filter_name: str) -> bool:
+    """FFmpegビルドが指定フィルタをサポートしているかスレッドセーフに判定する（一時失敗は永続キャッシュしない）"""
+    if not ffmpeg_path or not os.path.exists(ffmpeg_path) or not filter_name:
+        return False
+    key = _norm_path_key(ffmpeg_path)
+    with _FFMPEG_FILTERS_LOCK:
+        cached = _FFMPEG_FILTERS_CACHE.get(key)
+        if cached is not None:
+            return filter_name.lower() in cached
+        if time.monotonic() < _FFMPEG_FILTERS_FAIL_UNTIL.get(key, 0.0):
+            return False
+
+    creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+    found: set[str] = set()
+    probe_succeeded = False
+    try:
+        res = subprocess.run(
+            [ffmpeg_path, "-hide_banner", "-filters"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            creationflags=creationflags,
+            timeout=5.0,
+        )
+        if res.returncode == 0 and res.stdout:
+            out_text = res.stdout.decode("utf-8", errors="replace")
+            for line in out_text.splitlines():
+                m = re.match(r"^\s*[T.S.C.]+\s+([A-Za-z0-9_]+)\s+", line)
+                if m:
+                    found.add(m.group(1).lower())
+            probe_succeeded = len(found) > 0
+    except Exception:
+        probe_succeeded = False
+
+    with _FFMPEG_FILTERS_LOCK:
+        if probe_succeeded:
+            _FFMPEG_FILTERS_CACHE[key] = found
+            _FFMPEG_FILTERS_FAIL_UNTIL.pop(key, None)
+        else:
+            # タイムアウト等の一時失敗で空集合を永続キャッシュしてフィルタが恒久無効化されるのを防止
+            _FFMPEG_FILTERS_FAIL_UNTIL[key] = time.monotonic() + _FFMPEG_FILTER_FAIL_COOLDOWN_SEC
+    return probe_succeeded and (filter_name.lower() in found)
+
+
+def supports_arnndn_filter(ffmpeg_path: str) -> bool:
+    return supports_ffmpeg_filter(ffmpeg_path, "arnndn")
 
 
 def get_thread_queue_size_support(ffmpeg_path: str) -> tuple[bool, bool]:
     """FFmpegのバージョン差異によるthread_queue_sizeの入出力オプション仕様を動的判定"""
     if not ffmpeg_path or not os.path.exists(ffmpeg_path):
         return False, False
-    if ffmpeg_path in _THREAD_QUEUE_SIZE_SUPPORT_CACHE:
-        return _THREAD_QUEUE_SIZE_SUPPORT_CACHE[ffmpeg_path]
+    key = _norm_path_key(ffmpeg_path)
+    with _TQS_CACHE_LOCK:
+        cached = _THREAD_QUEUE_SIZE_SUPPORT_CACHE.get(key)
+    if cached is not None:
+        return cached
 
     creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-    # 旧仕様(demuxer入力)の受け付け可否を検査
     supports_input = False
+    in_probed = False
     try:
         res_in = subprocess.run(
             [ffmpeg_path, "-v", "error", "-thread_queue_size", "16", "-f", "lavfi", "-i", "anullsrc", "-frames:a", "1", "-f", "null", "-"],
@@ -382,14 +500,15 @@ def get_thread_queue_size_support(ffmpeg_path: str) -> tuple[bool, bool]:
             creationflags=creationflags,
             timeout=3.0,
         )
+        in_probed = True
         err_in = res_in.stderr.decode("utf-8", errors="replace").lower() if res_in.stderr else ""
         if res_in.returncode == 0 and "cannot be applied to input" not in err_in and "unrecognized option" not in err_in:
             supports_input = True
     except Exception:
         supports_input = False
 
-    # 新仕様(muxer出力)の受け付け可否を検査
     supports_output = False
+    out_probed = False
     try:
         res_out = subprocess.run(
             [ffmpeg_path, "-v", "error", "-f", "lavfi", "-i", "anullsrc", "-frames:a", "1", "-thread_queue_size", "16", "-f", "null", "-"],
@@ -399,37 +518,113 @@ def get_thread_queue_size_support(ffmpeg_path: str) -> tuple[bool, bool]:
             creationflags=creationflags,
             timeout=3.0,
         )
+        out_probed = True
         err_out = res_out.stderr.decode("utf-8", errors="replace").lower() if res_out.stderr else ""
         if res_out.returncode == 0 and "cannot be applied to output" not in err_out and "unrecognized option" not in err_out:
             supports_output = True
     except Exception:
         supports_output = False
 
-    _THREAD_QUEUE_SIZE_SUPPORT_CACHE[ffmpeg_path] = (supports_input, supports_output)
+    if in_probed and out_probed:
+        with _TQS_CACHE_LOCK:
+            _THREAD_QUEUE_SIZE_SUPPORT_CACHE[key] = (supports_input, supports_output)
     return supports_input, supports_output
 
 
-def resolve_rnnoise_filter(app_data_dir: str) -> str:
+def _escape_ffmpeg_filter_option_path(path: str) -> str:
+    """FFmpegフィルタグラフの2段階解析(avfilter_graph_parse2 -> av_set_options_string)向けにパスをエスケープする"""
+    norm_p = path.replace("\\", "/")
+    # 第1段で外側の'...'が剥がれた後に第2段が:と=を再解釈するため、クォート内でも第2段用エスケープが必須
+    stage2 = (
+        norm_p.replace("\\", "\\\\")
+        .replace(":", "\\:")
+        .replace("=", "\\=")
+    )
+    if "'" not in norm_p:
+        return f"'{stage2}'"
+    # パスに'を含む場合はクォート外とし、第2段用('含む)の後に第1段用エスケープを重ねる
+    stage2_q = stage2.replace("'", "\\'")
+    stage1 = (
+        stage2_q.replace("\\", "\\\\")
+        .replace("'", "\\'")
+        .replace(",", "\\,")
+        .replace(";", "\\;")
+        .replace("[", "\\[")
+        .replace("]", "\\]")
+        .replace(" ", "\\ ")
+    )
+    return stage1
+
+
+def resolve_rnnoise_filter(app_data_dir: Optional[str] = None, allow_download: bool = False) -> str:
+    effective_app_data = app_data_dir or get_app_data_dir()
     project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     candidates = [
         os.path.join(project_root, "bin", "sh.rnnn"),
-        os.path.join(app_data_dir, "bin", "sh.rnnn"),
+        os.path.join(get_app_base_dir(), "bin", "sh.rnnn"),
+        os.path.join(effective_app_data, "bin", "sh.rnnn"),
     ]
     rnnn_path = None
     for c in candidates:
-        if os.path.isfile(c) and os.path.getsize(c) > 100:
+        if is_valid_rnnoise_model(c):
             rnnn_path = c
             break
     if not rnnn_path:
-        try:
-            rnnn_path = ensure_rnnoise_model_downloaded(app_data_dir)
-        except Exception as e:
-            logging.warning(f"[FFmpegCommandBuilder] Could not prepare RNNoise model: {e}")
+        if allow_download:
+            try:
+                rnnn_path = ensure_rnnoise_model_downloaded(effective_app_data)
+            except Exception as e:
+                logging.warning(f"[FFmpegCommandBuilder] Could not prepare RNNoise model: {e}")
+                return ""
+        else:
+            ensure_rnnoise_model_async(effective_app_data)
             return ""
-    if rnnn_path and os.path.exists(rnnn_path):
-        short_p = get_short_path_name(os.path.abspath(rnnn_path)).replace("\\", "/").replace(":", "\\:")
-        return f"arnndn=m='{short_p}',"
+    if rnnn_path and is_valid_rnnoise_model(rnnn_path):
+        short_p = get_short_path_name(os.path.abspath(rnnn_path))
+        escaped_val = _escape_ffmpeg_filter_option_path(short_p)
+        return f"arnndn=m={escaped_val},"
     return ""
+
+
+def build_ffmpeg_mic_dsp_chain(
+    config: Config,
+    ffmpeg_path: str,
+    allow_arnndn: bool = True,
+    allow_agate: bool = True,
+) -> tuple[str, bool]:
+    """C++音声DLL不可時にFFmpeg内蔵フィルタで HPF -> RNNoise -> RMS NoiseGate の正順処理を構成する"""
+    mic_dev = str(getattr(config, "RECORD_AUDIO_MIC", "")).strip().lower()
+    if mic_dev == "none":
+        return "", False
+
+    filters: list[str] = []
+    preprocess_str = str(getattr(config, "RECORD_AUDIO_MIC_PREPROCESS", "SpeexDSP")).strip()
+    if preprocess_str and preprocess_str.lower() != "none":
+        filters.append("highpass=f=80")
+
+    denoise_str = str(getattr(config, "RECORD_AUDIO_MIC_DENOISE", "None")).strip().lower()
+    if allow_arnndn and any(k in denoise_str for k in ("rnnoise", "speex", "deepfilter")):
+        if supports_arnndn_filter(ffmpeg_path):
+            rnnoise_part = resolve_rnnoise_filter(get_app_data_dir(), allow_download=False).rstrip(",")
+            if rnnoise_part:
+                filters.append(rnnoise_part)
+
+    gate_handled_by_ffmpeg = False
+    if allow_agate:
+        try:
+            gate_pct = float(getattr(config, "RECORD_AUDIO_MIC_NOISE_GATE", "0"))
+        except (ValueError, TypeError):
+            gate_pct = 0.0
+        gate_norm = max(0.0, min(1.0, gate_pct / 100.0))
+        if gate_norm > 0.001 and supports_ffmpeg_filter(ffmpeg_path, "agate"):
+            # MicMonitorThreadと同一のRMS閾値((threshold/2)^2)・0.01フロアで一致させる
+            amp_thresh = max(0.000125, min(1.0, (gate_norm / 2.0) ** 2))
+            filters.append(
+                f"agate=threshold={amp_thresh:.6f}:ratio=20:range=0.01:attack=10:release=300:detection=rms"
+            )
+            gate_handled_by_ffmpeg = True
+
+    return (("," + ",".join(filters)) if filters else ""), gate_handled_by_ffmpeg
 
 
 def build_ffmpeg_command(
@@ -440,6 +635,9 @@ def build_ffmpeg_command(
     force_sw_download: bool = False,
     force_gdigrab: bool = False,
     enable_chat_track: Optional[bool] = None,
+    use_ffmpeg_mic_dsp: bool = False,
+    allow_arnndn: bool = True,
+    allow_agate: bool = True,
 ) -> str:
     if enable_chat_track is None:
         chat_sep = bool(getattr(config, "RECORD_AUDIO_CHAT_SEPARATE", False))
@@ -505,21 +703,21 @@ def build_ffmpeg_command(
     dda_base = f"ddagrab=output_idx={output_idx}:framerate={fps}:draw_mouse=1:dup_frames=1"
     if use_gdigrab:
         scale_part = f"scale={target_w}:{target_h}:flags={sw_flag}," if needs_scale else ""
-        video_filter = f"[1:v]setpts=PTS-STARTPTS,{scale_part}format={out_pix_fmt}[v_out];"
+        video_filter = f"[1:v]setpts=PTS-STARTPTS,{scale_part}format={out_pix_fmt}[v_out]"
     elif use_d3d11_direct:
         d3d_scale = f",scale_d3d11=w={target_w}:h={target_h}" if needs_scale else ""
-        video_filter = f"{dda_base},setpts=PTS-STARTPTS{d3d_scale}[v_out];"
+        video_filter = f"{dda_base},setpts=PTS-STARTPTS{d3d_scale}[v_out]"
     elif use_qsv_gpu_scale:
         d3d_scale = f",scale_d3d11=w={target_w}:h={target_h}" if needs_scale else ""
         video_filter = (
             f"{dda_base},setpts=PTS-STARTPTS{d3d_scale},"
-            f"hwdownload,format=bgra,format=nv12[v_out];"
+            f"hwdownload,format=bgra,format=nv12[v_out]"
         )
     else:
         scale_part = f",scale={target_w}:{target_h}:flags={sw_flag}" if needs_scale else ""
         video_filter = (
             f"{dda_base},setpts=PTS-STARTPTS,"
-            f"hwdownload,format=bgra{scale_part},format={out_pix_fmt}[v_out];"
+            f"hwdownload,format=bgra{scale_part},format={out_pix_fmt}[v_out]"
         )
 
     if is_nvenc:
@@ -601,12 +799,21 @@ def build_ffmpeg_command(
         else:
             encoder_opts.extend(["-threads", "4"])
 
+    mic_dsp_chain = ""
+    if use_ffmpeg_mic_dsp:
+        mic_dsp_chain, _ = build_ffmpeg_mic_dsp_chain(
+            config,
+            ffmpeg_path,
+            allow_arnndn=allow_arnndn,
+            allow_agate=allow_agate,
+        )
+
     # panフィルタのチャンネル識別子混在エラー(-EINVAL)を防ぐため番号形式(c0,c1...)で統一
     if enable_chat_track:
         audio_filter = (
             "[0:a]aresample=async=1000:first_pts=0,asetpts=N/SR/TB,asplit=3[sys_in][mic_in][chat_in];"
             "[sys_in]pan=stereo|c0=c0|c1=c1[a_sys];"
-            "[mic_in]pan=stereo|c0=c2|c1=c3[a_mic];"
+            f"[mic_in]pan=stereo|c0=c2|c1=c3{mic_dsp_chain}[a_mic];"
             "[chat_in]pan=stereo|c0=c4|c1=c5[a_chat]"
         )
         pipe_channels = "6"
@@ -615,11 +822,10 @@ def build_ffmpeg_command(
         audio_filter = (
             "[0:a]aresample=async=1000:first_pts=0,asetpts=N/SR/TB,asplit=2[sys_in][mic_in];"
             "[sys_in]pan=stereo|c0=c0|c1=c1[a_sys];"
-            "[mic_in]pan=stereo|c0=c2|c1=c3[a_mic]"
+            f"[mic_in]pan=stereo|c0=c2|c1=c3{mic_dsp_chain}[a_mic]"
         )
         pipe_channels = "4"
         pipe_layout = "quad"
-    filter_complex = video_filter + audio_filter
 
     supports_input_tqs, supports_output_tqs = get_thread_queue_size_support(ffmpeg_path)
     tqs_val = "4096" if is_lightweight else "8192"
@@ -663,8 +869,10 @@ def build_ffmpeg_command(
             ])
         cmd.extend(gdi_opts)
 
+    # 映像・音声を独立した-filter_complexに分離し、pipe:0のEOF時に-shortestで確実にグレースフル終了させる
     map_opts = [
-        "-filter_complex", filter_complex,
+        "-filter_complex", video_filter,
+        "-filter_complex", audio_filter,
         "-map", "[v_out]",
         "-map", "[a_sys]",
         "-map", "[a_mic]",
@@ -691,6 +899,7 @@ def build_ffmpeg_command(
         "-c:a", "aac",
         "-b:a", "96k" if is_lightweight else "192k",
         "-ar", "48000",
+        "-shortest",
         temp_filepath,
     ])
     return subprocess.list2cmdline(cmd)

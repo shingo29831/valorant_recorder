@@ -5,19 +5,27 @@ import logging
 import os
 import re
 import subprocess
+import sys
 import threading
 import time
 from typing import Any, Optional
-from core.config import is_compiled_binary
+from core.config import get_app_base_dir, is_compiled_binary
 from recorder.audio_processor_wrapper import (
     ensure_deepfilter_model_async,
     find_or_download_deepfilter_model,
     is_audio_processor_dll_loaded,
 )
+from recorder.python_recorder import get_python_recorder_backend
 
 _REBUILD_LOCK = threading.Lock()
+_BACKEND_STATE_LOCK = threading.RLock()
 _REBUILD_CHECKED = False
 _NATIVE_DLL_LOADED = False
+_CACHED_NATIVE_LIB: Optional[ctypes.CDLL] = None
+_ACTIVE_BACKEND_MODE: str = "unknown"
+_NATIVE_LOAD_ERROR: str = ""
+_NATIVE_BLOCKED_BY_POLICY: bool = False
+_WINERROR_APP_CONTROL_BLOCKED = 4551
 
 
 class RecorderConfig(ctypes.Structure):
@@ -101,65 +109,152 @@ def try_rebuild_native_recorder() -> None:
             logging.warning(f"[FFmpegRecorder] Auto-rebuild check skipped: {e}")
 
 
-def load_native_recorder_dll() -> ctypes.CDLL:
-    base_build_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "cpp", "audio_processor", "build"))
-    possible_paths = [
-        os.path.join(base_build_dir, "Release", "native_recorder.dll"),
-        os.path.join(base_build_dir, "native_recorder.dll"),
-    ]
+def _get_native_dll_candidates() -> list[str]:
+    roots: list[str] = []
+    if hasattr(sys, "_MEIPASS"):
+        roots.append(sys._MEIPASS)
+    roots.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+    try:
+        app_base = get_app_base_dir()
+        if app_base:
+            roots.append(os.path.abspath(app_base))
+    except Exception:
+        pass
 
-    dll_path = next((p for p in possible_paths if os.path.exists(p)), None)
-    if not dll_path:
-        raise FileNotFoundError(
-            f"native_recorder.dll not found in {base_build_dir}. Please ensure C++ build was successful."
-        )
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for root in roots:
+        if not os.path.isdir(root):
+            continue
+        for rel in (
+            os.path.join("cpp", "audio_processor", "build", "Release", "native_recorder.dll"),
+            os.path.join("cpp", "audio_processor", "build", "native_recorder.dll"),
+            os.path.join("bin", "native_recorder.dll"),
+            "native_recorder.dll",
+        ):
+            full_p = os.path.abspath(os.path.join(root, rel))
+            norm = os.path.normcase(full_p)
+            if norm not in seen:
+                seen.add(norm)
+                candidates.append(full_p)
+    return candidates
 
-    dll_dir = os.path.dirname(dll_path)
-    if hasattr(os, "add_dll_directory"):
-        os.add_dll_directory(dll_dir)
 
-    load_with_altered_search_path = 8
-    for dep_dll in ("deep_filter.dll", "libspeexdsp.dll", "audio_processor.dll"):
-        dep_path = os.path.join(dll_dir, dep_dll)
-        if os.path.exists(dep_path):
+def get_recorder_backend_info(probe_if_unknown: bool = False) -> dict[str, Any]:
+    with _BACKEND_STATE_LOCK:
+        if probe_if_unknown and _ACTIVE_BACKEND_MODE == "unknown":
             try:
-                ctypes.CDLL(dep_path, winmode=load_with_altered_search_path)
+                load_recorder_backend()
+            except Exception:
+                pass
+        return {
+            "mode": _ACTIVE_BACKEND_MODE,
+            "native_error": _NATIVE_LOAD_ERROR,
+            "blocked_by_policy": _NATIVE_BLOCKED_BY_POLICY,
+        }
+
+
+def load_native_recorder_dll() -> ctypes.CDLL:
+    global _NATIVE_DLL_LOADED, _CACHED_NATIVE_LIB, _NATIVE_LOAD_ERROR, _NATIVE_BLOCKED_BY_POLICY
+    with _BACKEND_STATE_LOCK:
+        if _CACHED_NATIVE_LIB is not None:
+            return _CACHED_NATIVE_LIB
+
+        possible_paths = _get_native_dll_candidates()
+        dll_path = next((p for p in possible_paths if os.path.exists(p)), None)
+        if not dll_path:
+            _NATIVE_LOAD_ERROR = "native_recorder.dll not found"
+            raise FileNotFoundError(
+                f"native_recorder.dll not found in {possible_paths[:2]}. Please ensure C++ build was successful."
+            )
+
+        dll_dir = os.path.dirname(dll_path)
+        if hasattr(os, "add_dll_directory"):
+            os.add_dll_directory(dll_dir)
+
+        load_with_altered_search_path = 8
+        for dep_dll in ("deep_filter.dll", "libspeexdsp.dll", "audio_processor.dll"):
+            dep_path = os.path.join(dll_dir, dep_dll)
+            if os.path.exists(dep_path):
+                try:
+                    ctypes.CDLL(dep_path, winmode=load_with_altered_search_path)
+                except OSError as e:
+                    if getattr(e, "winerror", None) == _WINERROR_APP_CONTROL_BLOCKED:
+                        _NATIVE_BLOCKED_BY_POLICY = True
+                        _NATIVE_LOAD_ERROR = str(e)
+                        raise RuntimeError(f"Failed to load native recorder module: {e}") from e
+                    logging.warning(f"[FFmpegRecorder] Failed to preload {dep_dll}: {e}")
+                except Exception as e:
+                    logging.warning(f"[FFmpegRecorder] Failed to preload {dep_dll}: {e}")
+            else:
+                logging.warning(f"[FFmpegRecorder] Dependency not found: {dep_path}")
+
+        with _REBUILD_LOCK:
+            try:
+                native_lib = ctypes.CDLL(dll_path, winmode=load_with_altered_search_path)
+                _NATIVE_DLL_LOADED = True
+                _NATIVE_LOAD_ERROR = ""
+                _NATIVE_BLOCKED_BY_POLICY = False
+            except OSError as e:
+                if getattr(e, "winerror", None) == _WINERROR_APP_CONTROL_BLOCKED:
+                    _NATIVE_BLOCKED_BY_POLICY = True
+                _NATIVE_LOAD_ERROR = str(e)
+                logging.warning(f"[FFmpegRecorder] Failed to load native_recorder.dll: {e}")
+                raise RuntimeError(f"Failed to load native recorder module: {e}") from e
             except Exception as e:
-                logging.warning(f"[FFmpegRecorder] Failed to preload {dep_dll}: {e}")
-        else:
-            logging.warning(f"[FFmpegRecorder] Dependency not found: {dep_path}")
+                _NATIVE_LOAD_ERROR = str(e)
+                logging.warning(f"[FFmpegRecorder] Failed to load native_recorder.dll: {e}")
+                raise RuntimeError(f"Failed to load native recorder module: {e}") from e
 
-    global _NATIVE_DLL_LOADED
-    with _REBUILD_LOCK:
+        native_lib.Recorder_Start.argtypes = [ctypes.POINTER(RecorderConfig)]
+        native_lib.Recorder_Start.restype = ctypes.c_bool
+        native_lib.Recorder_Stop.argtypes = []
+        native_lib.Recorder_IsRunning.restype = ctypes.c_bool
+        if hasattr(native_lib, "Recorder_GetStartupState"):
+            native_lib.Recorder_GetStartupState.argtypes = []
+            native_lib.Recorder_GetStartupState.restype = ctypes.c_int32
+        native_lib.Recorder_GetLastError.restype = ctypes.c_char_p
+        if hasattr(native_lib, "Recorder_SetLowPriority"):
+            native_lib.Recorder_SetLowPriority.argtypes = [ctypes.c_bool]
+            native_lib.Recorder_SetLowPriority.restype = None
+        if hasattr(native_lib, "Recorder_GetActualStartTimeMs"):
+            native_lib.Recorder_GetActualStartTimeMs.argtypes = []
+            native_lib.Recorder_GetActualStartTimeMs.restype = ctypes.c_int64
+        if hasattr(native_lib, "Recorder_GetActualEndTimeMs"):
+            native_lib.Recorder_GetActualEndTimeMs.argtypes = []
+            native_lib.Recorder_GetActualEndTimeMs.restype = ctypes.c_int64
+        if hasattr(native_lib, "Recorder_SupportsChatTrack"):
+            native_lib.Recorder_SupportsChatTrack.argtypes = []
+            native_lib.Recorder_SupportsChatTrack.restype = ctypes.c_bool
+
+        _CACHED_NATIVE_LIB = native_lib
+        return native_lib
+
+
+def load_recorder_backend() -> tuple[Any, str]:
+    """ネイティブDLLを優先ロードし、OSポリシー制限(WinError 4551)等で利用不可時はPure Pythonバックエンドへ自動切替する"""
+    global _ACTIVE_BACKEND_MODE
+    with _BACKEND_STATE_LOCK:
+        if _NATIVE_BLOCKED_BY_POLICY:
+            _ACTIVE_BACKEND_MODE = "python"
+            return get_python_recorder_backend(), "python"
         try:
-            native_lib = ctypes.CDLL(dll_path, winmode=load_with_altered_search_path)
-            _NATIVE_DLL_LOADED = True
+            native_lib = load_native_recorder_dll()
+            _ACTIVE_BACKEND_MODE = "native"
+            return native_lib, "native"
         except Exception as e:
-            logging.error(f"[FFmpegRecorder] Failed to load native_recorder.dll: {e}")
-            raise RuntimeError(f"Failed to load native recorder module: {e}")
-
-    native_lib.Recorder_Start.argtypes = [ctypes.POINTER(RecorderConfig)]
-    native_lib.Recorder_Start.restype = ctypes.c_bool
-    native_lib.Recorder_Stop.argtypes = []
-    native_lib.Recorder_IsRunning.restype = ctypes.c_bool
-    if hasattr(native_lib, "Recorder_GetStartupState"):
-        native_lib.Recorder_GetStartupState.argtypes = []
-        native_lib.Recorder_GetStartupState.restype = ctypes.c_int32
-    native_lib.Recorder_GetLastError.restype = ctypes.c_char_p
-    if hasattr(native_lib, "Recorder_SetLowPriority"):
-        native_lib.Recorder_SetLowPriority.argtypes = [ctypes.c_bool]
-        native_lib.Recorder_SetLowPriority.restype = None
-    if hasattr(native_lib, "Recorder_GetActualStartTimeMs"):
-        native_lib.Recorder_GetActualStartTimeMs.argtypes = []
-        native_lib.Recorder_GetActualStartTimeMs.restype = ctypes.c_int64
-    if hasattr(native_lib, "Recorder_GetActualEndTimeMs"):
-        native_lib.Recorder_GetActualEndTimeMs.argtypes = []
-        native_lib.Recorder_GetActualEndTimeMs.restype = ctypes.c_int64
-    if hasattr(native_lib, "Recorder_SupportsChatTrack"):
-        native_lib.Recorder_SupportsChatTrack.argtypes = []
-        native_lib.Recorder_SupportsChatTrack.restype = ctypes.c_bool
-
-    return native_lib
+            _ACTIVE_BACKEND_MODE = "python"
+            if _NATIVE_BLOCKED_BY_POLICY:
+                logging.warning(
+                    "[FFmpegRecorder] native_recorder.dll was blocked by Windows Application Control "
+                    "(Smart App Control / WDAC, WinError 4551). Switching to Pure Python recorder backend."
+                )
+            else:
+                logging.warning(
+                    f"[FFmpegRecorder] Native recorder backend unavailable ({e}). "
+                    "Switching to Pure Python recorder backend."
+                )
+            return get_python_recorder_backend(), "python"
 
 
 def resolve_deepfilter_model_path(denoise_mode: int) -> str:

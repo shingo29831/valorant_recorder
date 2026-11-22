@@ -33,6 +33,21 @@ def generate_diagnostic_report(config, test_errors: list = None) -> str:
     dir_exists = os.path.exists(save_dir) if save_dir else False
     dir_writable = os.access(save_dir, os.W_OK) if dir_exists else False
     lines.append(f"- Save Dir: {save_dir} (Exists: {dir_exists}, Writable: {dir_writable})")
+    try:
+        from recorder.native_bridge import get_recorder_backend_info
+        backend_info = get_recorder_backend_info(probe_if_unknown=True)
+        b_mode = backend_info.get("mode", "unknown")
+        if b_mode == "python" and backend_info.get("blocked_by_policy"):
+            backend_str = "Python Fallback (Native DLL blocked by Application Control / WinError 4551)"
+        elif b_mode == "python" and backend_info.get("native_error"):
+            backend_str = f"Python Fallback ({str(backend_info['native_error'])[:80]})"
+        elif b_mode == "native":
+            backend_str = "Native C++ DLL"
+        else:
+            backend_str = b_mode
+    except Exception:
+        backend_str = "unknown"
+    lines.append(f"- Recorder Backend: {backend_str}")
     lines.append(f"- Encoder: {getattr(config, 'RECORD_ENCODER', 'unknown')}")
     lines.append(f"- Video Format: {getattr(config, 'RECORD_VIDEO_FORMAT', 'unknown')} (Monitor: {getattr(config, 'RECORD_INPUT_SOURCE', 'primary')})")
     lines.append(f"- Res / FPS: {getattr(config, 'RECORD_RESOLUTION', 'unknown')} / {getattr(config, 'RECORD_FPS', 'unknown')}fps")

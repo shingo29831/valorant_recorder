@@ -19,7 +19,10 @@ _VALIDATED_ARCHIVE_LOCK = threading.Lock()
 _ASYNC_DOWNLOAD_LOCK = threading.Lock()
 _ASYNC_DOWNLOAD_IN_PROGRESS = False
 _ASYNC_DOWNLOAD_CALLBACKS: list[Callable[[str], None]] = []
+_AUDIO_PROCESSOR_DLL_LOCK = threading.Lock()
 _AUDIO_PROCESSOR_DLL_LOADED = False
+_AUDIO_PROCESSOR_POLICY_BLOCKED = False
+_WINERROR_APP_CONTROL_BLOCKED = 4551
 
 
 def is_audio_processor_dll_loaded() -> bool:
@@ -252,21 +255,32 @@ def _find_audio_processor_dll(dll_path: Optional[str] = None) -> Optional[str]:
 
 
 def _load_audio_processor_dll(dll_path: str) -> ctypes.CDLL:
-    global _AUDIO_PROCESSOR_DLL_LOADED
-    if platform.system() == "Windows":
-        short_dll_dir = get_short_path_name(os.path.dirname(dll_path))
-        if hasattr(os, "add_dll_directory"):
-            os.add_dll_directory(short_dll_dir)
-        for dep_name in ("deep_filter.dll", "libspeexdsp.dll"):
-            dep_path = os.path.join(short_dll_dir, dep_name)
-            if os.path.exists(dep_path):
-                try:
-                    ctypes.CDLL(dep_path, winmode=0)
-                except Exception as e:
-                    logging.warning(f"[AudioProcessorWrapper] Failed to preload {dep_name}: {e}")
-    lib = ctypes.CDLL(get_short_path_name(dll_path), winmode=0)
-    _AUDIO_PROCESSOR_DLL_LOADED = True
-    return lib
+    global _AUDIO_PROCESSOR_DLL_LOADED, _AUDIO_PROCESSOR_POLICY_BLOCKED
+    with _AUDIO_PROCESSOR_DLL_LOCK:
+        if platform.system() == "Windows":
+            short_dll_dir = get_short_path_name(os.path.dirname(dll_path))
+            if hasattr(os, "add_dll_directory"):
+                os.add_dll_directory(short_dll_dir)
+            for dep_name in ("deep_filter.dll", "libspeexdsp.dll"):
+                dep_path = os.path.join(short_dll_dir, dep_name)
+                if os.path.exists(dep_path):
+                    try:
+                        ctypes.CDLL(dep_path, winmode=0)
+                    except OSError as e:
+                        if getattr(e, "winerror", None) == _WINERROR_APP_CONTROL_BLOCKED:
+                            _AUDIO_PROCESSOR_POLICY_BLOCKED = True
+                            raise
+                        logging.warning(f"[AudioProcessorWrapper] Failed to preload {dep_name}: {e}")
+                    except Exception as e:
+                        logging.warning(f"[AudioProcessorWrapper] Failed to preload {dep_name}: {e}")
+        try:
+            lib = ctypes.CDLL(get_short_path_name(dll_path), winmode=0)
+        except OSError as e:
+            if getattr(e, "winerror", None) == _WINERROR_APP_CONTROL_BLOCKED:
+                _AUDIO_PROCESSOR_POLICY_BLOCKED = True
+            raise
+        _AUDIO_PROCESSOR_DLL_LOADED = True
+        return lib
 
 def get_short_path_name(long_name: str) -> str:
     """
@@ -299,14 +313,18 @@ class AudioProcessorWrapper:
     """
     @classmethod
     def is_available(cls) -> bool:
+        with _AUDIO_PROCESSOR_DLL_LOCK:
+            if _AUDIO_PROCESSOR_DLL_LOADED:
+                return True
+            if _AUDIO_PROCESSOR_POLICY_BLOCKED:
+                return False
         try:
             # main.py非経由の直接呼び出しでも未ロード時1回だけリビルドを済ませてからロード
-            if not _AUDIO_PROCESSOR_DLL_LOADED:
-                try:
-                    from recorder.native_bridge import try_rebuild_native_recorder
-                    try_rebuild_native_recorder()
-                except Exception:
-                    pass
+            try:
+                from recorder.native_bridge import try_rebuild_native_recorder
+                try_rebuild_native_recorder()
+            except Exception:
+                pass
             dll_path = _find_audio_processor_dll()
             if not dll_path:
                 return False
