@@ -9,7 +9,7 @@ import subprocess
 import sys
 import threading
 import time
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 import numpy as np
 
 _STARTUP_IDLE = 0
@@ -526,7 +526,7 @@ def _set_process_priority_windows(pid: int, low_priority: bool) -> None:
         pass
 
 
-def _join_threads_within_budget(threads: list[threading.Thread], total_timeout: float) -> None:
+def _join_threads_within_budget(threads: Sequence[threading.Thread], total_timeout: float) -> None:
     """複数スレッドの直列待ち超過を防ぎ、全体予算内で並列回収する"""
     deadline = time.monotonic() + max(0.0, total_timeout)
     for t in threads:
@@ -716,6 +716,98 @@ class PythonRecorderBackend:
             self._log(f"Optional AudioProcessorWrapper skipped: {e}")
             return None
 
+    @staticmethod
+    def _force_signal_writer_stop(
+        writer_stop: threading.Event, out_pipe_queue: queue.Queue[Optional[bytes]]
+    ) -> None:
+        writer_stop.set()
+        while True:
+            try:
+                out_pipe_queue.put_nowait(None)
+                return
+            except queue.Full:
+                try:
+                    out_pipe_queue.get_nowait()
+                except queue.Empty:
+                    return
+
+    def _cleanup_recording_session(
+        self,
+        my_session_id: int,
+        workers: list[_CaptureWorker],
+        capture_stop: threading.Event,
+        writer_thread: Optional[threading.Thread],
+        log_thread: Optional[threading.Thread],
+        proc: Optional[subprocess.Popen],
+        writer_stop: threading.Event,
+        out_pipe_queue: queue.Queue[Optional[bytes]],
+    ) -> None:
+        """try内複数returnによるNuitkaのfinally複製肥大化・一時変数衝突を防ぐため専用メソッドへ分離"""
+        capture_stop.set()
+        _join_threads_within_budget(workers, 0.40)
+
+        # 停止シグナルで終了するaux_threadsを先に回収し、ハング中のworkerによる予算枯渇を防ぐ
+        pending_threads: list[threading.Thread] = []
+        for w in workers:
+            w.stop_silence_keepalive()
+            pending_threads.extend(w.get_auxiliary_threads())
+        for w in workers:
+            if w.is_alive():
+                pending_threads.append(w)
+        if pending_threads:
+            _join_threads_within_budget(pending_threads, 0.30)
+        lingering = [t for t in pending_threads if t.is_alive()]
+        if lingering:
+            with self._lingering_lock:
+                self._lingering_threads.extend(lingering)
+
+        if writer_thread is not None and writer_thread.is_alive():
+            self._force_signal_writer_stop(writer_stop, out_pipe_queue)
+            writer_thread.join(timeout=0.5)
+
+        if proc is not None:
+            # 独立-filter_complex + -shortest構成により、pipe:0のEOF(stdin.close)のみでMKV末尾まで綺麗に終了できる
+            if (writer_thread is None or not writer_thread.is_alive()) and proc.stdin is not None:
+                try:
+                    proc.stdin.close()
+                except OSError:
+                    pass
+            if proc.poll() is None:
+                try:
+                    proc.wait(timeout=3.0)
+                except subprocess.TimeoutExpired:
+                    self._log("Warning: FFmpeg process did not exit on pipe EOF in time. Terminating...")
+                    try:
+                        proc.terminate()
+                        proc.wait(timeout=1.0)
+                    except Exception:
+                        try:
+                            proc.kill()
+                            proc.wait(timeout=1.0)
+                        except Exception:
+                            pass
+            if writer_thread is not None and writer_thread.is_alive():
+                writer_thread.join(timeout=0.5)
+            if proc.stdin is not None:
+                try:
+                    proc.stdin.close()
+                except OSError:
+                    pass
+            # ログ欠損を防ぐため、プロセス終了後にlog_threadがEOFまで書き切るのを待ってからstdoutを閉じる
+            if log_thread is not None and log_thread.is_alive():
+                log_thread.join(timeout=1.5)
+            if proc.stdout is not None:
+                try:
+                    proc.stdout.close()
+                except OSError:
+                    pass
+
+        with self._process_lock:
+            if self._session_id == my_session_id:
+                self._active_process = None
+        if self._session_id == my_session_id:
+            self._is_running = False
+
     def _recording_loop(self, cfg: dict[str, Any], my_session_id: int) -> None:
         proc: Optional[subprocess.Popen] = None
         log_thread: Optional[threading.Thread] = None
@@ -725,18 +817,6 @@ class PythonRecorderBackend:
         workers: list[_CaptureWorker] = []
         # asetpts=N/SR/TBのため出力音声は破棄せず10秒分の十分なキューでバックプレッシャー制御する
         out_pipe_queue: queue.Queue[Optional[bytes]] = queue.Queue(maxsize=500)
-
-        def _force_signal_writer_stop() -> None:
-            writer_stop.set()
-            while True:
-                try:
-                    out_pipe_queue.put_nowait(None)
-                    return
-                except queue.Full:
-                    try:
-                        out_pipe_queue.get_nowait()
-                    except queue.Empty:
-                        return
 
         try:
             chat_enabled = cfg["chat_enabled"]
@@ -1045,7 +1125,7 @@ class PythonRecorderBackend:
                 try:
                     out_pipe_queue.put(None, timeout=0.5)
                 except queue.Full:
-                    _force_signal_writer_stop()
+                    self._force_signal_writer_stop(writer_stop, out_pipe_queue)
                 writer_thread.join(timeout=1.5)
 
             self._actual_end_time_ms = int(time.time() * 1000)
@@ -1056,69 +1136,16 @@ class PythonRecorderBackend:
                 self._startup_state = _STARTUP_FAILED
             self._is_running = False
         finally:
-            capture_stop.set()
-            _join_threads_within_budget(workers, 0.40)
-
-            # record()ブロック残留時でもサイレント再生スレッドを必ず停止し、未回収スレッドを追跡してWASAPI競合を防ぐ
-            still_alive_workers = [w for w in workers if w.is_alive()]
-            for w in workers:
-                w.stop_silence_keepalive()
-            aux_threads: list[threading.Thread] = []
-            for w in workers:
-                aux_threads.extend(w.get_auxiliary_threads())
-            if still_alive_workers or aux_threads:
-                _join_threads_within_budget(still_alive_workers + aux_threads, 0.30)
-            lingering = [t for t in (still_alive_workers + aux_threads) if t is not None and t.is_alive()]
-            if lingering:
-                with self._lingering_lock:
-                    self._lingering_threads.extend(lingering)
-
-            if writer_thread is not None and writer_thread.is_alive():
-                _force_signal_writer_stop()
-                writer_thread.join(timeout=0.5)
-
-            if proc is not None:
-                # 独立-filter_complex + -shortest構成により、pipe:0のEOF(stdin.close)のみでMKV末尾まで綺麗に終了できる
-                if (writer_thread is None or not writer_thread.is_alive()) and proc.stdin is not None:
-                    try:
-                        proc.stdin.close()
-                    except OSError:
-                        pass
-                if proc.poll() is None:
-                    try:
-                        proc.wait(timeout=3.0)
-                    except subprocess.TimeoutExpired:
-                        self._log("Warning: FFmpeg process did not exit on pipe EOF in time. Terminating...")
-                        try:
-                            proc.terminate()
-                            proc.wait(timeout=1.0)
-                        except Exception:
-                            try:
-                                proc.kill()
-                                proc.wait(timeout=1.0)
-                            except Exception:
-                                pass
-                if writer_thread is not None and writer_thread.is_alive():
-                    writer_thread.join(timeout=0.5)
-                if proc.stdin is not None:
-                    try:
-                        proc.stdin.close()
-                    except OSError:
-                        pass
-                # ログ欠損を防ぐため、プロセス終了後にlog_threadがEOFまで書き切るのを待ってからstdoutを閉じる
-                if log_thread is not None and log_thread.is_alive():
-                    log_thread.join(timeout=1.5)
-                if proc.stdout is not None:
-                    try:
-                        proc.stdout.close()
-                    except OSError:
-                        pass
-
-            with self._process_lock:
-                if self._session_id == my_session_id:
-                    self._active_process = None
-            if self._session_id == my_session_id:
-                self._is_running = False
+            self._cleanup_recording_session(
+                my_session_id=my_session_id,
+                workers=workers,
+                capture_stop=capture_stop,
+                writer_thread=writer_thread,
+                log_thread=log_thread,
+                proc=proc,
+                writer_stop=writer_stop,
+                out_pipe_queue=out_pipe_queue,
+            )
 
 
 _SHARED_PYTHON_BACKEND: Optional[PythonRecorderBackend] = None
