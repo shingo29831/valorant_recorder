@@ -28,6 +28,7 @@ class PlayerClipController(QObject):
         zoom_out_btn: QPushButton,
         notification: InAppNotification,
         format_time_fn: Callable[[int], str],
+        on_close_sync_panel: Optional[Callable[[], None]] = None,
         parent: Optional[QObject] = None,
     ) -> None:
         super().__init__(parent)
@@ -41,6 +42,7 @@ class PlayerClipController(QObject):
         self.zoom_out_btn = zoom_out_btn
         self.notification = notification
         self.format_time = format_time_fn
+        self._on_close_sync_panel = on_close_sync_panel
 
         self.clip_start_ms: int = 0
         self.clip_end_ms: int = 0
@@ -66,6 +68,8 @@ class PlayerClipController(QObject):
         self.zoom_in_btn.setVisible(not is_visible)
 
         if not is_visible:
+            if self._on_close_sync_panel is not None:
+                self._on_close_sync_panel()
             self.clip_start_ms = self.player_core.position()
             self.clip_end_ms = min(self.player_core.duration(), self.clip_start_ms + 30000)
             self.update_clip_labels()
@@ -81,6 +85,10 @@ class PlayerClipController(QObject):
             self.timeline_overlay.set_edit_mode(False)
             self.edit_mode_btn.setStyleSheet("border-radius: 20px; background-color: #333333;")
             self.timeline_overlay.set_zoom(1.0)
+
+    def close_edit_mode(self) -> None:
+        if self.edit_panel.isVisible():
+            self.toggle_edit_mode()
 
     def set_clip_start(self) -> None:
         self.clip_start_ms = self.player_core.position()
