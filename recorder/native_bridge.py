@@ -72,6 +72,12 @@ def try_rebuild_native_recorder() -> None:
                 os.path.join(base_dir, "WasapiCapture.h"),
                 os.path.join(base_dir, "AudioProcessor.cpp"),
                 os.path.join(base_dir, "AudioProcessor.h"),
+                os.path.join(base_dir, "AudioProcessorUtils.h"),
+                os.path.join(base_dir, "AudioProcessorLifecycle.cpp"),
+                os.path.join(base_dir, "AudioProcessorDfAnalysis.cpp"),
+                os.path.join(base_dir, "AudioProcessorDeepFilter.cpp"),
+                os.path.join(base_dir, "DeepFilterProbe.cpp"),
+                os.path.join(base_dir, "DeepFilterProbe.h"),
             ]
             build_dir = os.path.join(base_dir, "build")
             dll_paths = [

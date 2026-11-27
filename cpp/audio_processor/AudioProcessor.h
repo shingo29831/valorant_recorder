@@ -134,6 +134,11 @@ private:
     bool is_deepfilter_active_unlocked() const;
     float compute_voiced_periodicity() const;
     float effective_noise_floor() const;
+    void analyze_df_frame_input(const float* frame_samples, const float* next_frame_samples,
+                                size_t df_hop, float inv_hop, float& out_in_rms,
+                                float& out_in_peak, float& out_next_peak, float& out_sc_mean_energy);
+    void update_df_noise_and_speech_state(float in_rms, float sc_mean_energy, float lsnr,
+                                          float frame_dt_sec, float& periodicity);
     void process_df_frame(const float* frame_samples, const float* next_frame_samples,
                           size_t df_hop, float frame_dt_sec, float inv_hop, bool& df_corrupted);
 

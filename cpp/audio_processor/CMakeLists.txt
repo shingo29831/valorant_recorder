@@ -12,6 +12,12 @@ endif()
 add_library(audio_processor SHARED
     AudioProcessor.cpp
     AudioProcessor.h
+    AudioProcessorUtils.h
+    AudioProcessorLifecycle.cpp
+    AudioProcessorDfAnalysis.cpp
+    AudioProcessorDeepFilter.cpp
+    DeepFilterProbe.cpp
+    DeepFilterProbe.h
 )
 
 # 新しい録画コア (DLL)
