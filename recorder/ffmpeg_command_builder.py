@@ -1,631 +1,190 @@
 """Module: @role: 録画設定とエンコーダ特性に応じたFFmpegコマンドラインおよびフィルタグラフを構築するモジュール"""
-import ctypes
-from dataclasses import dataclass
-import logging
 import os
-import re
-import shutil
 import subprocess
-import threading
-import time
-from typing import List, Optional
-from core.config import Config, get_app_base_dir, get_app_data_dir
-from recorder.audio_processor_wrapper import get_short_path_name
-from recorder.ffmpeg_downloader import (
-    ensure_rnnoise_model_async,
-    ensure_rnnoise_model_downloaded,
-    is_valid_rnnoise_model,
+from typing import Optional
+
+from core.config import Config
+from recorder.ffmpeg_mic_dsp import (
+    build_ffmpeg_mic_dsp_chain,
+    resolve_rnnoise_filter,
+)
+from recorder.ffmpeg_probe import (
+    get_thread_queue_size_support,
+    is_ffmpeg_filter_known_supported,
+    probe_ffmpeg_filters_async,
+    resolve_ffmpeg_path,
+    supports_arnndn_filter,
+    supports_ffmpeg_filter,
+)
+from recorder.monitor_resolver import (
+    MonitorInfo,
+    get_desktop_resolution,
+    get_monitors,
+    parse_target_resolution,
+    resolve_target_monitor,
 )
 
-_DISPLAY_DEVICE_ATTACHED_TO_DESKTOP = 0x00000001
-_DISPLAY_DEVICE_PRIMARY_DEVICE = 0x00000004
-_ENUM_CURRENT_SETTINGS = 0xFFFFFFFF
+__all__ = [
+    "MonitorInfo",
+    "build_ffmpeg_command",
+    "build_ffmpeg_mic_dsp_chain",
+    "get_desktop_resolution",
+    "get_monitors",
+    "get_thread_queue_size_support",
+    "is_ffmpeg_filter_known_supported",
+    "parse_target_resolution",
+    "probe_ffmpeg_filters_async",
+    "resolve_ffmpeg_path",
+    "resolve_rnnoise_filter",
+    "resolve_target_monitor",
+    "supports_arnndn_filter",
+    "supports_ffmpeg_filter",
+]
 
-
-@dataclass(frozen=True)
-class MonitorInfo:
-    index: int
-    device_name: str
-    friendly_name: str
-    adapter_idx: int
-    output_idx: int
-    x: int
-    y: int
-    width: int
-    height: int
-    is_primary: bool
-
-
-if os.name == "nt":
-    class _DISPLAY_DEVICEW(ctypes.Structure):
-        _fields_ = [
-            ("cb", ctypes.c_ulong),
-            ("DeviceName", ctypes.c_wchar * 32),
-            ("DeviceString", ctypes.c_wchar * 128),
-            ("StateFlags", ctypes.c_ulong),
-            ("DeviceID", ctypes.c_wchar * 128),
-            ("DeviceKey", ctypes.c_wchar * 128),
-        ]
-
-    class _DEVMODEW(ctypes.Structure):
-        _fields_ = [
-            ("dmDeviceName", ctypes.c_wchar * 32),
-            ("dmSpecVersion", ctypes.c_ushort),
-            ("dmDriverVersion", ctypes.c_ushort),
-            ("dmSize", ctypes.c_ushort),
-            ("dmDriverExtra", ctypes.c_ushort),
-            ("dmFields", ctypes.c_ulong),
-            ("dmPosition_x", ctypes.c_long),
-            ("dmPosition_y", ctypes.c_long),
-            ("dmDisplayOrientation", ctypes.c_ulong),
-            ("dmDisplayFixedOutput", ctypes.c_ulong),
-            ("dmColor", ctypes.c_short),
-            ("dmDuplex", ctypes.c_short),
-            ("dmYResolution", ctypes.c_short),
-            ("dmTTOption", ctypes.c_short),
-            ("dmCollate", ctypes.c_short),
-            ("dmFormName", ctypes.c_wchar * 32),
-            ("dmLogPixels", ctypes.c_ushort),
-            ("dmBitsPerPel", ctypes.c_ulong),
-            ("dmPelsWidth", ctypes.c_ulong),
-            ("dmPelsHeight", ctypes.c_ulong),
-            ("dmDisplayFlags", ctypes.c_ulong),
-            ("dmDisplayFrequency", ctypes.c_ulong),
-            ("dmICMMethod", ctypes.c_ulong),
-            ("dmICMIntent", ctypes.c_ulong),
-            ("dmMediaType", ctypes.c_ulong),
-            ("dmDitherType", ctypes.c_ulong),
-            ("dmReserved1", ctypes.c_ulong),
-            ("dmReserved2", ctypes.c_ulong),
-            ("dmPanningWidth", ctypes.c_ulong),
-            ("dmPanningHeight", ctypes.c_ulong),
-        ]
-
-    class _RECT(ctypes.Structure):
-        _fields_ = [
-            ("left", ctypes.c_long),
-            ("top", ctypes.c_long),
-            ("right", ctypes.c_long),
-            ("bottom", ctypes.c_long),
-        ]
-
-    class _DXGI_OUTPUT_DESC(ctypes.Structure):
-        _fields_ = [
-            ("DeviceName", ctypes.c_wchar * 32),
-            ("DesktopCoordinates", _RECT),
-            ("AttachedToDesktop", ctypes.c_int),
-            ("Rotation", ctypes.c_int),
-            ("Monitor", ctypes.c_void_p),
-        ]
-
-    class _GUID(ctypes.Structure):
-        _fields_ = [
-            ("Data1", ctypes.c_ulong),
-            ("Data2", ctypes.c_ushort),
-            ("Data3", ctypes.c_ushort),
-            ("Data4", ctypes.c_ubyte * 8),
-        ]
-
-
-def _query_dxgi_output_map() -> dict[str, tuple[int, int, int, int, int, int]]:
-    """DXGIを走査し DeviceName -> (adapter_idx, output_idx, x, y, w, h) の対応表を返す"""
-    if os.name != "nt":
-        return {}
-    result: dict[str, tuple[int, int, int, int, int, int]] = {}
-    try:
-        dxgi = ctypes.windll.LoadLibrary("dxgi.dll")
-        create_factory = dxgi.CreateDXGIFactory1
-        create_factory.argtypes = [ctypes.POINTER(_GUID), ctypes.POINTER(ctypes.c_void_p)]
-        create_factory.restype = ctypes.c_long
-
-        iid_factory1 = _GUID(
-            0x770AAE78,
-            0xF26F,
-            0x4DBA,
-            (ctypes.c_ubyte * 8)(0xA8, 0x29, 0x25, 0x3C, 0x83, 0xD1, 0xB3, 0x87),
+def _build_video_filter(
+    use_gdigrab: bool,
+    use_d3d11_direct: bool,
+    use_qsv_gpu_scale: bool,
+    output_idx: str,
+    fps: str,
+    target_w: int,
+    target_h: int,
+    needs_scale: bool,
+    sw_flag: str,
+    out_pix_fmt: str,
+) -> str:
+    # 画面静止時のフレーム枯渇とPTS乖離による多重化キュー溢れを防ぐためdup_framesと0起点PTS正規化を適用
+    dda_base = f"ddagrab=output_idx={output_idx}:framerate={fps}:draw_mouse=1:dup_frames=1"
+    if use_gdigrab:
+        scale_part = f"scale={target_w}:{target_h}:flags={sw_flag}," if needs_scale else ""
+        return f"[1:v]setpts=PTS-STARTPTS,{scale_part}format={out_pix_fmt}[v_out]"
+    if use_d3d11_direct:
+        d3d_scale = f",scale_d3d11=w={target_w}:h={target_h}" if needs_scale else ""
+        return f"{dda_base},setpts=PTS-STARTPTS{d3d_scale}[v_out]"
+    if use_qsv_gpu_scale:
+        d3d_scale = f",scale_d3d11=w={target_w}:h={target_h}" if needs_scale else ""
+        return (
+            f"{dda_base},setpts=PTS-STARTPTS{d3d_scale},"
+            f"hwdownload,format=bgra,format=nv12[v_out]"
         )
-        factory_ptr = ctypes.c_void_p()
-        if create_factory(ctypes.byref(iid_factory1), ctypes.byref(factory_ptr)) < 0 or not factory_ptr.value:
-            return {}
+    scale_part = f",scale={target_w}:{target_h}:flags={sw_flag}" if needs_scale else ""
+    return (
+        f"{dda_base},setpts=PTS-STARTPTS,"
+        f"hwdownload,format=bgra{scale_part},format={out_pix_fmt}[v_out]"
+    )
 
-        ptr_size = ctypes.sizeof(ctypes.c_void_p)
-        release_proto = ctypes.WINFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p)
-        enum_adapters_proto = ctypes.WINFUNCTYPE(
-            ctypes.c_long, ctypes.c_void_p, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p)
-        )
-        enum_outputs_proto = ctypes.WINFUNCTYPE(
-            ctypes.c_long, ctypes.c_void_p, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p)
-        )
-        get_desc_proto = ctypes.WINFUNCTYPE(
-            ctypes.c_long, ctypes.c_void_p, ctypes.POINTER(_DXGI_OUTPUT_DESC)
-        )
+def _build_encoder_options(
+    actual_encoder: str,
+    is_lightweight: bool,
+    is_high_bandwidth: bool,
+    gop_size: str,
+) -> list[str]:
+    enc_lower = actual_encoder.lower()
+    is_nvenc = "nvenc" in enc_lower
+    is_amf = "amf" in enc_lower
+    is_qsv = "qsv" in enc_lower
 
-        def _get_vfunc(com_ptr: ctypes.c_void_p, vtbl_idx: int, proto):
-            vtbl = ctypes.cast(com_ptr, ctypes.POINTER(ctypes.c_void_p)).contents.value
-            func_addr = ctypes.cast(vtbl + vtbl_idx * ptr_size, ctypes.POINTER(ctypes.c_void_p)).contents.value
-            return proto(func_addr)
+    if is_nvenc:
+        nv_preset = "p1" if is_lightweight else "p3"
+        nv_tune = "ull" if is_lightweight else "ll"
+        nv_cq = "26" if is_lightweight else "20"
+        nv_maxrate = "8M" if is_lightweight else ("30M" if is_high_bandwidth else "20M")
+        nv_bufsize = "16M" if is_lightweight else ("60M" if is_high_bandwidth else "40M")
+        opts = [
+            "-c:v", actual_encoder,
+            "-preset", nv_preset,
+            "-tune", nv_tune,
+            "-rc", "vbr",
+            "-cq", nv_cq,
+            "-b:v", "0",
+            "-maxrate", nv_maxrate,
+            "-bufsize", nv_bufsize,
+            "-bf", "0",
+            "-delay", "0",
+            "-zerolatency", "1",
+            "-g", gop_size,
+            "-keyint_min", gop_size,
+            "-forced-idr", "1",
+        ]
+        if is_lightweight:
+            opts.extend(["-spatial-aq", "0", "-temporal-aq", "0", "-rc-lookahead", "0", "-no-scenecut", "1"])
+        return opts
 
-        try:
-            enum_adapters1 = _get_vfunc(factory_ptr, 12, enum_adapters_proto)
-            adapter_idx = 0
-            while True:
-                adapter_ptr = ctypes.c_void_p()
-                if enum_adapters1(factory_ptr, adapter_idx, ctypes.byref(adapter_ptr)) < 0 or not adapter_ptr.value:
-                    break
-                try:
-                    enum_outputs = _get_vfunc(adapter_ptr, 7, enum_outputs_proto)
-                    output_idx = 0
-                    while True:
-                        output_ptr = ctypes.c_void_p()
-                        if enum_outputs(adapter_ptr, output_idx, ctypes.byref(output_ptr)) < 0 or not output_ptr.value:
-                            break
-                        try:
-                            get_desc = _get_vfunc(output_ptr, 7, get_desc_proto)
-                            desc = _DXGI_OUTPUT_DESC()
-                            if get_desc(output_ptr, ctypes.byref(desc)) >= 0 and desc.DeviceName:
-                                r = desc.DesktopCoordinates
-                                w = max(0, int(r.right - r.left))
-                                h = max(0, int(r.bottom - r.top))
-                                result[desc.DeviceName.upper()] = (
-                                    adapter_idx,
-                                    output_idx,
-                                    int(r.left),
-                                    int(r.top),
-                                    w,
-                                    h,
-                                )
-                        finally:
-                            _get_vfunc(output_ptr, 2, release_proto)(output_ptr)
-                        output_idx += 1
-                finally:
-                    _get_vfunc(adapter_ptr, 2, release_proto)(adapter_ptr)
-                adapter_idx += 1
-        finally:
-            _get_vfunc(factory_ptr, 2, release_proto)(factory_ptr)
-    except Exception as e:
-        logging.debug(f"[FFmpegCommandBuilder] DXGI output enumeration fallback: {e}")
-    return result
+    if is_amf:
+        amf_usage = "ultralowlatency" if is_lightweight else "lowlatency"
+        amf_quality = "speed" if is_lightweight else "balanced"
+        amf_rc = "vbr_latency" if is_lightweight else "vbr_peak"
+        amf_br = "6M" if is_lightweight else ("20M" if is_high_bandwidth else "14M")
+        amf_max = "8M" if is_lightweight else ("30M" if is_high_bandwidth else "20M")
+        amf_buf = "16M" if is_lightweight else ("60M" if is_high_bandwidth else "40M")
+        opts = [
+            "-c:v", actual_encoder,
+            "-usage", amf_usage,
+            "-quality", amf_quality,
+            "-rc", amf_rc,
+            "-b:v", amf_br,
+            "-maxrate", amf_max,
+            "-bufsize", amf_buf,
+            "-g", gop_size,
+        ]
+        if enc_lower == "h264_amf":
+            opts.extend(["-bf", "0"])
+        return opts
 
-
-def get_monitors() -> List[MonitorInfo]:
-    """システムに接続されている有効なモニター一覧を返す"""
-    if os.name != "nt":
+    if is_qsv:
+        qsv_preset = "veryfast" if is_lightweight else "fast"
+        qsv_br = "6M" if is_lightweight else ("20M" if is_high_bandwidth else "14M")
+        qsv_max = "8M" if is_lightweight else ("30M" if is_high_bandwidth else "20M")
+        qsv_buf = "16M" if is_lightweight else ("60M" if is_high_bandwidth else "40M")
         return [
-            MonitorInfo(
-                index=0,
-                device_name=r"\\.\DISPLAY1",
-                friendly_name="Primary Monitor",
-                adapter_idx=0,
-                output_idx=0,
-                x=0,
-                y=0,
-                width=1920,
-                height=1080,
-                is_primary=True,
-            )
+            "-c:v", actual_encoder,
+            "-preset", qsv_preset,
+            "-async_depth", "1" if is_lightweight else "4",
+            "-b:v", qsv_br,
+            "-maxrate", qsv_max,
+            "-bufsize", qsv_buf,
+            "-bf", "0",
+            "-g", gop_size,
         ]
 
-    dxgi_map = _query_dxgi_output_map()
-    monitors: List[MonitorInfo] = []
-    try:
-        user32 = ctypes.windll.user32
-        enum_devices = user32.EnumDisplayDevicesW
-        enum_devices.argtypes = [ctypes.c_wchar_p, ctypes.c_ulong, ctypes.POINTER(_DISPLAY_DEVICEW), ctypes.c_ulong]
-        enum_devices.restype = ctypes.c_int
-
-        enum_settings = user32.EnumDisplaySettingsExW
-        enum_settings.argtypes = [ctypes.c_wchar_p, ctypes.c_ulong, ctypes.POINTER(_DEVMODEW), ctypes.c_ulong]
-        enum_settings.restype = ctypes.c_int
-
-        adapter_output_counters: dict[str, int] = {}
-        dev_idx = 0
-        while True:
-            dd = _DISPLAY_DEVICEW()
-            dd.cb = ctypes.sizeof(_DISPLAY_DEVICEW)
-            if not enum_devices(None, dev_idx, ctypes.byref(dd), 0):
-                break
-            dev_idx += 1
-
-            if not (dd.StateFlags & _DISPLAY_DEVICE_ATTACHED_TO_DESKTOP):
-                continue
-
-            dev_name = dd.DeviceName.strip()
-            is_primary = bool(dd.StateFlags & _DISPLAY_DEVICE_PRIMARY_DEVICE)
-
-            mon_dd = _DISPLAY_DEVICEW()
-            mon_dd.cb = ctypes.sizeof(_DISPLAY_DEVICEW)
-            friendly = ""
-            if enum_devices(dev_name, 0, ctypes.byref(mon_dd), 0):
-                friendly = mon_dd.DeviceString.strip()
-            if not friendly:
-                friendly = dd.DeviceString.strip() or f"Display {len(monitors) + 1}"
-
-            dxgi_entry = dxgi_map.get(dev_name.upper())
-            if dxgi_entry is not None:
-                adapter_idx, output_idx, dx_x, dx_y, dx_w, dx_h = dxgi_entry
-            else:
-                gpu_key = dd.DeviceString.strip() or "default_adapter"
-                output_idx = adapter_output_counters.get(gpu_key, 0)
-                adapter_output_counters[gpu_key] = output_idx + 1
-                adapter_idx = 0
-                dx_x, dx_y, dx_w, dx_h = 0, 0, 0, 0
-
-            dm = _DEVMODEW()
-            dm.dmSize = ctypes.sizeof(_DEVMODEW)
-            if enum_settings(dev_name, _ENUM_CURRENT_SETTINGS, ctypes.byref(dm), 0) and dm.dmPelsWidth > 0 and dm.dmPelsHeight > 0:
-                x = int(dm.dmPosition_x)
-                y = int(dm.dmPosition_y)
-                width = int(dm.dmPelsWidth)
-                height = int(dm.dmPelsHeight)
-            elif dx_w > 0 and dx_h > 0:
-                x, y, width, height = dx_x, dx_y, dx_w, dx_h
-            else:
-                x, y = 0, 0
-                width = int(user32.GetSystemMetrics(0)) or 1920
-                height = int(user32.GetSystemMetrics(1)) or 1080
-
-            monitors.append(
-                MonitorInfo(
-                    index=len(monitors),
-                    device_name=dev_name,
-                    friendly_name=friendly,
-                    adapter_idx=adapter_idx,
-                    output_idx=output_idx,
-                    x=x,
-                    y=y,
-                    width=width,
-                    height=height,
-                    is_primary=is_primary,
-                )
-            )
-    except Exception as e:
-        logging.warning(f"[FFmpegCommandBuilder] Failed to enumerate monitors: {e}")
-
-    if not monitors:
-        w, h = 1920, 1080
-        try:
-            user32 = ctypes.windll.user32
-            w = int(user32.GetSystemMetrics(0)) or 1920
-            h = int(user32.GetSystemMetrics(1)) or 1080
-        except Exception:
-            pass
-        monitors.append(
-            MonitorInfo(
-                index=0,
-                device_name=r"\\.\DISPLAY1",
-                friendly_name="Primary Monitor",
-                adapter_idx=0,
-                output_idx=0,
-                x=0,
-                y=0,
-                width=w,
-                height=h,
-                is_primary=True,
-            )
-        )
-    return monitors
-
-
-def resolve_target_monitor(config: Optional[Config] = None) -> MonitorInfo:
-    """設定値(RECORD_INPUT_SOURCE)から録画対象の単一モニターを解決する（デフォルトはメインモニター）"""
-    monitors = get_monitors()
-    primary_mon = next((m for m in monitors if m.is_primary), monitors[0])
-    if config is None:
-        return primary_mon
-
-    raw_src = str(getattr(config, "RECORD_INPUT_SOURCE", "primary") or "primary").strip()
-    src_lower = raw_src.lower()
-
-    if src_lower in ("", "primary", "desktop", "default"):
-        return primary_mon
-
-    for m in monitors:
-        if m.device_name.lower() == src_lower:
-            return m
-        short_dev = m.device_name.split("\\")[-1].lower()
-        if short_dev == src_lower:
-            return m
-
-    idx_str = ""
-    if raw_src.isdigit():
-        idx_str = raw_src
-    elif src_lower.startswith("output_idx="):
-        idx_str = raw_src.split("=", 1)[1].strip()
-    elif src_lower.startswith("monitor:"):
-        idx_str = raw_src.split(":", 1)[1].strip()
-
-    if idx_str.isdigit():
-        target_idx = int(idx_str)
-        for m in monitors:
-            if m.index == target_idx:
-                return m
-        for m in monitors:
-            if m.output_idx == target_idx:
-                return m
-
-    return primary_mon
-
-
-def get_desktop_resolution(config: Optional[Config] = None) -> tuple[int, int]:
-    mon = resolve_target_monitor(config)
-    if mon.width > 0 and mon.height > 0:
-        return mon.width, mon.height
-    return 1920, 1080
-
-
-def parse_target_resolution(config: Config) -> tuple[int, int]:
-    res_str = str(getattr(config, "RECORD_RESOLUTION", "1920x1080"))
-    try:
-        parts = res_str.lower().split("x")
-        if len(parts) == 2:
-            w = (int(parts[0]) // 2) * 2
-            h = (int(parts[1]) // 2) * 2
-            if w > 0 and h > 0:
-                return w, h
-    except Exception:
-        pass
-    return 1920, 1080
-
-
-_TQS_CACHE_LOCK = threading.Lock()
-_THREAD_QUEUE_SIZE_SUPPORT_CACHE: dict[str, tuple[bool, bool]] = {}
-_FFMPEG_FILTERS_LOCK = threading.Lock()
-_FFMPEG_FILTERS_CACHE: dict[str, set[str]] = {}
-_FFMPEG_FILTERS_PROBING: set[str] = set()
-_FFMPEG_FILTERS_FAIL_UNTIL: dict[str, float] = {}
-_FFMPEG_FILTER_FAIL_COOLDOWN_SEC = 5.0
-
-
-def resolve_ffmpeg_path() -> Optional[str]:
-    """AppData・実行ディレクトリ・プロジェクト配下・PATHからFFmpeg実行ファイルを汎用解決する"""
-    exe_name = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    candidates = [
-        os.path.join(get_app_data_dir(), "bin", exe_name),
-        os.path.join(get_app_base_dir(), "bin", exe_name),
-        os.path.join(project_root, "bin", exe_name),
+    sw_max = "6M" if is_lightweight else ("22M" if is_high_bandwidth else "15M")
+    sw_buf = "12M" if is_lightweight else ("44M" if is_high_bandwidth else "30M")
+    opts = [
+        "-c:v", actual_encoder,
+        "-preset", "ultrafast",
+        "-tune", "zerolatency",
+        "-crf", "28" if is_lightweight else "23",
+        "-maxrate", sw_max,
+        "-bufsize", sw_buf,
+        "-g", gop_size,
+        "-keyint_min", gop_size,
     ]
-    for path in candidates:
-        if path and os.path.isfile(path):
-            return path
-    return shutil.which("ffmpeg")
+    if is_lightweight:
+        opts.extend([
+            "-threads", "2",
+            "-x264-params", "sliced-threads=0:sync-lookahead=0:rc-lookahead=0:ref=1:subme=0:me=dia:trellis=0",
+        ])
+    else:
+        opts.extend(["-threads", "4"])
+    return opts
 
-
-def _norm_path_key(path: str) -> str:
-    return os.path.normcase(os.path.abspath(path)) if path else ""
-
-
-def is_ffmpeg_filter_known_supported(ffmpeg_path: str, filter_name: str) -> Optional[bool]:
-    """キャッシュ済みであれば非ブロックでフィルタ対応可否を返し、未計測ならNoneを返す"""
-    if not ffmpeg_path or not filter_name:
-        return False
-    key = _norm_path_key(ffmpeg_path)
-    with _FFMPEG_FILTERS_LOCK:
-        cached = _FFMPEG_FILTERS_CACHE.get(key)
-    if cached is None:
-        return None
-    return filter_name.lower() in cached
-
-
-def probe_ffmpeg_filters_async(ffmpeg_path: str) -> None:
-    """UI・モニタースレッドをブロックしないよう裏スレッドでFFmpegフィルタ一覧を事前キャッシュする"""
-    if not ffmpeg_path or not os.path.exists(ffmpeg_path):
-        return
-    key = _norm_path_key(ffmpeg_path)
-    now = time.monotonic()
-    with _FFMPEG_FILTERS_LOCK:
-        if key in _FFMPEG_FILTERS_CACHE or key in _FFMPEG_FILTERS_PROBING:
-            return
-        if now < _FFMPEG_FILTERS_FAIL_UNTIL.get(key, 0.0):
-            return
-        _FFMPEG_FILTERS_PROBING.add(key)
-
-    def _worker() -> None:
-        try:
-            supports_ffmpeg_filter(ffmpeg_path, "arnndn")
-        finally:
-            with _FFMPEG_FILTERS_LOCK:
-                _FFMPEG_FILTERS_PROBING.discard(key)
-
-    threading.Thread(target=_worker, name="FFmpegFilterProbe", daemon=True).start()
-
-
-def supports_ffmpeg_filter(ffmpeg_path: str, filter_name: str) -> bool:
-    """FFmpegビルドが指定フィルタをサポートしているかスレッドセーフに判定する（一時失敗は永続キャッシュしない）"""
-    if not ffmpeg_path or not os.path.exists(ffmpeg_path) or not filter_name:
-        return False
-    key = _norm_path_key(ffmpeg_path)
-    with _FFMPEG_FILTERS_LOCK:
-        cached = _FFMPEG_FILTERS_CACHE.get(key)
-        if cached is not None:
-            return filter_name.lower() in cached
-        if time.monotonic() < _FFMPEG_FILTERS_FAIL_UNTIL.get(key, 0.0):
-            return False
-
-    creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-    found: set[str] = set()
-    probe_succeeded = False
-    try:
-        res = subprocess.run(
-            [ffmpeg_path, "-hide_banner", "-filters"],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            creationflags=creationflags,
-            timeout=5.0,
+def _build_audio_filter(enable_chat_track: bool, mic_dsp_chain: str) -> tuple[str, str, str]:
+    # panフィルタのチャンネル識別子混在エラー(-EINVAL)を防ぐため番号形式(c0,c1...)で統一
+    if enable_chat_track:
+        audio_filter = (
+            "[0:a]aresample=async=1000:first_pts=0,asetpts=N/SR/TB,asplit=3[sys_in][mic_in][chat_in];"
+            "[sys_in]pan=stereo|c0=c0|c1=c1[a_sys];"
+            f"[mic_in]pan=stereo|c0=c2|c1=c3{mic_dsp_chain}[a_mic];"
+            "[chat_in]pan=stereo|c0=c4|c1=c5[a_chat]"
         )
-        if res.returncode == 0 and res.stdout:
-            out_text = res.stdout.decode("utf-8", errors="replace")
-            for line in out_text.splitlines():
-                m = re.match(r"^\s*[T.S.C.]+\s+([A-Za-z0-9_]+)\s+", line)
-                if m:
-                    found.add(m.group(1).lower())
-            probe_succeeded = len(found) > 0
-    except Exception:
-        probe_succeeded = False
+        return audio_filter, "6", "5.1"
 
-    with _FFMPEG_FILTERS_LOCK:
-        if probe_succeeded:
-            _FFMPEG_FILTERS_CACHE[key] = found
-            _FFMPEG_FILTERS_FAIL_UNTIL.pop(key, None)
-        else:
-            # タイムアウト等の一時失敗で空集合を永続キャッシュしてフィルタが恒久無効化されるのを防止
-            _FFMPEG_FILTERS_FAIL_UNTIL[key] = time.monotonic() + _FFMPEG_FILTER_FAIL_COOLDOWN_SEC
-    return probe_succeeded and (filter_name.lower() in found)
-
-
-def supports_arnndn_filter(ffmpeg_path: str) -> bool:
-    return supports_ffmpeg_filter(ffmpeg_path, "arnndn")
-
-
-def get_thread_queue_size_support(ffmpeg_path: str) -> tuple[bool, bool]:
-    """FFmpegのバージョン差異によるthread_queue_sizeの入出力オプション仕様を動的判定"""
-    if not ffmpeg_path or not os.path.exists(ffmpeg_path):
-        return False, False
-    key = _norm_path_key(ffmpeg_path)
-    with _TQS_CACHE_LOCK:
-        cached = _THREAD_QUEUE_SIZE_SUPPORT_CACHE.get(key)
-    if cached is not None:
-        return cached
-
-    creationflags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-    supports_input = False
-    in_probed = False
-    try:
-        res_in = subprocess.run(
-            [ffmpeg_path, "-v", "error", "-thread_queue_size", "16", "-f", "lavfi", "-i", "anullsrc", "-frames:a", "1", "-f", "null", "-"],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            creationflags=creationflags,
-            timeout=3.0,
-        )
-        in_probed = True
-        err_in = res_in.stderr.decode("utf-8", errors="replace").lower() if res_in.stderr else ""
-        if res_in.returncode == 0 and "cannot be applied to input" not in err_in and "unrecognized option" not in err_in:
-            supports_input = True
-    except Exception:
-        supports_input = False
-
-    supports_output = False
-    out_probed = False
-    try:
-        res_out = subprocess.run(
-            [ffmpeg_path, "-v", "error", "-f", "lavfi", "-i", "anullsrc", "-frames:a", "1", "-thread_queue_size", "16", "-f", "null", "-"],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            creationflags=creationflags,
-            timeout=3.0,
-        )
-        out_probed = True
-        err_out = res_out.stderr.decode("utf-8", errors="replace").lower() if res_out.stderr else ""
-        if res_out.returncode == 0 and "cannot be applied to output" not in err_out and "unrecognized option" not in err_out:
-            supports_output = True
-    except Exception:
-        supports_output = False
-
-    if in_probed and out_probed:
-        with _TQS_CACHE_LOCK:
-            _THREAD_QUEUE_SIZE_SUPPORT_CACHE[key] = (supports_input, supports_output)
-    return supports_input, supports_output
-
-
-def _escape_ffmpeg_filter_option_path(path: str) -> str:
-    """FFmpegフィルタグラフの2段階解析(avfilter_graph_parse2 -> av_set_options_string)向けにパスをエスケープする"""
-    norm_p = path.replace("\\", "/")
-    # 第1段で外側の'...'が剥がれた後に第2段が:と=を再解釈するため、クォート内でも第2段用エスケープが必須
-    stage2 = (
-        norm_p.replace("\\", "\\\\")
-        .replace(":", "\\:")
-        .replace("=", "\\=")
+    audio_filter = (
+        "[0:a]aresample=async=1000:first_pts=0,asetpts=N/SR/TB,asplit=2[sys_in][mic_in];"
+        "[sys_in]pan=stereo|c0=c0|c1=c1[a_sys];"
+        f"[mic_in]pan=stereo|c0=c2|c1=c3{mic_dsp_chain}[a_mic]"
     )
-    if "'" not in norm_p:
-        return f"'{stage2}'"
-    # パスに'を含む場合はクォート外とし、第2段用('含む)の後に第1段用エスケープを重ねる
-    stage2_q = stage2.replace("'", "\\'")
-    stage1 = (
-        stage2_q.replace("\\", "\\\\")
-        .replace("'", "\\'")
-        .replace(",", "\\,")
-        .replace(";", "\\;")
-        .replace("[", "\\[")
-        .replace("]", "\\]")
-        .replace(" ", "\\ ")
-    )
-    return stage1
-
-
-def resolve_rnnoise_filter(app_data_dir: Optional[str] = None, allow_download: bool = False) -> str:
-    effective_app_data = app_data_dir or get_app_data_dir()
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    candidates = [
-        os.path.join(project_root, "bin", "sh.rnnn"),
-        os.path.join(get_app_base_dir(), "bin", "sh.rnnn"),
-        os.path.join(effective_app_data, "bin", "sh.rnnn"),
-    ]
-    rnnn_path = None
-    for c in candidates:
-        if is_valid_rnnoise_model(c):
-            rnnn_path = c
-            break
-    if not rnnn_path:
-        if allow_download:
-            try:
-                rnnn_path = ensure_rnnoise_model_downloaded(effective_app_data)
-            except Exception as e:
-                logging.warning(f"[FFmpegCommandBuilder] Could not prepare RNNoise model: {e}")
-                return ""
-        else:
-            ensure_rnnoise_model_async(effective_app_data)
-            return ""
-    if rnnn_path and is_valid_rnnoise_model(rnnn_path):
-        short_p = get_short_path_name(os.path.abspath(rnnn_path))
-        escaped_val = _escape_ffmpeg_filter_option_path(short_p)
-        return f"arnndn=m={escaped_val},"
-    return ""
-
-
-def build_ffmpeg_mic_dsp_chain(
-    config: Config,
-    ffmpeg_path: str,
-    allow_arnndn: bool = True,
-    allow_agate: bool = True,
-) -> tuple[str, bool]:
-    """C++音声DLL不可時にFFmpeg内蔵フィルタで HPF -> RNNoise -> RMS NoiseGate の正順処理を構成する"""
-    mic_dev = str(getattr(config, "RECORD_AUDIO_MIC", "")).strip().lower()
-    if mic_dev == "none":
-        return "", False
-
-    filters: list[str] = []
-    preprocess_str = str(getattr(config, "RECORD_AUDIO_MIC_PREPROCESS", "SpeexDSP")).strip()
-    if preprocess_str and preprocess_str.lower() != "none":
-        filters.append("highpass=f=80")
-
-    denoise_str = str(getattr(config, "RECORD_AUDIO_MIC_DENOISE", "None")).strip().lower()
-    if allow_arnndn and any(k in denoise_str for k in ("rnnoise", "speex", "deepfilter")):
-        if supports_arnndn_filter(ffmpeg_path):
-            rnnoise_part = resolve_rnnoise_filter(get_app_data_dir(), allow_download=False).rstrip(",")
-            if rnnoise_part:
-                filters.append(rnnoise_part)
-
-    gate_handled_by_ffmpeg = False
-    if allow_agate:
-        try:
-            gate_pct = float(getattr(config, "RECORD_AUDIO_MIC_NOISE_GATE", "0"))
-        except (ValueError, TypeError):
-            gate_pct = 0.0
-        gate_norm = max(0.0, min(1.0, gate_pct / 100.0))
-        if gate_norm > 0.001 and supports_ffmpeg_filter(ffmpeg_path, "agate"):
-            # MicMonitorThreadと同一のRMS閾値((threshold/2)^2)・0.01フロアで一致させる
-            amp_thresh = max(0.000125, min(1.0, (gate_norm / 2.0) ** 2))
-            filters.append(
-                f"agate=threshold={amp_thresh:.6f}:ratio=20:range=0.01:attack=10:release=300:detection=rms"
-            )
-            gate_handled_by_ffmpeg = True
-
-    return (("," + ",".join(filters)) if filters else ""), gate_handled_by_ffmpeg
-
+    return audio_filter, "4", "quad"
 
 def build_ffmpeg_command(
     config: Config,
@@ -641,7 +200,7 @@ def build_ffmpeg_command(
 ) -> str:
     if enable_chat_track is None:
         chat_sep = bool(getattr(config, "RECORD_AUDIO_CHAT_SEPARATE", False))
-        chat_dev = str(getattr(config, "RECORD_AUDIO_CHAT", "None")).strip().lower()
+        chat_dev = str(getattr(config, "RECORD_AUDIO_CHAT", "None") or "None").strip().lower()
         enable_chat_track = chat_sep and chat_dev != "none"
 
     is_lightweight = bool(getattr(config, "LIGHTWEIGHT_MODE", False))
@@ -651,7 +210,7 @@ def build_ffmpeg_command(
     is_qsv = "qsv" in enc_lower
 
     try:
-        fps_int = max(1, int(getattr(config, "RECORD_FPS", "60")))
+        fps_int = max(1, int(getattr(config, "RECORD_FPS", "60") or 60))
     except (ValueError, TypeError):
         fps_int = 60
     fps = str(fps_int)
@@ -664,9 +223,9 @@ def build_ffmpeg_command(
     # 高解像度(1440p以上)や高FPS(120以上)での画質破綻を防ぐためビットレート上限をスケーリング
     is_high_bandwidth = (target_w * target_h > 1920 * 1080) or (fps_int >= 120)
 
-    video_fmt = str(getattr(config, "RECORD_VIDEO_FORMAT", "ddagrab")).strip().lower()
+    video_fmt = str(getattr(config, "RECORD_VIDEO_FORMAT", "ddagrab") or "ddagrab").strip().lower()
     use_gdigrab = force_gdigrab or (video_fmt == "gdigrab")
-    input_source = str(getattr(config, "RECORD_INPUT_SOURCE", "primary")).strip() or "primary"
+    input_source = str(getattr(config, "RECORD_INPUT_SOURCE", "primary") or "primary").strip() or "primary"
     output_idx = str(target_mon.output_idx)
     adapter_idx = target_mon.adapter_idx
 
@@ -699,105 +258,24 @@ def build_ffmpeg_command(
         d3d_dev_spec = f"d3d11va=d3d11:{adapter_idx}" if adapter_idx > 0 else "d3d11va=d3d11"
         cmd.extend(["-init_hw_device", d3d_dev_spec, "-filter_hw_device", "d3d11"])
 
-    # 画面静止時のフレーム枯渇とPTS乖離による多重化キュー溢れを防ぐためdup_framesと0起点PTS正規化を適用
-    dda_base = f"ddagrab=output_idx={output_idx}:framerate={fps}:draw_mouse=1:dup_frames=1"
-    if use_gdigrab:
-        scale_part = f"scale={target_w}:{target_h}:flags={sw_flag}," if needs_scale else ""
-        video_filter = f"[1:v]setpts=PTS-STARTPTS,{scale_part}format={out_pix_fmt}[v_out]"
-    elif use_d3d11_direct:
-        d3d_scale = f",scale_d3d11=w={target_w}:h={target_h}" if needs_scale else ""
-        video_filter = f"{dda_base},setpts=PTS-STARTPTS{d3d_scale}[v_out]"
-    elif use_qsv_gpu_scale:
-        d3d_scale = f",scale_d3d11=w={target_w}:h={target_h}" if needs_scale else ""
-        video_filter = (
-            f"{dda_base},setpts=PTS-STARTPTS{d3d_scale},"
-            f"hwdownload,format=bgra,format=nv12[v_out]"
-        )
-    else:
-        scale_part = f",scale={target_w}:{target_h}:flags={sw_flag}" if needs_scale else ""
-        video_filter = (
-            f"{dda_base},setpts=PTS-STARTPTS,"
-            f"hwdownload,format=bgra{scale_part},format={out_pix_fmt}[v_out]"
-        )
-
-    if is_nvenc:
-        nv_preset = "p1" if is_lightweight else "p3"
-        nv_tune = "ull" if is_lightweight else "ll"
-        nv_cq = "26" if is_lightweight else "20"
-        nv_maxrate = "8M" if is_lightweight else ("30M" if is_high_bandwidth else "20M")
-        nv_bufsize = "16M" if is_lightweight else ("60M" if is_high_bandwidth else "40M")
-        encoder_opts = [
-            "-c:v", actual_encoder,
-            "-preset", nv_preset,
-            "-tune", nv_tune,
-            "-rc", "vbr",
-            "-cq", nv_cq,
-            "-b:v", "0",
-            "-maxrate", nv_maxrate,
-            "-bufsize", nv_bufsize,
-            "-bf", "0",
-            "-delay", "0",
-            "-zerolatency", "1",
-            "-g", gop_size,
-            "-keyint_min", gop_size,
-            "-forced-idr", "1",
-        ]
-        if is_lightweight:
-            encoder_opts.extend(["-spatial-aq", "0", "-temporal-aq", "0", "-rc-lookahead", "0", "-no-scenecut", "1"])
-    elif is_amf:
-        amf_usage = "ultralowlatency" if is_lightweight else "lowlatency"
-        amf_quality = "speed" if is_lightweight else "balanced"
-        amf_rc = "vbr_latency" if is_lightweight else "vbr_peak"
-        amf_br = "6M" if is_lightweight else ("20M" if is_high_bandwidth else "14M")
-        amf_max = "8M" if is_lightweight else ("30M" if is_high_bandwidth else "20M")
-        amf_buf = "16M" if is_lightweight else ("60M" if is_high_bandwidth else "40M")
-        encoder_opts = [
-            "-c:v", actual_encoder,
-            "-usage", amf_usage,
-            "-quality", amf_quality,
-            "-rc", amf_rc,
-            "-b:v", amf_br,
-            "-maxrate", amf_max,
-            "-bufsize", amf_buf,
-            "-g", gop_size,
-        ]
-        if enc_lower == "h264_amf":
-            encoder_opts.extend(["-bf", "0"])
-    elif is_qsv:
-        qsv_preset = "veryfast" if is_lightweight else "fast"
-        qsv_br = "6M" if is_lightweight else ("20M" if is_high_bandwidth else "14M")
-        qsv_max = "8M" if is_lightweight else ("30M" if is_high_bandwidth else "20M")
-        qsv_buf = "16M" if is_lightweight else ("60M" if is_high_bandwidth else "40M")
-        encoder_opts = [
-            "-c:v", actual_encoder,
-            "-preset", qsv_preset,
-            "-async_depth", "1" if is_lightweight else "4",
-            "-b:v", qsv_br,
-            "-maxrate", qsv_max,
-            "-bufsize", qsv_buf,
-            "-bf", "0",
-            "-g", gop_size,
-        ]
-    else:
-        sw_max = "6M" if is_lightweight else ("22M" if is_high_bandwidth else "15M")
-        sw_buf = "12M" if is_lightweight else ("44M" if is_high_bandwidth else "30M")
-        encoder_opts = [
-            "-c:v", actual_encoder,
-            "-preset", "ultrafast",
-            "-tune", "zerolatency",
-            "-crf", "28" if is_lightweight else "23",
-            "-maxrate", sw_max,
-            "-bufsize", sw_buf,
-            "-g", gop_size,
-            "-keyint_min", gop_size,
-        ]
-        if is_lightweight:
-            encoder_opts.extend([
-                "-threads", "2",
-                "-x264-params", "sliced-threads=0:sync-lookahead=0:rc-lookahead=0:ref=1:subme=0:me=dia:trellis=0",
-            ])
-        else:
-            encoder_opts.extend(["-threads", "4"])
+    video_filter = _build_video_filter(
+        use_gdigrab=use_gdigrab,
+        use_d3d11_direct=use_d3d11_direct,
+        use_qsv_gpu_scale=use_qsv_gpu_scale,
+        output_idx=output_idx,
+        fps=fps,
+        target_w=target_w,
+        target_h=target_h,
+        needs_scale=needs_scale,
+        sw_flag=sw_flag,
+        out_pix_fmt=out_pix_fmt,
+    )
+    encoder_opts = _build_encoder_options(
+        actual_encoder=actual_encoder,
+        is_lightweight=is_lightweight,
+        is_high_bandwidth=is_high_bandwidth,
+        gop_size=gop_size,
+    )
 
     mic_dsp_chain = ""
     if use_ffmpeg_mic_dsp:
@@ -808,24 +286,7 @@ def build_ffmpeg_command(
             allow_agate=allow_agate,
         )
 
-    # panフィルタのチャンネル識別子混在エラー(-EINVAL)を防ぐため番号形式(c0,c1...)で統一
-    if enable_chat_track:
-        audio_filter = (
-            "[0:a]aresample=async=1000:first_pts=0,asetpts=N/SR/TB,asplit=3[sys_in][mic_in][chat_in];"
-            "[sys_in]pan=stereo|c0=c0|c1=c1[a_sys];"
-            f"[mic_in]pan=stereo|c0=c2|c1=c3{mic_dsp_chain}[a_mic];"
-            "[chat_in]pan=stereo|c0=c4|c1=c5[a_chat]"
-        )
-        pipe_channels = "6"
-        pipe_layout = "5.1"
-    else:
-        audio_filter = (
-            "[0:a]aresample=async=1000:first_pts=0,asetpts=N/SR/TB,asplit=2[sys_in][mic_in];"
-            "[sys_in]pan=stereo|c0=c0|c1=c1[a_sys];"
-            f"[mic_in]pan=stereo|c0=c2|c1=c3{mic_dsp_chain}[a_mic]"
-        )
-        pipe_channels = "4"
-        pipe_layout = "quad"
+    audio_filter, pipe_channels, pipe_layout = _build_audio_filter(enable_chat_track, mic_dsp_chain)
 
     supports_input_tqs, supports_output_tqs = get_thread_queue_size_support(ffmpeg_path)
     tqs_val = "4096" if is_lightweight else "8192"
