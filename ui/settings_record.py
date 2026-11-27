@@ -12,9 +12,9 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 import re
+from recorder.encoder_utils import get_available_encoders
 from recorder.ffmpeg_command_builder import get_monitors, resolve_target_monitor
 from recorder.ffmpeg_downloader import ensure_ffmpeg_downloaded
-from recorder.ffmpeg_recorder import get_available_encoders
 from ui.settings_audio import AudioSettingsWidget
 from ui.settings_utils import HoverWheelComboBox
 

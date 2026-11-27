@@ -5,8 +5,8 @@ from typing import Callable, Optional
 from PyQt6.QtCore import QObject
 from PyQt6.QtWidgets import QPushButton
 from core.config import Config
+from recorder.encoder_utils import get_available_encoders
 from recorder.ffmpeg_downloader import ensure_ffmpeg_downloaded
-from recorder.ffmpeg_recorder import get_available_encoders
 from ui.clip_edit_panel import ClipEditPanel
 from ui.clip_generator_thread import ClipGeneratorThread
 from ui.in_app_notification import InAppNotification
